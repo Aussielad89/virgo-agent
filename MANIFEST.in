@@ -1,0 +1,11 @@
+prune agent_env/
+prune tests/
+prune data/
+prune .github/
+recursive-exclude agent_env *
+recursive-exclude tests __pycache__ *
+global-exclude *.pyc
+global-exclude .gitignore
+include README.md
+include pyproject.toml
+include requirements.txt

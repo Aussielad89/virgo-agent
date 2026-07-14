@@ -1,0 +1,30 @@
+{
+  "1_network_recon": {
+    "port_11434": "OPEN",
+    "port_8000": "CLOSED",
+    "port_8080": "CLOSED"
+  },
+  "2_system_health": {
+    "os": "Windows",
+    "os_release": "11",
+    "storage_info": "Used: 342GB Free: 657GB"
+  },
+  "3_log_analysis": [
+    {
+      "raw_log": "[2026-07-12 08:45:12] ERROR: Device harness communication timeout on controller 48v",
+      "suggested_action": "CRITICAL: Device harness communication timeout. Check your 48v controller wiring connections and main harness pins."
+    },
+    {
+      "raw_log": "[2026-07-12 08:46:30] CRITICAL: Local database connection refused on port 5432",
+      "suggested_action": "WARNING: Local database connection refused. Verify your database background service is currently active."
+    },
+    {
+      "raw_log": "[2026-07-12 08:50:01] INFO: Ollama heartbeat check passed",
+      "suggested_action": "No specific match found in local knowledge base."
+    }
+  ],
+  "diagnostic_metadata": {
+    "timestamp": "2026-07-12T09:05:00Z",
+    "duration_seconds": 3.2
+  }
+}

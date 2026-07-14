@@ -1,0 +1,46 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: agent-framework
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Lint with mypy
+        run: |
+          mypy --version
+          mypy cli.py orchestrator.py tools.py environment.py memory.py critica.py autodepend.py config.py _log.py virgo_fingerprinter.py virgo_webhook.py virgo_sandbox.py virgo_watchdog.py virgo_scaffold.py --ignore-missing-imports || true
+        continue-on-error: true
+
+      - name: Test with pytest
+        run: |
+          python -m pytest tests/ -v --cov=. --cov-report=term-missing
+
+      - name: Smoke-test TUI imports
+        run: |
+          python -c "from _console import icon; from virgo_menu import master_dashboard; from virgo_fingerprinter import grab_banner; from virgo_webhook import build_telemetry; from virgo_sandbox import is_command_safe; print('All imports OK')"

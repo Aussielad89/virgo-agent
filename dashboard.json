@@ -1,0 +1,58 @@
+{
+  "title": "VIRGO AGENT FRAMEWORK - MASTER CONTROL",
+  "sections": [
+    {
+      "heading": "VIRGO MODULES",
+      "entries": [
+        { "key": "1", "label": "Run Subnet Network Discovery Scanner", "script": "virgo_network_scanner.py" },
+        { "key": "2", "label": "Run Full System Diagnostics Suite", "script": "virgo_diagnostics.py" },
+        { "key": "3", "label": "Evaluate Active System & Hardware Alerts", "script": "virgo_alerts.py" },
+        { "key": "4", "label": "Execute Automated Triage & Remediation Fixer", "script": "virgo_fixer.py" },
+        { "key": "5", "label": "Workflow Connectivity Check", "script": "workflow_check.py" }
+      ]
+    },
+    {
+      "heading": "WEB SEARCH",
+      "entries": [
+        { "key": "6", "label": "DuckDuckGo Web Search", "script": "virgo_web_search.py", "args": "1" },
+        { "key": "7", "label": "Google Search", "script": "virgo_web_search.py", "args": "2" },
+        { "key": "8", "label": "YouTube Search", "script": "virgo_web_search.py", "args": "3" }
+      ]
+    },
+    {
+      "heading": "CORE PIPELINE",
+      "entries": [
+        { "key": "9", "label": "Run Agent Pipeline (virgo run)", "action": "pipeline" }
+      ]
+    },
+    {
+      "heading": "DATA VIEWER",
+      "entries": [
+        { "key": "10", "label": "View Live Network Map (JSON)", "action": "view", "file": "virgo_network_map.json" },
+        { "key": "11", "label": "View Active Alerts File (TXT)", "action": "view", "file": "ALERTS_TRIGGERED.txt" },
+        { "key": "12", "label": "View Web Search History", "action": "search_history" }
+      ]
+    },
+    {
+      "heading": "ADVANCED MODULES",
+      "entries": [
+        { "key": "13", "label": "Run Service Fingerprinter", "script": "virgo_fingerprinter.py" },
+        { "key": "14", "label": "Dispatch Alert Webhook", "script": "virgo_webhook.py" },
+        { "key": "15", "label": "Open Safe Command Sandbox", "script": "virgo_sandbox.py" },
+        { "key": "16", "label": "Scheduler / Watchdog", "action": "watchdog" }
+      ]
+    },
+    {
+      "heading": "SCAFFOLDING",
+      "entries": [
+        { "key": "17", "label": "List Available Scaffolds", "action": "scaffold_list" },
+        { "key": "18", "label": "Generate FastAPI CRUD Project", "action": "scaffold_gen", "scaffold": "fastapi-crud" },
+        { "key": "19", "label": "Generate CLI App", "action": "scaffold_gen", "scaffold": "cli-app" },
+        { "key": "20", "label": "Generate Flask Web App", "action": "scaffold_gen", "scaffold": "flask-app" },
+        { "key": "21", "label": "Generate Python Library", "action": "scaffold_gen", "scaffold": "python-lib" },
+        { "key": "22", "label": "Generate Agent Tool Module", "action": "scaffold_gen", "scaffold": "agent-tool" }
+      ]
+    }
+  ],
+  "exit_key": "X"
+}

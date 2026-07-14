@@ -1,0 +1,20 @@
+{
+  "name": "cli-app",
+  "version": "0.1.0",
+  "description": "Python CLI app with argparse, structured logging, and entry-point setup",
+  "dependencies": [],
+  "prompts": {
+    "project_name": "mycli",
+    "app_description": "A useful CLI tool"
+  },
+  "files": {
+    "README.md": "# {{project_name}}\n\n{{app_description}}\n\n## Usage\n\n```bash\npip install -e .\n{{project_name}} --help\n{{project_name}} run --input data.txt\n```\n",
+    "pyproject.toml": "[build-system]\nrequires = [\"setuptools>=64\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"{{project_name}}\"\nversion = \"0.1.0\"\ndescription = \"{{app_description}}\"\nrequires-python = \">=3.11\"\n\n[project.scripts]\n{{project_name}} = \"{{project_name}}.cli:main\"\n\n[tool.setuptools.packages.find]\ninclude = [\"{{project_name}}*\"]\n",
+    "{{project_name}}/__init__.py": "# {{project_name}}\n",
+    "{{project_name}}/cli.py": "\"\"\"\n{{app_description}}\n\"\"\"\n\nfrom __future__ import annotations\n\nimport argparse\nimport logging\nimport sys\n\nlog = logging.getLogger(\"{{project_name}}\")\n\n\ndef cmd_run(args: argparse.Namespace) -> None:\n    \"\"\"Run the main command.\"\"\"\n    print(f\"Running with input={args.input}, verbose={args.verbose}\")\n\n\ndef main() -> None:\n    parser = argparse.ArgumentParser(description=\"{{app_description}}\")\n    parser.add_argument(\"-v\", \"--verbose\", action=\"store_true\", help=\"Enable debug output\")\n    sub = parser.add_subparsers(dest=\"command\", required=True)\n\n    p_run = sub.add_parser(\"run\", help=\"Run the main command\")\n    p_run.add_argument(\"--input\", \"-i\", default=None, help=\"Input file path\")\n    p_run.add_argument(\"--output\", \"-o\", default=None, help=\"Output file path\")\n    p_run.set_defaults(func=cmd_run)\n\n    args = parser.parse_args()\n\n    if args.verbose:\n        logging.basicConfig(level=logging.DEBUG)\n\n    args.func(args)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "{{project_name}}/core.py": "\"\"\"\nCore business logic for {{project_name}}.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport logging\n\nlog = logging.getLogger(__name__)\n\n\ndef process(input_path: str, output_path: str | None = None) -> str:\n    \"\"\"Process input and return result.\"\"\"\n    log.info(\"Processing %s\", input_path)\n    # TODO: implement logic\n    result = f\"Processed {input_path}\"\n    return result\n",
+    "tests/__init__.py": "",
+    "tests/test_cli.py": "\"\"\"\nTests for CLI commands.\"\"\"\n\nfrom __future__ import annotations\n\nfrom {{project_name}}.cli import cmd_run\n\n\nclass TestRun:\n    def test_run_accepts_input(self) -> None:\n        args = type(\"Args\", (), {\"input\": \"test.txt\", \"output\": None, \"verbose\": False})()\n        cmd_run(args)  # smoke test — no crash\n",
+    "tests/test_core.py": "\"\"\"\nTests for core logic.\"\"\"\n\nfrom __future__ import annotations\n\nfrom {{project_name}}.core import process\n\n\nclass TestProcess:\n    def test_process_returns_string(self) -> None:\n        result = process(\"data.txt\")\n        assert \"data.txt\" in result\n"
+  }
+}

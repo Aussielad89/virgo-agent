@@ -1,0 +1,8 @@
+[
+  "John Smith — Senior Software Engineer | Building event-driven microservices in Python/Go",
+  "ACMECorp | 2021-Present | Led migration of 12 microservices to AWS EKS",
+  "StartupXYZ | 2018-2021 | Built real-time analytics pipeline handling 50k events/sec",
+  "Skills: Python, Go, FastAPI, Kubernetes, Terraform, PostgreSQL, Kafka",
+  "Open-source: Contributor to langchain, maintained 3 popular PyPI packages",
+  "Education: M.S. Computer Science — Stanford University"
+]

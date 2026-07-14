@@ -1,0 +1,14 @@
+{
+  "name": "agent-tool",
+  "version": "0.1.0",
+  "description": "Virgo agent tool module — a new virgo_*.py module following framework conventions",
+  "dependencies": [],
+  "prompts": {
+    "module_name": "virgo_mytool",
+    "tool_description": "My custom virgo tool"
+  },
+  "files": {
+    "{{module_name}}.py": "\"\"\"\n{{module_name}} — {{tool_description}}.\n\nPart of the virgo-agent framework. Follows the conventions:\n- Uses `_console.icon()` for terminal-safe output\n- `HERE` path + `sys.path.insert(0, HERE)` for imports\n- `if __name__ == \"__main__\"` block with pause for dashboard\n\"\"\"\n\nfrom __future__ import annotations\n\nimport os\nimport sys\n\nHERE = os.path.dirname(os.path.abspath(__file__))\nsys.path.insert(0, HERE)\n\nfrom _console import icon\n\n\ndef run(args: list[str] | None = None) -> int:\n    \"\"\"Main entry point for {{module_name}}.\"\"\"\n    args = args or sys.argv[1:]\n    print(f\"{icon('rocket')} Running {{module_name}}...\")\n    # TODO: implement tool logic here\n    print(f\"  Args: {args}\")\n    return 0\n\n\nif __name__ == \"__main__\":\n    try:\n        exit_code = run()\n        sys.exit(exit_code)\n    except KeyboardInterrupt:\n        print(f\"\\n{icon('warning')} Interrupted.\")\n        sys.exit(130)\n    finally:\n        input(f\"\\n{icon('arrow')} [PRESS ENTER TO RETURN]\")\n",
+    "tests/test_{{module_name}}.py": "\"\"\"\nTests for {{module_name}}.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport pytest\nfrom {{module_name}} import run\n\n\nclass TestRun:\n    def test_run_returns_zero(self) -> None:\n        assert run([]) == 0\n\n    def test_run_with_args(self) -> None:\n        assert run([\"--flag\", \"value\"]) == 0\n"
+  }
+}

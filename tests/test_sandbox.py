@@ -1,0 +1,81 @@
+"""Tests for virgo_sandbox — safe command runtime bridge."""
+
+from __future__ import annotations
+
+import tempfile
+import os
+from pathlib import Path
+
+import pytest
+
+from virgo_sandbox import is_command_safe, run_sandboxed, FORBIDDEN_COMMANDS
+
+
+class TestIsCommandSafe:
+    def test_safe_ipconfig(self) -> None:
+        safe, reason = is_command_safe(["ipconfig", "/all"])
+        assert safe is True
+        assert reason == ""
+
+    def test_safe_systeminfo(self) -> None:
+        safe, reason = is_command_safe(["systeminfo"])
+        assert safe is True
+
+    def test_safe_ping(self) -> None:
+        safe, reason = is_command_safe(["ping", "-n", "4", "127.0.0.1"])
+        assert safe is True
+
+    def test_forbidden_rmdir(self) -> None:
+        safe, reason = is_command_safe(["rmdir", "/s", "/q", "C:\\Windows"])
+        assert safe is False
+        assert "rmdir" in reason
+
+    def test_forbidden_del(self) -> None:
+        safe, reason = is_command_safe(["del", "/f", "test.txt"])
+        assert safe is False
+
+    def test_forbidden_shutdown(self) -> None:
+        safe, reason = is_command_safe(["shutdown", "/s"])
+        assert safe is False
+
+    def test_forbidden_flag_s(self) -> None:
+        """Check that /s flag is forbidden even on allowed executables."""
+        safe, reason = is_command_safe(["ipconfig", "/s"])
+        assert safe is False
+        assert "/s" in reason
+
+    def test_forbidden_flag_rf(self) -> None:
+        safe, reason = is_command_safe(["echo", "-rf", "/etc"])
+        assert safe is False
+
+    def test_empty_command(self) -> None:
+        safe, reason = is_command_safe([])
+        assert safe is False
+
+    def test_all_forbidden_commands_covered(self) -> None:
+        """Every entry in FORBIDDEN_COMMANDS actually blocks."""
+        for cmd in FORBIDDEN_COMMANDS:
+            safe, _ = is_command_safe([cmd, "dummy"])
+            assert safe is False, f"{cmd} should be forbidden"
+
+
+class TestRunSandboxed:
+    def test_run_safe_command(self) -> None:
+        """Run a trivial safe command and check stdout."""
+        stdout = run_sandboxed(["python", "--version"])
+        assert "Python" in stdout
+
+    def test_forbidden_command_raises(self) -> None:
+        """Forbidden commands raise ValueError."""
+        with pytest.raises(ValueError, match="Blocked by sandbox"):
+            run_sandboxed(["rmdir", "/s"])
+
+    def test_failing_command_raises(self) -> None:
+        """Non-existent command raises CalledProcessError or FileNotFoundError."""
+        with pytest.raises(Exception):
+            run_sandboxed(["nonexistent_command_xyz123"])
+
+    def test_custom_safe_command(self) -> None:
+        """Users can run arbitrary safe commands."""
+        stdout = run_sandboxed(["python", "-c", "print('hello sandbox')"])
+        assert "hello sandbox" in stdout

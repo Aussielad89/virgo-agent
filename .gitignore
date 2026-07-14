@@ -1,0 +1,61 @@
+# Virgo — generated files
+agent_env/
+__pycache__/
+*.pyc
+*.bak
+*.egg-info/
+.pytest_cache/
+.coverage
+.coverage.*
+.virgo_memory/
+build/
+dist/
+
+# Scaffold output
+scaffold-output/
+
+# Reports & scan output
+virgo_full_report.json
+virgo_network_map.json
+ALERTS_TRIGGERED.txt
+workflow_result.txt
+summary_output.txt
+virgo_search_memory.json
+virgo_search_memory_*.json
+port_status.txt
+
+# Test artifacts
+_test_*.py
+_test_*.csv
+_test_*.json
+_test_*.txt
+
+# Scratch / dev files (not for distribution)
+_verify_*.py
+_verify_*.md
+_watch_test*.md
+_chk.py
+_tmp*.py
+_check_testgen.py
+out.py
+
+# Generated API docs (virgo doc output)
+docs/
+docs-test/
+docs-html/
+docs-cli-test/
+docs-test-html/
+docs-recursive-test/
+
+# Environment
+.env
+.venv
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

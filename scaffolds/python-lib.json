@@ -1,0 +1,20 @@
+{
+  "name": "python-lib",
+  "version": "0.1.0",
+  "description": "Reusable Python library with pyproject.toml, tests, and CI-ready config",
+  "dependencies": [],
+  "prompts": {
+    "project_name": "mylib",
+    "lib_description": "A reusable Python library"
+  },
+  "files": {
+    "README.md": "# {{project_name}}\n\n{{lib_description}}\n\n## Install\n\n```bash\npip install -e .\npip install -e .[dev]\n```\n\n## Test\n\n```bash\npytest tests/ -v\n```\n\n## Build\n\n```bash\npip install build\npython -m build\n```\n",
+    "pyproject.toml": "[build-system]\nrequires = [\"setuptools>=64\"]\nbuild-backend = \"setuptools.build_meta\"\n\n[project]\nname = \"{{project_name}}\"\nversion = \"0.1.0\"\ndescription = \"{{lib_description}}\"\nrequires-python = \">=3.11\"\nauthors = [\n    { name = \"You\" },\n]\n\n[project.optional-dependencies]\ndev = [\"pytest>=7\", \"pytest-cov>=4\"]\n\n[tool.setuptools.packages.find]\ninclude = [\"{{project_name}}*\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+    "{{project_name}}/__init__.py": "\"\"\"\n{{project_name}} — {{lib_description}}.\n\"\"\"\n\nfrom __future__ import annotations\n\n__version__ = \"0.1.0\"\n\n\ndef hello() -> str:\n    \"\"\"Return a greeting.\"\"\"\n    return \"Hello from {{project_name}}!\"\n",
+    "{{project_name}}/core.py": "\"\"\"\nCore functionality for {{project_name}}.\"\"\"\n\nfrom __future__ import annotations\n\n\ndef add(a: int, b: int) -> int:\n    \"\"\"Add two integers.\"\"\"\n    return a + b\n",
+    "tests/__init__.py": "",
+    "tests/test_core.py": "\"\"\"\nTests for core functionality.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom {{project_name}} import hello\nfrom {{project_name}}.core import add\n\n\nclass TestHello:\n    def test_hello_returns_string(self) -> None:\n        result = hello()\n        assert \"{{project_name}}\" in result\n\n\nclass TestAdd:\n    def test_add_positive(self) -> None:\n        assert add(2, 3) == 5\n\n    def test_add_negative(self) -> None:\n        assert add(-1, 1) == 0\n",
+    ".gitignore": "# Python\n__pycache__/\n*.pyc\n*.pyo\n*.egg-info/\ndist/\nbuild/\n.eggs/\n.venv/\nagent_env/\n.pytest_cache/\n",
+    "LICENSE": "MIT License\n\nCopyright (c) 2026\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction...\n"
+  }
+}
