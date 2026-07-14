@@ -27,7 +27,9 @@ def _venv_supported() -> bool:
     import shutil as _shutil
     probe = _tf.mkdtemp(prefix="virgo_venv_probe_")
     try:
-        _venv.create(probe, with_pip=False)
+        # The real tests create venvs *with pip* (ensurepip); probe the same
+        # way so we skip when the runner lacks ensurepip.
+        _venv.create(probe, with_pip=True)
         return True
     except Exception:
         return False
