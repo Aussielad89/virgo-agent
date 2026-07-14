@@ -34,7 +34,7 @@ jobs:
       - name: Lint with mypy
         run: |
           mypy --version
-          mypy cli.py orchestrator.py tools.py environment.py memory.py critica.py autodepend.py config.py _log.py virgo_fingerprinter.py virgo_webhook.py virgo_sandbox.py virgo_watchdog.py virgo_scaffold.py --ignore-missing-imports || true
+          mypy cli.py orchestrator.py tools.py environment.py memory.py critic.py autodepend.py config.py _log.py virgo_fingerprinter.py virgo_webhook.py virgo_sandbox.py virgo_watchdog.py virgo_scaffold.py --ignore-missing-imports || true
         continue-on-error: true
 
       - name: Test with pytest
