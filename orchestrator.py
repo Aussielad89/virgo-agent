@@ -535,7 +535,9 @@ class Orchestrator:
         if p.suffix in self.suffix_excludes:
             return True
         try:
-            rel = p.relative_to(self.base_path).as_posix()
+            # Resolve both sides so Windows 8.3 short-name / casing mismatches
+            # (e.g. RUNNER~1 vs runneradmin) don't break the comparison.
+            rel = p.resolve().relative_to(self.base_path).as_posix()
         except ValueError:
             return False
         for ex in self.excludes:
