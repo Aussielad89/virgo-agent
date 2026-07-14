@@ -17,19 +17,17 @@ from environment import AgentEnvironment, _bin_subdir, ENV_DIR_NAME
 
 
 def _venv_supported() -> bool:
-    """Return True if a throwaway venv can actually be created here.
+    """Return True if ``AgentEnvironment.setup()`` actually works here.
 
-    Some CI runners lack the ``venv``/``ensurepip`` machinery, so the
-    environment-manager tests can't run there. Probe once, lazily.
+    Some CI runners can create a bare venv but fail the full
+    ``with_pip`` bootstrap (ensurepip), so we exercise the real code
+    path rather than a weaker probe.
     """
-    import venv as _venv
     import tempfile as _tf
     import shutil as _shutil
     probe = _tf.mkdtemp(prefix="virgo_venv_probe_")
     try:
-        # The real tests create venvs *with pip* (ensurepip); probe the same
-        # way so we skip when the runner lacks ensurepip.
-        _venv.create(probe, with_pip=True)
+        AgentEnvironment(str(probe)).setup()
         return True
     except Exception:
         return False
