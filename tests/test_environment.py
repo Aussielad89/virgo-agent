@@ -16,6 +16,30 @@ sys.path.insert(0, str(HERE))
 from environment import AgentEnvironment, _bin_subdir, ENV_DIR_NAME
 
 
+def _venv_supported() -> bool:
+    """Return True if a throwaway venv can actually be created here.
+
+    Some CI runners lack the ``venv``/``ensurepip`` machinery, so the
+    environment-manager tests can't run there. Probe once, lazily.
+    """
+    import venv as _venv
+    import tempfile as _tf
+    import shutil as _shutil
+    probe = _tf.mkdtemp(prefix="virgo_venv_probe_")
+    try:
+        _venv.create(probe, with_pip=False)
+        return True
+    except Exception:
+        return False
+    finally:
+        _shutil.rmtree(probe, ignore_errors=True)
+
+
+# The environment manager requires a working ``venv``; skip when unavailable
+# (e.g. certain CI images) rather than failing the whole suite.
+requires_venv = pytest.mark.skipif(not _venv_supported(), reason="venv creation unsupported in this environment")
+
+
 class TestConstants:
     def test_env_dir_name(self) -> None:
         assert ENV_DIR_NAME == "agent_env"
@@ -44,6 +68,7 @@ class TestConstruction:
         assert "python" in str(env.python)
 
 
+@requires_venv
 class TestSetupTeardown:
     def test_setup_creates_directory(self, tmp_path: Path) -> None:
         env = AgentEnvironment(str(tmp_path))
@@ -77,6 +102,7 @@ class TestSetupTeardown:
         env.teardown()  # should not raise
 
 
+@requires_venv
 class TestPackageManagement:
     def test_ensure_install(self, tmp_path: Path) -> None:
         env = AgentEnvironment(str(tmp_path))
@@ -94,6 +120,7 @@ class TestPackageManagement:
         assert "already satisfied" in result or result == ""
 
 
+@requires_venv
 class TestScriptExecution:
     def test_run_simple(self, tmp_path: Path) -> None:
         env = AgentEnvironment(str(tmp_path))
@@ -122,6 +149,7 @@ class TestScriptExecution:
         assert str(tmp_path) in proc.stdout
 
 
+@requires_venv
 class TestFileExecution:
     def test_run_file(self, tmp_path: Path) -> None:
         env = AgentEnvironment(str(tmp_path))
@@ -139,6 +167,7 @@ class TestFileExecution:
         assert proc.returncode != 0
 
 
+@requires_venv
 class TestEdgeCases:
     def test_ensure_empty_packages(self, tmp_path: Path) -> None:
         env = AgentEnvironment(str(tmp_path))
