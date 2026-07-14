@@ -1,5 +1,6 @@
 # Virgo — Multi-Agent State Machine
 
+![test](https://github.com/Aussielad89/virgo-agent/actions/workflows/test.yml/badge.svg)
 An autonomous code-generation pipeline with diagnostics, network scanning,
 alerting, web search, project scaffolding, and system monitoring tools.
 
