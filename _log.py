@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from pathlib import Path
 
 # Allow import without crashing if dotenv is missing
 try:
@@ -20,6 +21,14 @@ try:
     load_dotenv()
 except ImportError:
     pass
+
+
+# Shared runtime-output directory. All generated reports (network maps,
+# diagnostics, alerts, search memory, etc.) are written here instead of
+# polluting the repo root. Git-ignored (see .gitignore: output/).
+HERE = Path(__file__).resolve().parent
+OUTDIR = HERE / "output"
+OUTDIR.mkdir(exist_ok=True)
 
 
 def _setup_logger(name: str = "virgo") -> logging.Logger:

@@ -23,6 +23,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from _console import icon
+from _log import OUTDIR
+
+SEARCH_MEMORY_DIR = OUTDIR
 
 
 def web_search(query: str) -> dict:
@@ -145,16 +148,16 @@ def youtube_search(query: str) -> dict:
 
 
 def save_results(data: dict, query: str, engine: str) -> None:
-    """Save search results to a timestamped JSON file."""
+    """Save search results to a timestamped JSON file in the output dir."""
     import time
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    filename = f"virgo_search_memory_{timestamp}.json"
+    filename = str(SEARCH_MEMORY_DIR / f"virgo_search_memory_{timestamp}.json")
     data["query"] = query
     data["engine"] = engine
     data["timestamp"] = timestamp
     with open(filename, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"  Results saved to {filename}")
+    print(f"{icon('save')} Search memory saved to: {filename}")
 
 
 if __name__ == "__main__":

@@ -14,10 +14,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from _console import icon
+from _log import OUTDIR
+
+ALERTS_FILE = str(OUTDIR / "ALERTS_TRIGGERED.txt")
 
 
 def auto_remediate() -> None:
-    alert_file = "ALERTS_TRIGGERED.txt"
+    alert_file = ALERTS_FILE
     log_file = os.path.join(HERE, "mock_logs.txt")
 
     if not os.path.exists(alert_file):

@@ -22,9 +22,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from _console import icon
-from _log import log
+from _log import log, OUTDIR
 
-ALERT_FILE = "ALERTS_TRIGGERED.txt"
+ALERT_FILE = str(OUTDIR / "ALERTS_TRIGGERED.txt")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 WEBHOOK_RETRIES = int(os.environ.get("WEBHOOK_RETRIES", "3"))
 

@@ -31,10 +31,12 @@ if TYPE_CHECKING:
 
 
 # ===========================================================================
-# Step printer — coloured / emoji terminal output
+# Step printer — uses _console.icon() for safe emoji/ASCII output
 # ===========================================================================
 
-_ICONS = {
+from _console import icon, _supports_emoji  # re-export for tests / backwards compat
+
+_STEP_LABELS = {
     "goal":     "goal",
     "discover": "discover",
     "plan":     "plan",
@@ -48,46 +50,10 @@ _ICONS = {
 }
 
 
-def _supports_emoji() -> bool:
-    """Return True if the terminal is likely to handle Unicode emoji."""
-    enc = (sys.stdout.encoding or "").lower()
-    return "utf" in enc or enc in ("", "unknown")
-
-
 def _step(label: str, *parts: str) -> None:
     msg = "  ".join(p for p in parts if p)
-    if _supports_emoji():
-        # Full Unicode mode
-        _EMOJI = {
-            "goal":     "\U0001F3AF",  # 🎯
-            "discover": "\U0001F50D",  # 🔍
-            "plan":     "\U0001F9E0",  # 🧠
-            "generate": "\U0001F4BB",  # 💻
-            "test":     "\U0001F6E0",  # 🛠
-            "fix":      "\U0001F527",  # 🔧
-            "pass":     "\u2705",      # ✅
-            "fail":     "\u274C",      # ❌
-            "info":     "\u2139",      # ℹ
-            "syntax":   "\U0001F52C",  # 🔬
-        }
-        icon = _EMOJI.get(label, "\u27A1")
-        print(f"  {icon}  {msg}" if label in _EMOJI else f"  \u27A1  {msg}")
-    else:
-        # ASCII-safe fallback
-        _TEXT = {
-            "goal":     "[GOAL]",
-            "discover": "[SCAN]",
-            "plan":     "[PLAN]",
-            "generate": "[CODE]",
-            "test":     "[TEST]",
-            "fix":      "[FIX]",
-            "pass":     "[PASS]",
-            "fail":     "[FAIL]",
-            "info":     "[INFO]",
-            "syntax":   "[SYNTAX]",
-        }
-        tag = _TEXT.get(label, ">>>")
-        print(f"  {tag}  {msg}")
+    tag = icon(_STEP_LABELS.get(label, "arrow"))
+    print(f"  {tag}  {msg}")
 
 
 # ===========================================================================

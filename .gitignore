@@ -14,15 +14,11 @@ dist/
 # Scaffold output
 scaffold-output/
 
-# Reports & scan output
-virgo_full_report.json
-virgo_network_map.json
-ALERTS_TRIGGERED.txt
-workflow_result.txt
-summary_output.txt
-virgo_search_memory.json
-virgo_search_memory_*.json
-port_status.txt
+# Local tool state (e.g. .crush backend)
+.crush/
+
+# Output dir for runtime reports (see _log.OUTDIR)
+output/
 
 # Test artifacts
 _test_*.py

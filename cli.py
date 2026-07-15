@@ -4,17 +4,23 @@ cli — unified entry point for virgo.
 
 Usage::
 
+    virgo                                    # launch TUI dashboard
     virgo run --goal "parse logs"            # run pipeline
     virgo serve                               # launch web dashboard
     virgo replay <session>                    # replay a saved run
     virgo list                                # list saved sessions
     virgo feedback                            # show feedback memory
+    virgo version                             # show version
+    virgo update                              # pull latest from git
+    virgo doctor                              # run health checks
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import subprocess
 from pathlib import Path
 
 # Load .env if python-dotenv is available
@@ -23,6 +29,8 @@ try:
     load_dotenv()
 except ImportError:
     pass
+
+VERSION = "0.5.0"
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -110,15 +118,10 @@ def cmd_run(args: argparse.Namespace) -> None:
             ".env.example",
             "mock_logs.txt",
             "logo.svg",
-            "ALERTS_TRIGGERED.txt",
-            "port_status.txt",
-            "out.py",
-            "workflow_result.txt",
             "dashboard.json",
-            "virgo_full_report.json",
-            "virgo_network_map.json",
-            "virgo_search_memory.json",
+            "out.py",
             "__init__.py",
+            "output",
         ],
     )
 
@@ -278,6 +281,229 @@ def cmd_demo(args: argparse.Namespace) -> None:
     """Run the deterministic demo pipeline (no LLM required)."""
     from run import main as run_main
     run_main()
+
+
+def cmd_version(_args: argparse.Namespace) -> None:
+    """Show version information."""
+    print(f"virgo-agent v{VERSION}")
+    print(f"  Python: {sys.version.split()[0]}")
+    print(f"  Path:   {HERE}")
+
+
+def cmd_menu(_args: argparse.Namespace) -> None:
+    """Launch the TUI master dashboard."""
+    from virgo_menu import master_dashboard
+    master_dashboard()
+
+
+def cmd_update(_args: argparse.Namespace) -> None:
+    """Pull the latest version from git."""
+    HERE = Path(__file__).resolve().parent
+    if not (HERE / ".git").is_dir():
+        print("[virgo] Not a git repository — cannot update.")
+        sys.exit(1)
+    print("[virgo] Pulling latest changes...")
+    result = subprocess.run(
+        ["git", "pull", "--ff-only"],
+        cwd=str(HERE),
+        capture_output=True,
+        text=True,
+    )
+    print(result.stdout)
+    if result.returncode != 0:
+        print(result.stderr)
+        sys.exit(1)
+    print("[virgo] Update complete.")
+
+
+def cmd_doctor(_args: argparse.Namespace) -> None:
+    """Run environment health checks."""
+    import shutil
+    import urllib.request as _ur
+    import json as _json
+    here = Path(__file__).resolve().parent
+
+    ok_count = 0
+    total = 0
+
+    def check(name: str, fn: callable) -> None:
+        nonlocal ok_count, total
+        total += 1
+        try:
+            ok = fn()
+        except Exception:
+            ok = False
+        if ok:
+            ok_count += 1
+        status = f"[{'OK' if ok else 'MISS'}]"
+        print(f"  {status}  {name}")
+
+    # ── File & project checks ──
+    check("Repository (.git)", lambda: (here / ".git").is_dir())
+    check("Python 3.11+", lambda: sys.version_info >= (3, 11))
+    check("Dashboard config", lambda: (here / "dashboard.json").exists())
+    check("Mock logs", lambda: (here / "mock_logs.txt").exists())
+    check("virgo.bat wrapper", lambda: (here / "virgo.bat").exists())
+
+    # ── LLM / Ollama ──
+    def check_llm() -> bool:
+        url = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+        req = _ur.Request(f"{url.rstrip('/')}/models", method="GET")
+        try:
+            with _ur.urlopen(req, timeout=5) as resp:
+                data = _json.loads(resp.read())
+                return "models" in data or "data" in data
+        except Exception:
+            return False
+    check("LLM reachable (Ollama)", check_llm)
+
+    # ── Git status ──
+    def check_git_clean() -> bool:
+        r = subprocess.run(["git", "status", "--porcelain"],
+                           cwd=here, capture_output=True, text=True, timeout=10)
+        return r.returncode == 0 and r.stdout.strip() == ""
+    check("Git working tree clean", check_git_clean)
+
+    # ── Disk space ──
+    def check_disk() -> bool:
+        usage = shutil.disk_usage(here)
+        free_gb = usage.free / (1024 ** 3)
+        return free_gb > 1.0
+    check("Disk space (>1 GB free)", check_disk)
+
+    # ── Dependencies ──
+    def check_deps() -> bool:
+        required = {"pytest", "requests", "fastapi", "uvicorn", "jinja2", "pyyaml"}
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "list", "--format=freeze"],
+            capture_output=True, text=True, timeout=30,
+        )
+        installed = {line.split("==")[0].lower() for line in r.stdout.splitlines() if "==" in line}
+        missing = required - installed
+        return len(missing) <= 2  # allow a few optional deps missing
+    check("Core dependencies installed", check_deps)
+
+    print(f"\n  {ok_count}/{total} checks passed  |  virgo-agent v{VERSION}")
+
+
+def cmd_config(args: argparse.Namespace) -> None:
+    """View or set virgo configuration (environment variables)."""
+    import dotenv
+
+    config_vars = {
+        "LLM_BASE_URL": "http://localhost:11434/v1",
+        "LLM_API_KEY": "sk-no-key-required",
+        "LLM_TIMEOUT": "300",
+        "MODEL_PLANNER": "qwen2.5-coder:7b",
+        "MODEL_GENERATOR": "qwen2.5-coder:7b",
+        "MODEL_FIXER": "qwen2.5-coder:7b",
+        "FALLBACK_MODEL": "",
+        "VIRGO_LOG_LEVEL": "WARNING",
+        "VIRGO_LOG_FILE": "",
+        "WEBHOOK_URL": "",
+        "WATCHDOG_INTERVAL": "30",
+        "WATCHDOG_CYCLES": "5",
+    }
+
+    dotenv_path = HERE / ".env"
+
+    # --get <key>
+    if args.get:
+        key = args.get.upper()
+        val = os.environ.get(key, config_vars.get(key, "(not set)"))
+        print(f"{key}={val}")
+        return
+
+    # --set key=value
+    if args.set:
+        if "=" not in args.set:
+            print("[virgo] Use --set KEY=VALUE")
+            return
+        key, _, val = args.set.partition("=")
+        key = key.upper().strip()
+        val = val.strip()
+        # Update in current process
+        os.environ[key] = val
+        # Persist to .env
+        lines = []
+        if dotenv_path.exists():
+            lines = dotenv_path.read_text(encoding="utf-8").splitlines()
+        found = False
+        for i, line in enumerate(lines):
+            if line.strip().startswith(f"{key}=") or line.strip().startswith(f"export {key}="):
+                lines[i] = f"{key}={val}"
+                found = True
+                break
+        if not found:
+            lines.append(f"{key}={val}")
+        dotenv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"[virgo] {key}={val}  (saved to .env)")
+        return
+
+    # --unset <key>
+    if args.unset:
+        key = args.unset.upper()
+        os.environ.pop(key, None)
+        if dotenv_path.exists():
+            lines = [l for l in dotenv_path.read_text(encoding="utf-8").splitlines()
+                     if not l.strip().startswith(f"{key}=") and not l.strip().startswith(f"export {key}=")]
+            dotenv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"[virgo] {key} removed")
+        return
+
+    # Default: show all
+    print(f"\n  virgo configuration ({dotenv_path if dotenv_path.exists() else 'env defaults'}):\n")
+    for key, default in sorted(config_vars.items()):
+        val = os.environ.get(key, default)
+        marker = " *" if os.environ.get(key) else ""
+        print(f"    {key:25s} = {val}{marker}")
+    print("\n  * = overridden in current environment")
+    print("  Use:  virgo config --set KEY=VALUE")
+    print("        virgo config --get KEY")
+    print("        virgo config --unset KEY\n")
+
+
+def cmd_self_install(_args: argparse.Namespace) -> None:
+    """Add virgo to the system PATH for access from any terminal."""
+    import subprocess as _subprocess
+    here = Path(__file__).resolve().parent
+    bat = here / "virgo.bat"
+
+    if not bat.exists():
+        print(f"[virgo] {bat} not found — nothing to install.")
+        return
+
+    # Check current PATH
+    path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    if str(here) in path_dirs:
+        print(f"[virgo] {here} is already in PATH.")
+        return
+
+    # Add to user PATH via setx (Windows) or .profile suggestion
+    if sys.platform == "win32":
+        try:
+            result = _subprocess.run(
+                ["setx", "PATH", f"{here};%PATH%"],
+                capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                print(f"[virgo] Added {here} to user PATH.")
+                print("  Restart your terminal or run:  refreshenv")
+            else:
+                print(f"[virgo] setx failed: {result.stderr}")
+                print(f"  Manually add this folder to your PATH:\n    {here}")
+        except FileNotFoundError:
+            print("[virgo] setx not found. Add this to PATH manually:")
+            print(f"    {here}")
+    else:
+        profile = Path.home() / ".profile"
+        line = f'\nexport PATH="{here}:$PATH"\n'
+        try:
+            with open(profile, "a") as f:
+                f.write(line)
+            print(f"[virgo] Added to {profile}. Run:  source {profile}")
+        except Exception as exc:
+            print(f"[virgo] Could not write {profile}: {exc}")
 
 
 def cmd_diff(args: argparse.Namespace) -> None:
@@ -611,6 +837,115 @@ def cmd_agent(args: argparse.Namespace) -> None:
         print(f"\n  [virgo] Could not save transcript: {exc}")
 
 
+def cmd_chat(args: argparse.Namespace) -> None:
+    """Interactive chat with virgo (backed by LLM if available)."""
+    import json as _json
+    from datetime import datetime, timezone
+
+    chats_dir = HERE / ".virgo_memory" / "chats"
+    chats_dir.mkdir(parents=True, exist_ok=True)
+
+    print_logo()
+    print("  Virgo Chat - type 'exit' or 'quit' to stop\n")
+
+    # Try LLM; fall back to simple echo mode.
+    client = None
+    try:
+        import main
+        client = main.get_client_for("agent")
+        print("  [LLM connected - responses from local model]\n")
+    except Exception:
+        print("  [No LLM detected - running in teach/task mode]\n")
+
+    history: list[dict[str, str]] = []
+
+    # Resume from a previous session if --resume was provided
+    if args.resume:
+        resume_path = chats_dir / args.resume
+        if not resume_path.exists():
+            resume_path = chats_dir / f"{args.resume}.json"
+        if resume_path.exists():
+            try:
+                data = _json.loads(resume_path.read_text(encoding="utf-8"))
+                history = data.get("history", [])
+                print(f"  [Resumed chat: {resume_path.name} - {len(history)} messages]\n")
+            except Exception as exc:
+                print(f"  [Could not resume: {exc}]\n")
+        else:
+            print(f"  [No saved chat found: {args.resume}]\n")
+
+    session_id = datetime.now(timezone.utc).strftime("chat_%Y%m%d_%H%M%S")
+
+    while True:
+        try:
+            user_input = input("  >> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not user_input:
+            continue
+        if user_input.lower() in ("exit", "quit", "/exit", "/quit"):
+            break
+        if user_input.lower() in ("/save", "/s"):
+            _save_chat(chats_dir, session_id, history)
+            continue
+        if user_input.lower() == "/history":
+            _list_chats(chats_dir)
+            continue
+
+        if client:
+            history.append({"role": "user", "content": user_input})
+            try:
+                result = client.chat(history.copy(), temperature=0.7, max_tokens=2048, role="agent")
+                print(f"  => {result.strip()}\n")
+                history.append({"role": "assistant", "content": result})
+            except Exception as exc:
+                print(f"  [LLM error: {exc}]\n")
+                print(f"  => (LLM unavailable) You said: {user_input}\n")
+        else:
+            print(f"  => You said: {user_input}")
+            print("  (Run `virgo run --goal \"...\"` or `virgo doctor` to get started)\n")
+
+    # Auto-save on exit
+    if history:
+        _save_chat(chats_dir, session_id, history, auto=True)
+
+
+def _save_chat(chats_dir: Path, session_id: str, history: list[dict[str, str]], auto: bool = False) -> None:
+    """Save a chat session to disk."""
+    import json as _json
+    from datetime import datetime, timezone
+    path = chats_dir / f"{session_id}.json"
+    data = {
+        "session": session_id,
+        "saved": datetime.now(timezone.utc).isoformat(),
+        "messages": len(history),
+        "history": history,
+    }
+    path.write_text(_json.dumps(data, indent=2), encoding="utf-8")
+    label = "Auto-saved" if auto else "Saved"
+    print(f"  [{label} chat: {path.name} ({len(history)} messages)]\n")
+
+
+def _list_chats(chats_dir: Path) -> None:
+    """List saved chat sessions."""
+    import json as _json
+    files = sorted(chats_dir.glob("*.json"), reverse=True)
+    if not files:
+        print("  [No saved chats]\n")
+        return
+    print(f"  Saved chats ({len(files)}):\n")
+    for f in files[:10]:
+        try:
+            data = _json.loads(f.read_text(encoding="utf-8"))
+            msgs = data.get("messages", "?")
+            saved = data.get("saved", "")[:19]
+            print(f"    {f.stem:30s}  {msgs:3d} msgs  {saved}")
+        except Exception:
+            print(f"    {f.stem:30s}  (corrupt)")
+    print("  Use:  virgo chat --resume <session_id>\n")
+
+
 def cmd_scaffold(args: argparse.Namespace) -> None:
     """Generate a project from a scaffold, or list available scaffolds."""
     from virgo_scaffold import list_scaffolds, load_scaffold, generate, install_scaffold, uninstall_scaffold
@@ -689,7 +1024,9 @@ def main() -> None:
         description="multi-agent state machine",
         epilog="see 'virgo <command> --help' for details",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--version", "-V", action="store_true",
+                        help="Show version and exit")
+    sub = parser.add_subparsers(dest="command", required=False)
 
     # run
     p_run = sub.add_parser("run", help="Run the pipeline")
@@ -808,6 +1145,18 @@ def main() -> None:
     p_demo.set_defaults(func=cmd_demo)
 
     # diff
+    # self-install
+    p_self = sub.add_parser("self-install", help="Add virgo to system PATH")
+    p_self.set_defaults(func=cmd_self_install)
+
+    # config
+    p_cfg = sub.add_parser("config", help="View or set virgo configuration")
+    p_cfg.add_argument("--get", default=None, help="Get a config value by key")
+    p_cfg.add_argument("--set", default=None, help="Set a config value (KEY=VALUE)")
+    p_cfg.add_argument("--unset", default=None, help="Remove a config key")
+    p_cfg.set_defaults(func=cmd_config)
+
+    # diff
     p_diff = sub.add_parser("diff", help="Compare two saved sessions")
     p_diff.add_argument("session_a", help="First session name or .json path")
     p_diff.add_argument("session_b", help="Second session name or .json path")
@@ -869,6 +1218,18 @@ def main() -> None:
     p_init.add_argument("--non-interactive", action="store_true",
                         help="Skip prompts, use default variable values")
     p_init.set_defaults(func=cmd_init)
+
+    # version
+    p_ver = sub.add_parser("version", help="Show version information")
+    p_ver.set_defaults(func=cmd_version)
+
+    # update
+    p_upd = sub.add_parser("update", help="Pull latest version from git")
+    p_upd.set_defaults(func=cmd_update)
+
+    # doctor
+    p_doc2 = sub.add_parser("doctor", help="Run environment health checks")
+    p_doc2.set_defaults(func=cmd_doctor)
 
     # completion
     p_comp = sub.add_parser("completion", help="Generate shell completion script")
@@ -934,8 +1295,23 @@ def main() -> None:
                          help="Disable streaming (default: on when interactive)")
     p_agent.set_defaults(func=cmd_agent)
 
+    # chat
+    p_chat = sub.add_parser("chat", help="Interactive chat with virgo")
+    p_chat.add_argument("--resume", default=None,
+                        help="Resume a previous chat session (name or path)")
+    p_chat.set_defaults(func=cmd_chat)
+
+    # chat-ls
+    p_cls = sub.add_parser("chat-ls", help="List saved chat sessions")
+    p_cls.set_defaults(func=lambda _: _list_chats(HERE / ".virgo_memory" / "chats"))
+
     args = parser.parse_args()
-    args.func(args)
+    if args.version:
+        cmd_version(args)
+    elif args.command is None:
+        cmd_menu(args)
+    else:
+        args.func(args)
 
 
 if __name__ == "__main__":

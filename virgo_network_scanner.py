@@ -18,6 +18,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from _console import icon
+from _log import OUTDIR
+
+NETWORK_MAP_FILE = str(OUTDIR / "virgo_network_map.json")
 
 
 def get_local_ip() -> str:
@@ -92,7 +95,7 @@ def run_subnet_scan() -> None:
     # Save results to a clean log
     import json
 
-    output_file = "virgo_network_map.json"
+    output_file = NETWORK_MAP_FILE
     with open(output_file, "w") as f:
         json.dump({"subnet_scan_results": active_devices}, f, indent=4)
 

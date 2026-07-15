@@ -16,6 +16,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from _console import icon
+from _log import OUTDIR
+
+NETWORK_MAP_FILE = str(OUTDIR / "virgo_network_map.json")
+DIAG_REPORT_FILE = str(OUTDIR / "virgo_full_report.json")
+ALERTS_FILE = str(OUTDIR / "ALERTS_TRIGGERED.txt")
 
 
 def check_thresholds() -> None:
@@ -23,8 +28,8 @@ def check_thresholds() -> None:
     print(f"{icon('alert')} Virgo Alert Engine evaluating latest system logs...")
 
     # 1. Evaluate Network Scan Results
-    if os.path.exists("virgo_network_map.json"):
-        with open("virgo_network_map.json") as f:
+    if os.path.exists(NETWORK_MAP_FILE):
+        with open(NETWORK_MAP_FILE) as f:
             net_data = json.load(f)
             scan_results = net_data.get("subnet_scan_results", {})
 
@@ -35,12 +40,12 @@ def check_thresholds() -> None:
                     )
     else:
         alert_log.append(
-            "[SYSTEM] Warning: virgo_network_map.json not found. Run network scanner first."
+            f"[SYSTEM] Warning: {NETWORK_MAP_FILE} not found. Run network scanner first."
         )
 
     # 2. Evaluate Full Diagnostics Report
-    if os.path.exists("virgo_full_report.json"):
-        with open("virgo_full_report.json") as f:
+    if os.path.exists(DIAG_REPORT_FILE):
+        with open(DIAG_REPORT_FILE) as f:
             diag_data = json.load(f)
 
             recon = diag_data.get("1_network_recon", {})
@@ -57,18 +62,18 @@ def check_thresholds() -> None:
                     alert_log.append(f"[SERVICE ALERT] {action}")
     else:
         alert_log.append(
-            "[SYSTEM] Warning: virgo_full_report.json not found. Run diagnostics suite first."
+            f"[SYSTEM] Warning: {DIAG_REPORT_FILE} not found. Run diagnostics suite first."
         )
 
     # 3. Output Triggered Alerts
     if alert_log:
-        print(f"{icon('warn')} {len(alert_log)} alerts triggered! Writing to ALERTS_TRIGGERED.txt...")
-        with open("ALERTS_TRIGGERED.txt", "w") as f:
+        print(f"{icon('warn')} {len(alert_log)} alerts triggered! Writing to {ALERTS_FILE}...")
+        with open(ALERTS_FILE, "w") as f:
             f.write("\n".join(alert_log))
     else:
         print(f"{icon('ok')} System clear. No alerts triggered.")
-        if os.path.exists("ALERTS_TRIGGERED.txt"):
-            os.remove("ALERTS_TRIGGERED.txt")
+        if os.path.exists(ALERTS_FILE):
+            os.remove(ALERTS_FILE)
 
 
 if __name__ == "__main__":

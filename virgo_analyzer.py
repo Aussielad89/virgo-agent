@@ -1,8 +1,10 @@
 import json
 import os
 
+from _log import OUTDIR
+
 def analyze_search_cache():
-    cache_file = "virgo_search_memory.json"
+    cache_file = str(OUTDIR / "virgo_search_memory.json")
     print("🧠 Virgo Search Memory Analyzer active...")
     
     if not os.path.exists(cache_file):

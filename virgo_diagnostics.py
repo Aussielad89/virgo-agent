@@ -19,6 +19,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from _console import icon
+from _log import OUTDIR
+
+REPORT_FILE = str(OUTDIR / "virgo_full_report.json")
 
 
 def run_full_diagnostics() -> None:
@@ -82,11 +85,10 @@ def run_full_diagnostics() -> None:
         report["3_log_analysis"].append("mock_logs.txt missing. Skipping text analysis.")
 
     # --- SAVE CONSOLIDATED DIAGNOSTIC REPORT ---
-    with open("virgo_full_report.json", "w") as f:
-        json.dump(report, f, indent=4)
-
+    with open(REPORT_FILE, "w") as f:
+        json.dump(report, f, indent=2)
     print(f"{icon('done')} Full diagnostic check completed successfully!")
-    print("Saved comprehensive summary report to: virgo_full_report.json")
+    print("Saved comprehensive summary report to: " + REPORT_FILE)
 
 
 if __name__ == "__main__":

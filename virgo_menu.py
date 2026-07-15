@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from _console import icon
-from _log import log
+from _log import log, OUTDIR
 
 CONFIG_PATH = os.path.join(HERE, "dashboard.json")
 
@@ -64,22 +64,28 @@ def run_script(script_cmd: str) -> None:
 
 def view_file(file_name: str) -> None:
     clear_screen()
-    print(f"{icon('file')} --- Viewing File: {file_name} ---\n")
-    if os.path.exists(file_name):
-        with open(file_name) as f:
+    # Reports live in the shared output dir; resolve bare names there.
+    candidate = file_name
+    if not os.path.isabs(file_name) and not os.path.exists(file_name):
+        in_out = OUTDIR / file_name
+        if in_out.exists():
+            candidate = str(in_out)
+    print(f"{icon('file')} --- Viewing File: {candidate} ---\n")
+    if os.path.exists(candidate):
+        with open(candidate) as f:
             print(f.read())
     else:
-        print(f"{icon('warn')} {file_name} does not exist yet. Run the corresponding tool first.")
+        print(f"{icon('warn')} {candidate} does not exist yet. Run the corresponding tool first.")
     input(f"\n{icon('arrow')} [PRESS ENTER TO RETURN TO MENU]")
 
 
 def view_search_history() -> None:
     clear_screen()
     print(f"{icon('history')} --- Web Search History ---\n")
-    search_files = sorted(glob.glob("virgo_search_memory_*.json"), reverse=True)
+    search_files = sorted(glob.glob(str(OUTDIR / "virgo_search_memory_*.json")), reverse=True)
     if not search_files:
-        if os.path.exists("virgo_search_memory.json"):
-            search_files = ["virgo_search_memory.json"]
+        if (OUTDIR / "virgo_search_memory.json").exists():
+            search_files = [str(OUTDIR / "virgo_search_memory.json")]
     if search_files:
         for i, f in enumerate(search_files[:10], 1):
             try:
@@ -119,103 +125,200 @@ def run_pipeline() -> None:
         input(f"\n{icon('arrow')} [PRESS ENTER TO RETURN TO MENU]")
 
 
+def _get_menu_options() -> list[tuple[str, str, str | None]]:
+    """Return list of (id, label, script_or_action) for the menu."""
+    return [
+        ("01", "Run Subnet Network Discovery Scanner",       "virgo_network_scanner.py"),
+        ("02", "Run Full System Diagnostics Suite",           "virgo_diagnostics.py"),
+        ("03", "Evaluate Active System & Hardware Alerts",    "virgo_alerts.py"),
+        ("04", "Execute Automated Triage & Remediation Fixer","virgo_fixer.py"),
+        ("05", "Workflow Connectivity Check",                 "workflow_check.py"),
+        ("06", f"DuckDuckGo Web Search {icon('web')}",       "virgo_web_search.py 1"),
+        ("07", f"Google Search {icon('search')}",            "virgo_web_search.py 2"),
+        ("08", f"YouTube Search {icon('video')}",             "virgo_web_search.py 3"),
+        ("09", "Run Agent Pipeline (virgo run)",              "__pipeline__"),
+        ("10", "View Live Network Map (JSON)",                "virgo_network_map.json"),
+        ("11", "View Active Alerts File (TXT)",               "ALERTS_TRIGGERED.txt"),
+        ("12", "View Web Search History",                     "__search_history__"),
+        ("13", f"Run Service Fingerprinter {icon('antenna')}","virgo_fingerprinter.py"),
+        ("14", f"Dispatch Alert Webhook {icon('sat')}",       "virgo_webhook.py"),
+        ("15", f"Open Safe Command Sandbox {icon('shield')}", "virgo_sandbox.py"),
+        ("16", f"Run Scheduler / Watchdog {icon('refresh')}", "virgo_watchdog.py --cycles 3"),
+        ("17", "List Available Scaffolds",                    "virgo_scaffold.py list"),
+        ("18", "Generate FastAPI CRUD Project",               "__scaffold_fastapi__"),
+        ("19", "Generate CLI App",                            "__scaffold_cli__"),
+        ("20", "Generate Flask Web App",                      "__scaffold_flask__"),
+        ("21", "Generate Python Library",                     "__scaffold_lib__"),
+        ("22", "Generate Agent Tool Module",                  "__scaffold_agent__"),
+    ]
+
+
+def _dispatch_action(action: str | None) -> bool:
+    """Run the action for a menu selection. Return False to exit."""
+    if action is None:
+        return True
+    action_map: dict[str, callable] = {
+        "__pipeline__": lambda: run_pipeline(),
+        "__search_history__": lambda: view_search_history(),
+        "__scaffold_fastapi__": lambda: _scaffold_prompt("fastapi-crud", "myapi",
+                                                         "fastapi-crud", "-v project_name"),
+        "__scaffold_cli__": lambda: _scaffold_prompt("cli-app", "mycli",
+                                                     "cli-app", "-v project_name"),
+        "__scaffold_flask__": lambda: _scaffold_prompt("flask-app", "mywebapp",
+                                                       "flask-app", "-v project_name"),
+        "__scaffold_lib__": lambda: _scaffold_prompt("python-lib", "mylib",
+                                                     "python-lib", "-v project_name"),
+        "__scaffold_agent__": lambda: _scaffold_prompt("agent-tool", "virgo_mytool",
+                                                       "agent-tool", "-v module_name"),
+    }
+    if action in action_map:
+        action_map[action]()
+        return True
+    if action == "__exit__":
+        print(f"\n{icon('done')} Shutting down Virgo control bridge. See ya!")
+        return False
+    # File viewer or script runner
+    if action.endswith(".json") or action.endswith(".txt"):
+        view_file(action)
+    else:
+        run_script(action)
+    return True
+
+
+def _scaffold_prompt(scaffold: str, default: str, _scaffold_name: str, var_flag: str) -> None:
+    """Prompt for a scaffold variable and run generation."""
+    name = input(f"{icon('arrow')} Project name [{default}]: ").strip() or default
+    run_script(
+        f"virgo_scaffold.py generate {scaffold} "
+        f"-o ../scaffold-output/{scaffold} "
+        f"{var_flag}={name}"
+    )
+
+
+def _have_msvcrt() -> bool:
+    """Return True if msvcrt is available (Windows)."""
+    try:
+        import msvcrt
+        return True
+    except ImportError:
+        return False
+
+
+def _arrow_prompt(options: list[tuple[str, str, str | None]]) -> str:
+    """Display menu with arrow-key navigation (Windows) or fall back to input()."""
+    if not _have_msvcrt() or not sys.stdin.isatty():
+        choice = input(f"{icon('arrow')} Select an option: ").strip().upper()
+        return choice
+
+    import msvcrt
+    import shutil
+
+    # Map id to display prefix
+    ids = [oid for oid, _, _ in options]
+    sel = 0
+
+    def render() -> None:
+        cols = shutil.get_terminal_size().columns
+        # Show options around current selection
+        start = max(0, sel - 8)
+        end = min(len(options), sel + 9)
+        for i in range(start, end):
+            oid, label, _ = options[i]
+            prefix = "  >" if i == sel else "   "
+            suffix = " <" if i == sel else ""
+            print(f"{prefix}[{oid}] {label}{suffix}".ljust(cols - 1))
+        print()
+
+    # Hide cursor
+    print("\033[?25l", end="", flush=True)
+
+    while True:
+        # Print menu from current position
+        cols = shutil.get_terminal_size().columns
+        start = max(0, sel - 8)
+        end = min(len(options), sel + 9)
+        for i in range(start, end):
+            oid, label, _ = options[i]
+            prefix = "  >" if i == sel else "   "
+            suffix = " <" if i == sel else ""
+            line = f"{prefix}[{oid}] {label}{suffix}"
+            print(line.ljust(cols - 1))
+
+        key = msvcrt.getch()
+        if key == b"\xe0":  # Arrow keys send two bytes on Windows
+            key2 = msvcrt.getch()
+            if key2 == b"H":  # Up
+                sel = (sel - 1) % len(options)
+            elif key2 == b"P":  # Down
+                sel = (sel + 1) % len(options)
+            elif key2 == b"M":  # Right (next page)
+                sel = min(sel + 8, len(options) - 1)
+            elif key2 == b"K":  # Left (prev page)
+                sel = max(sel - 8, 0)
+        elif key == b"\r":  # Enter
+            print("\033[?25h", end="", flush=True)  # Restore cursor
+            return ids[sel]
+        elif key in (b"q", b"Q", b"x", b"X"):
+            print("\033[?25h", end="", flush=True)
+            return "X"
+        elif key.isdigit() or (len(key) == 1 and key in b"\x1b"):
+            print("\033[?25h", end="", flush=True)
+            if key == b"\x1b":  # Escape → X
+                return "X"
+            return chr(key[0]) if key else ""
+
+        # Move cursor back up
+        rows = end - start + 1
+        print(f"\033[{rows}A", end="", flush=True)
+
+    print("\033[?25h", end="", flush=True)  # Restore cursor
+
+
 def master_dashboard() -> None:
+    options = _get_menu_options()
+    total = len(options)
+
     while True:
         clear_screen()
         print("=" * 60)
         print(f"          {icon('virgo')} VIRGO AGENT FRAMEWORK - MASTER CONTROL")
         print("=" * 60)
-        print("  VIRGO MODULES")
-        print("  [1]  Run Subnet Network Discovery Scanner")
-        print("  [2]  Run Full System Diagnostics Suite")
-        print("  [3]  Evaluate Active System & Hardware Alerts")
-        print("  [4]  Execute Automated Triage & Remediation Fixer")
-        print("  [5]  Workflow Connectivity Check")
-        print("-" * 60)
-        print("  WEB SEARCH")
-        print(f"  [6]  DuckDuckGo Web Search {icon('web')}")
-        print(f"  [7]  Google Search {icon('search')}")
-        print(f"  [8]  YouTube Search {icon('video')}")
-        print("-" * 60)
-        print("  CORE PIPELINE")
-        print("  [9]  Run Agent Pipeline (virgo run)")
-        print("-" * 60)
-        print("  DATA VIEWER")
-        print("  [10] View Live Network Map (JSON)")
-        print("  [11] View Active Alerts File (TXT)")
-        print("  [12] View Web Search History")
-        print("-" * 60)
-        print("  ADVANCED MODULES")
-        print(f"  [13] Run Service Fingerprinter {icon('antenna')}")
-        print(f"  [14] Dispatch Alert Webhook {icon('sat')}")
-        print(f"  [15] Open Safe Command Sandbox {icon('shield')}")
-        print(f"  [16] Run Scheduler / Watchdog {icon('refresh')}")
-        print("-" * 60)
-        print("  SCAFFOLDING")
-        print("  [17] List Available Scaffolds")
-        print("  [18] Generate FastAPI CRUD Project")
-        print("  [19] Generate CLI App")
-        print("  [20] Generate Flask Web App")
-        print("  [21] Generate Python Library")
-        print("  [22] Generate Agent Tool Module")
-        print("-" * 60)
-        print("  [X]  Exit Dashboard")
+
+        # Category breakpoints (index in options)
+        cats = {"VIRGO MODULES": 0, "WEB SEARCH": 5, "CORE PIPELINE": 8,
+                "DATA VIEWER": 9, "ADVANCED MODULES": 12, "SCAFFOLDING": 16}
+
+        for cat, start in cats.items():
+            print(f"  {cat}")
+            end = list(cats.values())[list(cats.values()).index(start) + 1] \
+                  if list(cats.values()).index(start) + 1 < len(cats) else total
+            for i in range(start, end):
+                oid, label, _ = options[i]
+                print(f"  [{oid}]  {label}")
+            print("-" * 60)
+
+        print(f"  [X]  Exit Dashboard")
         print("=" * 60)
 
-        choice = input(f"{icon('arrow')} Select an option: ").strip().upper()
+        # Use arrow-key navigation on Windows, fall back to plain input
+        if _have_msvcrt():
+            choice = _arrow_prompt(options)
+        else:
+            choice = input(f"{icon('arrow')} Select an option: ").strip().upper()
 
-        if choice == "1":
-            run_script("virgo_network_scanner.py")
-        elif choice == "2":
-            run_script("virgo_diagnostics.py")
-        elif choice == "3":
-            run_script("virgo_alerts.py")
-        elif choice == "4":
-            run_script("virgo_fixer.py")
-        elif choice == "5":
-            run_script("workflow_check.py")
-        elif choice == "6":
-            run_script("virgo_web_search.py 1")
-        elif choice == "7":
-            run_script("virgo_web_search.py 2")
-        elif choice == "8":
-            run_script("virgo_web_search.py 3")
-        elif choice == "9":
-            run_pipeline()
-        elif choice == "10":
-            view_file("virgo_network_map.json")
-        elif choice == "11":
-            view_file("ALERTS_TRIGGERED.txt")
-        elif choice == "12":
-            view_search_history()
-        elif choice == "13":
-            run_script("virgo_fingerprinter.py")
-        elif choice == "14":
-            run_script("virgo_webhook.py")
-        elif choice == "15":
-            run_script("virgo_sandbox.py")
-        elif choice == "16":
-            run_script("virgo_watchdog.py --cycles 3")
-        elif choice == "17":
-            run_script("virgo_scaffold.py list")
-        elif choice == "18":
-            name = input(f"{icon('arrow')} Project name [myapi]: ").strip() or "myapi"
-            run_script(f"virgo_scaffold.py generate fastapi-crud -o ../scaffold-output/fastapi-crud -v project_name={name}")
-        elif choice == "19":
-            name = input(f"{icon('arrow')} Project name [mycli]: ").strip() or "mycli"
-            run_script(f"virgo_scaffold.py generate cli-app -o ../scaffold-output/cli-app -v project_name={name}")
-        elif choice == "20":
-            name = input(f"{icon('arrow')} Project name [mywebapp]: ").strip() or "mywebapp"
-            run_script(f"virgo_scaffold.py generate flask-app -o ../scaffold-output/flask-app -v project_name={name}")
-        elif choice == "21":
-            name = input(f"{icon('arrow')} Project name [mylib]: ").strip() or "mylib"
-            run_script(f"virgo_scaffold.py generate python-lib -o ../scaffold-output/python-lib -v project_name={name}")
-        elif choice == "22":
-            name = input(f"{icon('arrow')} Module name [virgo_mytool]: ").strip() or "virgo_mytool"
-            run_script(f"virgo_scaffold.py generate agent-tool -o . -v module_name={name}")
-        elif choice == "X":
+        if choice == "X":
             print(f"\n{icon('done')} Shutting down Virgo control bridge. See ya!")
             break
+
+        # Match by id (01-22) or direct number (1-22)
+        matched = None
+        for oid, _, action in options:
+            if choice in (oid, oid.lstrip("0"), oid[1:] if oid.startswith("0") else ""):
+                matched = action
+                break
+
+        if matched is not None:
+            _dispatch_action(matched)
         else:
             input(f"\n{icon('error')} Invalid choice. Press Enter to try again.")
 
