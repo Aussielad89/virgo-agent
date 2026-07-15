@@ -9,10 +9,27 @@ from __future__ import annotations
 
 import sys
 
+# ── Stdout encoding fix ─────────────────────────────────────────────────────
+# On Windows, CPython often inherits cp1252 for stdout, which chokes on
+# any Unicode > U+00FF.  Wrapping with utf-8 + errors='replace' makes
+# every print() safe — unknown chars become "?" instead of crashing.
+_ORIGINAL_ENCODING = (sys.stdout.encoding or "").lower()
+if sys.stdout.encoding and _ORIGINAL_ENCODING != "utf-8":
+    import io
+    sys.stdout = io.TextIOWrapper(
+        sys.stdout.buffer,
+        encoding="utf-8",
+        errors="replace",
+    )
+
 
 def _supports_emoji() -> bool:
     """Return True if the terminal is likely to handle Unicode emoji."""
-    enc = (sys.stdout.encoding or "").lower()
+    # Windows terminals (cmd.exe, PowerShell) have poor emoji support even
+    # when the encoding is UTF-8.  Always use ASCII icons on Windows.
+    if sys.platform == "win32":
+        return False
+    enc = (_ORIGINAL_ENCODING or "").lower()
     return "utf" in enc or enc in ("", "unknown")
 
 

@@ -35,7 +35,7 @@ def _build_logo() -> str:
     )
 
     tagline = "multi-agent state machine"
-    phases = "discover  →  plan  →  code  →  test  →  fix"
+    phases = "discover -> plan -> code -> test -> fix"
 
     tag_pad = (width - len(tagline)) // 2
     phase_pad = (width - len(phases)) // 2
