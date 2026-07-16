@@ -18,7 +18,6 @@ infrastructure.
 from __future__ import annotations
 
 import os
-import sys
 import time
 import textwrap
 from dataclasses import dataclass, field
@@ -34,7 +33,7 @@ if TYPE_CHECKING:
 # Step printer — uses _console.icon() for safe emoji/ASCII output
 # ===========================================================================
 
-from _console import icon, _supports_emoji  # re-export for tests / backwards compat
+from _console import icon  # re-export for tests / backwards compat
 
 _STEP_LABELS = {
     "goal":     "goal",
@@ -275,7 +274,7 @@ class Orchestrator:
             state.plan = plan
             _step("plan", f"Cycle {plan_cycles}/{max_plan_cycles}")
             print(f"\n{'=' * 60}")
-            print(f"  PLAN")
+            print("  PLAN")
             print(f"{'=' * 60}")
             print(textwrap.indent(plan.strip(), "  "))
             print(f"{'=' * 60}")
@@ -296,7 +295,7 @@ class Orchestrator:
                         return state
                     # Incorporate feedback into the goal for the next cycle
                     goal = goal + "\n[REVISION] " + feedback
-                    _step("fix", f"Feedback applied — re-planning")
+                    _step("fix", "Feedback applied — re-planning")
 
         if not approved:
             _step("fail", f"Plan not approved after {max_plan_cycles} cycles — aborting")
@@ -452,38 +451,81 @@ class Orchestrator:
         results: list[dict[str, Any]] = []
         t0 = time.time()
 
-        for idx, (name, sub_goal) in enumerate(agents, 1):
-            # Ordered mode: wait for previous agent's completed status
-            if ordered and idx > 1 and bb is not None:
-                prev = agents[idx - 2][0]
-                if verbose:
-                    print(f"  [swarm] waiting for {prev} to complete …")
-                bb.wait_for(f"agent/{prev}/status", timeout=600)
+        # Empty agents → early return (avoids max_workers=0 error)
+        if not agents:
+            return results
 
-            agent = SubAgent(
-                name=name,
-                goal=sub_goal,
-                planner=planner,
-                generator=generator,
-                fixer=fixer,
-                max_iterations=max_iterations,
-                blackboard=bb,
-            )
-            result = agent.run(self.registry, self.env, verbose=verbose)
-            results.append({
-                "name": result.name,
-                "goal": result.goal,
-                "status": result.status,
-                "files": result.files_created,
-                "output": result.output,
-                "error": result.error,
-                "duration": round(result.duration, 2),
-            })
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-            status_icon = "✅" if result.status == "success" else "❌"
-            print(f"  {status_icon}  [{idx}/{len(agents)}] {name} — "
-                  f"{result.status} ({result.duration:.1f}s) "
-                  f"→ {len(result.files_created)} file(s)")
+        if ordered:
+            # Sequential with optional blackboard wait between agents
+            for idx, (name, sub_goal) in enumerate(agents, 1):
+                if idx > 1 and bb is not None:
+                    prev = agents[idx - 2][0]
+                    if verbose:
+                        print(f"  [swarm] waiting for {prev} to complete …")
+                    bb.wait_for(f"agent/{prev}/status", timeout=600)
+
+                agent = SubAgent(
+                    name=name, goal=sub_goal,
+                    planner=planner, generator=generator, fixer=fixer,
+                    max_iterations=max_iterations, blackboard=bb,
+                )
+                result = agent.run(self.registry, self.env, verbose=verbose)
+                results.append({
+                    "name": result.name, "goal": result.goal,
+                    "status": result.status, "files": result.files_created,
+                    "output": result.output, "error": result.error,
+                    "duration": round(result.duration, 2),
+                })
+                status_icon = "✅" if result.status == "success" else "❌"
+                print(f"  {status_icon}  [{idx}/{len(agents)}] {name} — "
+                      f"{result.status} ({result.duration:.1f}s) "
+                      f"→ {len(result.files_created)} file(s)")
+        else:
+            # Parallel: fan out agents via thread pool
+            if verbose and len(agents) > 1:
+                print(f"  [swarm] Running {len(agents)} agents in parallel …")
+
+            def _run_agent(name: str, sub_goal: str) -> dict[str, Any]:
+                agent = SubAgent(
+                    name=name, goal=sub_goal,
+                    planner=planner, generator=generator, fixer=fixer,
+                    max_iterations=max_iterations, blackboard=bb,
+                )
+                result = agent.run(self.registry, self.env, verbose=verbose)
+                return {
+                    "name": result.name, "goal": result.goal,
+                    "status": result.status, "files": result.files_created,
+                    "output": result.output, "error": result.error,
+                    "duration": round(result.duration, 2),
+                }
+
+            with ThreadPoolExecutor(max_workers=len(agents)) as pool:
+                fut_to_name = {
+                    pool.submit(_run_agent, name, sub_goal): name
+                    for name, sub_goal in agents
+                }
+                for future in as_completed(fut_to_name):
+                    name = fut_to_name[future]
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        status_icon = "✅" if result["status"] == "success" else "❌"
+                        print(f"  {status_icon}  {name} — {result['status']} "
+                              f"({result['duration']:.1f}s) "
+                              f"→ {len(result['files'])} file(s)")
+                    except Exception as exc:
+                        results.append({
+                            "name": name, "goal": "", "status": "failed",
+                            "files": [], "output": "", "error": str(exc),
+                            "duration": 0,
+                        })
+                        print(f"  ❌  {name} — failed ({exc})")
+
+            # Restore original ordering
+            name_order = [n for n, _ in agents]
+            results.sort(key=lambda r: name_order.index(r["name"]))
 
         total = time.time() - t0
         passed = sum(1 for r in results if r["status"] == "success")
@@ -492,13 +534,17 @@ class Orchestrator:
               f"in {total:.1f}s")
         if bb is not None:
             print(f"  {'─' * 58}")
-            print(f"  Blackboard summary:")
+            print("  Blackboard summary:")
             print(bb.summary())
         return results
 
     def _is_excluded(self, p: Path) -> bool:
         """Return True if *p*'s suffix or relative path should be excluded."""
         if p.suffix in self.suffix_excludes:
+            return True
+        # Fast name check — catches .git, __pycache__ etc. even when
+        # path resolution fails on Windows (8.3 short-name mismatch).
+        if p.name in self.excludes:
             return True
         try:
             # Resolve both sides so Windows 8.3 short-name / casing mismatches
@@ -520,6 +566,7 @@ class Orchestrator:
         _step("discover", f"Scanning {self.base_path}")
 
         seen: set[Path] = set()
+        exts: dict[str, int] = {}
         for pattern in self.includes:
             for p in sorted(self.base_path.glob(pattern)):
                 if not p.is_file() or p in seen:
@@ -542,12 +589,14 @@ class Orchestrator:
                     sample=sample,
                 )
                 state.discovered_files.append(df)
+                exts[df.extension] = exts.get(df.extension, 0) + 1
 
-                if sample:
-                    fmt = sample.get("format") or p.suffix.lower().lstrip(".")
-                    _step("discover", f"  {df.path}", f"[{fmt}] {df.size:,} B")
-                else:
-                    _step("discover", f"  {df.path}", f"{df.size:,} B")
+        if state.discovered_files:
+            summary = ", ".join(f"{n} {ext}" for ext, n in sorted(exts.items()))
+            total = len(state.discovered_files)
+            _step("discover", f"{total} file(s) found [{summary}]")
+        else:
+            _step("discover", "No files found")
 
     # ======================================================================
     # Phase 4 — Write-Test-Fix loop

@@ -5,6 +5,9 @@ Lets the agent learn from past tasks so it stops re-solving the same
 problems. Experiences are stored as JSON lines in a `.jsonl` file and
 ranked for recall by keyword overlap (Jaccard) with a query goal.
 
+Also supports **semantic embeddings** via Ollama for richer retrieval
+when the ``LLM_BASE_URL`` env var points to an Ollama instance.
+
 Stdlib-only. Conventions: PascalCase classes, snake_case functions,
 logging via `_log.log`, no raw emoji.
 """
@@ -12,10 +15,13 @@ logging via `_log.log`, no raw emoji.
 from __future__ import annotations
 
 import json
+import os
 import re
+import urllib.request
+import urllib.error
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from _log import log
 
@@ -34,6 +40,50 @@ _STOPWORDS = frozenset(
 )
 
 _TOKEN_RE = re.compile(r"[a-zA-Z]+")
+
+# ── Optional embedding support via Ollama ─────────────────────────────
+
+_EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "qwen2.5-coder:7b")
+_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+
+
+def _get_embedding(text: str) -> list[float] | None:
+    """Get an embedding vector from Ollama's embedding endpoint.
+
+    Returns None if the endpoint is unreachable or returns an error.
+    """
+    try:
+        req = urllib.request.Request(
+            f"{_LLM_BASE_URL.rstrip('/')}/embeddings",
+            data=json.dumps({"model": _EMBEDDING_MODEL, "input": text}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = json.loads(resp.read())
+            # OpenAI-compatible format: {"data": [{"embedding": [...]}]}
+            data = body.get("data", body.get("data", [body]))
+            if isinstance(data, list) and len(data) > 0:
+                return data[0] if isinstance(data[0], list) else data[0].get("embedding")
+            # Ollama format: {"embedding": [...]}
+            if "embedding" in body:
+                return body["embedding"]
+    except Exception as exc:
+        log.debug("experience: embedding unavailable (%s)", exc)
+    return None
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Cosine similarity between two vectors."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(x * x for x in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
+# ── Keyword helpers ──────────────────────────────────────────────────
 
 
 def _keywords(text: str) -> set[str]:
@@ -117,6 +167,9 @@ class ExperienceMemory:
         """Record a completed task and persist it. Returns the stored dict."""
         entry_id = self._next_id
         self._next_id += 1
+        # Compute keywords + optional embedding
+        kw = sorted(_keywords(goal + " " + approach + " " + lesson))
+        embedding = _get_embedding(goal + " " + approach)
         entry = {
             "id": entry_id,
             "ts": datetime.now().astimezone().isoformat(),
@@ -126,8 +179,10 @@ class ExperienceMemory:
             "outcome": outcome,
             "success": bool(success),
             "lesson": lesson,
-            "keywords": sorted(_keywords(goal + " " + approach + " " + lesson)),
+            "keywords": kw,
         }
+        if embedding is not None:
+            entry["embedding"] = embedding
         self._entries.append(entry)
         self._persist(entry)
         return entry
@@ -151,13 +206,41 @@ class ExperienceMemory:
         scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
         return [entry for _, _, entry in scored[:k]]
 
-    def format_for_prompt(self, goal: str, k: int = 3) -> str:
+    def recall_semantic(self, goal: str, k: int = 3) -> list[dict]:
+        """Return top-k entries by cosine similarity of embeddings.
+
+        Falls back to keyword recall when embeddings are not available
+        or the embedding endpoint is unreachable.
+        """
+        if not self._entries:
+            return []
+        query_emb = _get_embedding(goal)
+        if query_emb is None:
+            # Fall back to keyword recall
+            return self.recall(goal, k)
+
+        scored = []
+        for idx, entry in enumerate(self._entries):
+            entry_emb = entry.get("embedding")
+            if entry_emb:
+                score = _cosine_similarity(query_emb, entry_emb)
+                scored.append((score, idx, entry))
+        if not scored:
+            # No entries with embeddings; fall back to keywords
+            return self.recall(goal, k)
+        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        return [entry for _, _, entry in scored[:k]]
+
+    def format_for_prompt(self, goal: str, k: int = 3,
+                          semantic: bool = True) -> str:
         """Compact multiline block of past lessons for an LLM prompt.
 
+        Uses semantic recall by default (embeddings), falling back to
+        keyword overlap when embeddings are unavailable.
         Only entries that succeeded or carry a non-empty lesson are shown.
         Returns 'PAST EXPERIENCE: (none)' when there is nothing relevant.
         """
-        recalled = self.recall(goal, k)
+        recalled = self.recall_semantic(goal, k) if semantic else self.recall(goal, k)
         lines = []
         for entry in recalled:
             if not entry.get("success") and not entry.get("lesson"):
@@ -173,11 +256,15 @@ class ExperienceMemory:
         return "PAST EXPERIENCE:\n" + "\n".join(lines)
 
     def stats(self) -> dict:
-        """Return {count, successes, failures}."""
+        """Return {count, successes, failures, embeddings}."""
         count = len(self._entries)
         successes = sum(1 for e in self._entries if e.get("success"))
         failures = count - successes
-        return {"count": count, "successes": successes, "failures": failures}
+        with_embeddings = sum(1 for e in self._entries if "embedding" in e)
+        return {
+            "count": count, "successes": successes, "failures": failures,
+            "with_embeddings": with_embeddings,
+        }
 
 
 # ── module-level convenience ───────────────────────────────────────────

@@ -1,5 +1,6 @@
 """Smoke-tests for orchestrator.py — discovery, state tracking, WTF loop."""
-import os, sys, json
+import sys
+import json
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -7,7 +8,7 @@ sys.path.insert(0, str(HERE))
 
 from environment import AgentEnvironment
 from tools import ToolRegistry
-from orchestrator import Orchestrator, WorkspaceState, GeneratedFile, TestLog
+from orchestrator import Orchestrator
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -88,7 +89,7 @@ state = orch.run(
 print(f"  Iterations used: {state.iteration}")
 print(f"  Final passed: {state.loop_passed}")
 # Should have passed because the fixer patches the exit(1) line
-assert state.loop_passed, f"Expected fixer to resolve, logs: {[l.passed for l in state.test_logs]}"
+assert state.loop_passed, f"Expected fixer to resolve, logs: {[t.passed for t in state.test_logs]}"
 print()
 
 print("=== 4. WTF Loop — max iterations exceeded ===")

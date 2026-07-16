@@ -16,7 +16,6 @@ built-in tools and wires ``env`` into the tools that need it.
 from __future__ import annotations
 
 import csv
-import io
 import json
 import os
 import re
@@ -160,9 +159,11 @@ class ToolRegistry:
     def _make_code_patcher(env: Optional[AgentEnvironment] = None) -> Tool:
         if env is not None:
             # Filter out env from kwargs so callers can still pass it
-            fn: Callable[..., Any] = lambda **kw: _code_patcher(
-                **{k: v for k, v in kw.items() if k != "env"}, env=env
-            )
+            def _make_fn(**kw: Any) -> Any:
+                return _code_patcher(
+                    **{k: v for k, v in kw.items() if k != "env"}, env=env
+                )
+            fn: Callable[..., Any] = _make_fn
         else:
             fn = _code_patcher
         return Tool(

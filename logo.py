@@ -4,7 +4,6 @@ Pure ASCII — works on every terminal.
 Uses pyfiglet (optional; falls back to plain text).
 """
 
-import sys
 
 _LOGO = None
 
@@ -24,7 +23,7 @@ def _build_logo() -> str:
         )
 
     lines = text.rstrip("\n").split("\n")
-    width = max(len(l) for l in lines)
+    width = max(len(line) for line in lines)
 
     border = "+" + "-" * (width + 4) + "+"
     bottom = "+" + "=" * (width + 4) + "+"

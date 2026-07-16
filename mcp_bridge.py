@@ -26,12 +26,12 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from _log import log
 from _console import icon
@@ -56,6 +56,9 @@ class McpServer:
         self._req_id = 0
         self._tools: list[dict] = []
         self._ready = False
+        self._read_queue: queue.Queue = queue.Queue()
+        self._reader_stop = threading.Event()
+        self._reader_thread: Optional[threading.Thread] = None
 
     # -- lifecycle -------------------------------------------------------
     def start(self, timeout: float = 20.0) -> bool:
@@ -72,6 +75,11 @@ class McpServer:
         except (OSError, FileNotFoundError) as exc:
             log.warning("MCP %s: cannot launch %s: %s", self.name, self.command, exc)
             return False
+
+        # start background reader thread
+        self._reader_stop.clear()
+        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self._reader_thread.start()
 
         # initialize
         init = self._request(
@@ -98,7 +106,24 @@ class McpServer:
         log.info("MCP %s ready: %d tools", self.name, len(self._tools))
         return True
 
+    def _reader_loop(self) -> None:
+        """Read lines from stdout into a queue with a sentinel on EOF."""
+        try:
+            assert self._proc is not None and self._proc.stdout is not None
+            for line in self._proc.stdout:
+                if self._reader_stop.is_set():
+                    return
+                self._read_queue.put(line)
+        except Exception:
+            pass
+        finally:
+            self._read_queue.put(None)  # EOF sentinel
+
     def stop(self) -> None:
+        self._reader_stop.set()
+        if self._reader_thread is not None:
+            self._reader_thread.join(timeout=3)
+            self._reader_thread = None
         if self._proc is not None:
             try:
                 self._proc.terminate()
@@ -119,12 +144,13 @@ class McpServer:
         self._proc.stdin.flush()
 
     def _read_line(self, timeout: float) -> Optional[str]:
-        if self._proc is None or self._proc.stdout is None:
+        try:
+            item = self._read_queue.get(timeout=timeout)
+        except queue.Empty:
             return None
-        line = self._proc.stdout.readline()
-        if not line:
-            return None
-        return line
+        if item is None:
+            return None  # EOF sentinel
+        return item
 
     def _request(self, method: str, params: dict, timeout: float = 20.0) -> Optional[dict]:
         with self._lock:

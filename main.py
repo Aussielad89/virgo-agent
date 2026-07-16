@@ -23,7 +23,6 @@ import textwrap
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -31,7 +30,6 @@ sys.path.insert(0, str(HERE))
 from environment import AgentEnvironment
 from tools import ToolRegistry
 from _console import icon
-from _log import log
 from logo import print_logo
 from orchestrator import (
     Orchestrator,

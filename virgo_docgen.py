@@ -25,10 +25,8 @@ from __future__ import annotations
 
 import argparse
 import ast
-import inspect
 import os
 import sys
-import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -126,7 +124,6 @@ def _get_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
 
     # Positional args
     for i, arg in enumerate(args.args):
-        prefix = ""
         if i == 0 and getattr(arg, 'arg', '') in ('self', 'cls'):
             # Omit self/cls from signature
             continue
@@ -512,7 +509,7 @@ def _build_markdown_module(
     lines.append("")
 
     # Back link
-    lines.append(f"[← Back to index](index.md)")
+    lines.append("[← Back to index](index.md)")
     lines.append("")
 
     # Module docstring
@@ -916,7 +913,7 @@ def _html_function(func: FunctionDoc, detail: bool = False) -> str:
         doc_html = _escape_html(func.docstring).replace("\n", "<br>")
         parts.append(f'<div class="func-doc">{doc_html}</div>')
     else:
-        parts.append(f'<div class="func-doc"><em>No docstring.</em></div>')
+        parts.append('<div class="func-doc"><em>No docstring.</em></div>')
 
     return "\n".join(parts)
 

@@ -1,5 +1,6 @@
 """Quick smoke-test for environment.py and tools.py."""
-import os, sys, json, tempfile, shutil
+import sys
+import json
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -46,13 +47,13 @@ try:
     proc = env.run_file(str(script))
     assert proc.returncode == 0
     assert "run_file works" in proc.stdout
-    print(f"  run_file: OK")
+    print("  run_file: OK")
 finally:
     script.unlink(missing_ok=True)
 
 env.teardown()
 assert not env.is_ready
-print(f"  Teardown: OK")
+print("  Teardown: OK")
 print()
 
 # ---------------------------------------------------------------------------
@@ -159,7 +160,7 @@ finally:
 proc_result = reg.execute("python_runner", script="print('runner works')")
 assert proc_result["returncode"] == 0
 assert "runner works" in proc_result["stdout"]
-print(f"  python_runner: OK")
+print("  python_runner: OK")
 
 print()
 print("All smoke-tests passed.")

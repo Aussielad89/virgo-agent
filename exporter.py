@@ -5,8 +5,6 @@ and markdown summaries.
 
 from __future__ import annotations
 
-import json
-import textwrap
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -21,67 +19,67 @@ def to_markdown(state: Any, title: Optional[str] = None) -> str:
     """Render a WorkspaceState as a Markdown document."""
     lines: list[str] = []
     lines.append(f"# {title or 'virgo — Pipeline Report'}")
-    lines.append(f"")
+    lines.append("")
     lines.append(f"- **Goal:** {getattr(state, 'goal', 'N/A')}")
     lines.append(f"- **Phase:** {getattr(state, 'phase', 'N/A')}")
     lines.append(f"- **Result:** {'✅ PASS' if getattr(state, 'loop_passed', False) else '❌ FAIL'}")
     lines.append(f"- **WTF iterations:** {getattr(state, 'iteration', 0)}")
     lines.append(f"- **Generated files:** {len(getattr(state, 'generated_files', []))}")
-    lines.append(f"")
-    lines.append(f"## Plan")
-    lines.append(f"")
-    lines.append(f"```")
+    lines.append("")
+    lines.append("## Plan")
+    lines.append("")
+    lines.append("```")
     lines.append(getattr(state, 'plan', '*No plan*'))
-    lines.append(f"```")
-    lines.append(f"")
+    lines.append("```")
+    lines.append("")
 
     # Discovered files
     discovered = getattr(state, 'discovered_files', [])
     if discovered:
-        lines.append(f"## Discovered Files")
-        lines.append(f"")
-        lines.append(f"| File | Size | Format |")
-        lines.append(f"|------|------|--------|")
+        lines.append("## Discovered Files")
+        lines.append("")
+        lines.append("| File | Size | Format |")
+        lines.append("|------|------|--------|")
         for df in discovered:
             fmt = (df.sample or {}).get("format", "") if hasattr(df, 'sample') else ""
             sz = f"{df.size:,} B" if hasattr(df, 'size') else ""
             lines.append(f"| {getattr(df, 'path', '')} | {sz} | {fmt} |")
-        lines.append(f"")
+        lines.append("")
 
     # Generated files
     generated = getattr(state, 'generated_files', [])
     if generated:
-        lines.append(f"## Generated Files")
-        lines.append(f"")
+        lines.append("## Generated Files")
+        lines.append("")
         for gf in generated:
             status = "✅ PASS" if getattr(gf, 'passed', False) else "❌ FAIL"
             lines.append(f"### `{getattr(gf, 'path', '')}` — {status}")
-            lines.append(f"")
-            lines.append(f"```python")
+            lines.append("")
+            lines.append("```python")
             lines.append(getattr(gf, 'content', '*No content*'))
-            lines.append(f"```")
-            lines.append(f"")
+            lines.append("```")
+            lines.append("")
 
     # Test logs
     logs = getattr(state, 'test_logs', [])
     if logs:
-        lines.append(f"## Test Logs")
-        lines.append(f"")
+        lines.append("## Test Logs")
+        lines.append("")
         for tl in logs:
             status = "✅ PASS" if getattr(tl, 'passed', True) else "❌ FAIL"
             lines.append(f"### `{getattr(tl, 'file', '')}` — {status}")
-            lines.append(f"")
+            lines.append("")
             if getattr(tl, 'stdout', ''):
-                lines.append(f"**stdout:**")
-                lines.append(f"```")
+                lines.append("**stdout:**")
+                lines.append("```")
                 lines.append(tl.stdout[:500])
-                lines.append(f"```")
+                lines.append("```")
             if getattr(tl, 'stderr', ''):
-                lines.append(f"**stderr:**")
-                lines.append(f"```")
+                lines.append("**stderr:**")
+                lines.append("```")
                 lines.append(tl.stderr[:500])
-                lines.append(f"```")
-            lines.append(f"")
+                lines.append("```")
+            lines.append("")
 
     return "\n".join(lines)
 

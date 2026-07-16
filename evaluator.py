@@ -116,7 +116,7 @@ def _deterministic_evaluation(goal: str, transcript: str, reason: str = "") -> E
     """Build an :class:`Evaluation` from the deterministic checks."""
     checks, failed = _deterministic_checks(goal, transcript)
     passed = len(failed) == 0
-    score = len(checks) / len(checks) if not checks else (len(checks) - len(failed)) / len(checks)
+    score = 0.0 if not checks else (len(checks) - len(failed)) / len(checks)
     if failed:
         rationale = (
             f"Deterministic checks failed: {', '.join(c.split(' — ')[0] for c in failed)}."

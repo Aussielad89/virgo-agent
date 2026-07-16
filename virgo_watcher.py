@@ -19,7 +19,6 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from _console import icon
-from _log import log
 
 
 # ── Change detection ─────────────────────────────────────────────────

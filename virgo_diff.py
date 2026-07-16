@@ -204,7 +204,7 @@ def render_diff(diff: dict[str, Any], output_path: Optional[str] = None) -> str:
 
     # -- Metadata side-by-side -------------------------------------------
     _w(f"  {'─' * 70}")
-    _w(f"  Metadata")
+    _w("  Metadata")
     _w(f"  {'─' * 70}")
     _w("")
     _w(f"  {'Field':<30s}  {'Session A':<40s}  {'Session B'}")
@@ -236,7 +236,7 @@ def render_diff(diff: dict[str, Any], output_path: Optional[str] = None) -> str:
 
     if plans_a or plans_b:
         _w(f"  {'─' * 70}")
-        _w(f"  Plans")
+        _w("  Plans")
         _w(f"  {'─' * 70}")
         _w("")
         if plans_a:
@@ -262,7 +262,7 @@ def render_diff(diff: dict[str, Any], output_path: Optional[str] = None) -> str:
     common = diff.get("common", [])
 
     _w(f"  {'─' * 70}")
-    _w(f"  Files")
+    _w("  Files")
     _w(f"  {'─' * 70}")
     _w("")
 

@@ -24,7 +24,7 @@ SCAFFOLDS_DIR = HERE / "scaffolds"
 @pytest.fixture
 def tmp_dir() -> Path:
     with tempfile.TemporaryDirectory() as d:
-        yield Path(d)
+        yield Path(d).resolve()
 
 
 # ===========================================================================
@@ -115,7 +115,7 @@ class TestGenerate:
 
     def test_fastapi_scaffold_full_structure(self, tmp_dir: Path) -> None:
         created = generate("fastapi-crud", output_dir=str(tmp_dir), project_name="myapi")
-        paths = [p.resolve().relative_to(tmp_dir.resolve()) for p in created]
+        paths = [p.relative_to(tmp_dir) for p in created]
         assert Path("myapi/main.py") in paths
         assert Path("myapi/models.py") in paths
         assert Path("myapi/schemas.py") in paths
@@ -125,14 +125,14 @@ class TestGenerate:
 
     def test_flask_scaffold(self, tmp_dir: Path) -> None:
         created = generate("flask-app", output_dir=str(tmp_dir))
-        paths = [p.resolve().relative_to(tmp_dir.resolve()) for p in created]
+        paths = [p.relative_to(tmp_dir) for p in created]
         assert Path("app.py") in paths
         assert Path("templates/index.html") in paths
         assert Path("static/style.css") in paths
 
     def test_python_lib_scaffold(self, tmp_dir: Path) -> None:
         created = generate("python-lib", output_dir=str(tmp_dir), project_name="mylib")
-        paths = [p.resolve().relative_to(tmp_dir.resolve()) for p in created]
+        paths = [p.relative_to(tmp_dir) for p in created]
         assert Path("pyproject.toml") in paths
         assert Path("mylib/__init__.py") in paths
         assert Path("mylib/core.py") in paths
@@ -141,7 +141,7 @@ class TestGenerate:
     def test_agent_tool_scaffold(self, tmp_dir: Path) -> None:
         created = generate("agent-tool", output_dir=str(tmp_dir),
                            module_name="virgo_custom", tool_description="My custom tool")
-        paths = [p.resolve().relative_to(tmp_dir.resolve()) for p in created]
+        paths = [p.relative_to(tmp_dir) for p in created]
         assert Path("virgo_custom.py") in paths
         assert Path("tests/test_virgo_custom.py") in paths
 

@@ -16,8 +16,9 @@ sys.path.insert(0, str(HERE))
 
 from orchestrator import (
     Orchestrator, WorkspaceState, DiscoveredFile, GeneratedFile, TestLog,
-    _supports_emoji, _step,
+    _step,
 )
+from _console import _supports_emoji
 from tools import ToolRegistry
 from environment import AgentEnvironment
 
@@ -30,7 +31,7 @@ from environment import AgentEnvironment
 @pytest.fixture
 def tmp_workspace() -> Path:
     with tempfile.TemporaryDirectory() as d:
-        yield Path(d)
+        yield Path(d).resolve()
 
 
 @pytest.fixture

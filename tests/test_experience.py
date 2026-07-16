@@ -137,13 +137,13 @@ class TestFormatForPrompt:
 
 class TestStats:
     def test_stats_empty(self, fresh_memory: ExperienceMemory) -> None:
-        assert fresh_memory.stats() == {"count": 0, "successes": 0, "failures": 0}
+        assert fresh_memory.stats() == {"count": 0, "successes": 0, "failures": 0, "with_embeddings": 0}
 
     def test_stats_counts(self, fresh_memory: ExperienceMemory) -> None:
         fresh_memory.add("g1", "a1", [], "o", True)
         fresh_memory.add("g2", "a2", [], "o", True)
         fresh_memory.add("g3", "a3", [], "o", False)
-        assert fresh_memory.stats() == {"count": 3, "successes": 2, "failures": 1}
+        assert fresh_memory.stats() == {"count": 3, "successes": 2, "failures": 1, "with_embeddings": 0}
 
 
 class TestCorruptLines:

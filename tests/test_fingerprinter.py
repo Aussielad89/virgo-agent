@@ -5,7 +5,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -96,3 +96,43 @@ def test_grab_banner_timeout() -> None:
 
     lines = grab_banner(host="127.0.0.1", port=port, timeout=1)
     assert isinstance(lines, list)
+
+
+def test_grab_banner_send_failure() -> None:
+    """When sendall fails, grab_banner returns empty list."""
+    with patch("socket.socket") as mock_sock:
+        instance = MagicMock()
+        instance.connect.return_value = None
+        instance.sendall.side_effect = OSError("send failed")
+        mock_sock.return_value = instance
+
+        lines = grab_banner(host="127.0.0.1", port=12345, timeout=1)
+        assert lines == []
+        instance.close.assert_called_once()
+
+
+def test_grab_banner_recv_timeout() -> None:
+    """When recv times out after partial data, return what we got."""
+    with patch("socket.socket") as mock_sock:
+        instance = MagicMock()
+        instance.connect.return_value = None
+        instance.sendall.return_value = None
+        instance.recv.side_effect = socket.timeout("timed out")
+        mock_sock.return_value = instance
+
+        lines = grab_banner(host="127.0.0.1", port=12345, timeout=1)
+        assert lines == []
+
+
+def test_run_fingerprinter_no_banner() -> None:
+    """run_fingerprinter handles no-banner output gracefully."""
+    with patch("virgo_fingerprinter.grab_banner", return_value=[]):
+        from virgo_fingerprinter import run_fingerprinter
+        run_fingerprinter()  # should not raise
+
+
+def test_run_fingerprinter_with_banner() -> None:
+    """run_fingerprinter handles successful banner output gracefully."""
+    with patch("virgo_fingerprinter.grab_banner", return_value=["HTTP/1.1 200 OK", "Server: Test"]):
+        from virgo_fingerprinter import run_fingerprinter
+        run_fingerprinter()  # should not raise

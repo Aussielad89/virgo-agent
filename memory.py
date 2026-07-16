@@ -8,7 +8,6 @@ replayed, or continued after a crash.
 from __future__ import annotations
 
 import json
-import sys
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path

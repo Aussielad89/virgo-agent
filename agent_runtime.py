@@ -24,14 +24,17 @@ and records every run's outcome, so Virgo stops re-solving the same problem.
 
 from __future__ import annotations
 
-import os
 import re
 import textwrap
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
+
+# ── Progress callback type ──────────────────────────────────────────
+ProgressCallback = Callable[[str, str, Optional[str]], None]
+# Arguments: (phase: str, message: str, detail: str | None)
+# phase is one of: "step", "tool", "eval", "retry", "done", "error"
 
 from _log import log
-from _console import icon
 
 try:
     from tools_core import ToolRegistry, make_builtin_registry, parse_tool_calls
@@ -46,7 +49,9 @@ try:
 except Exception as exc:  # pragma: no cover
     log.warning("agent_runtime: experience unavailable (%s)", exc)
     ExperienceMemory = None  # type: ignore
-    get_memory = lambda: None  # type: ignore
+
+    def get_memory() -> None:  # type: ignore
+        return None
 
 try:
     from evaluator import evaluate, Evaluation
@@ -131,12 +136,26 @@ class AgentRuntime:
         self.tools_used: list[str] = []
 
     # -- public API ------------------------------------------------------
-    def run(self, goal: str) -> AgentResult:
-        """Execute a goal and return an AgentResult."""
+    def run(self, goal: str, *, progress_callback: Optional[ProgressCallback] = None) -> AgentResult:
+        """Execute a goal and return an AgentResult.
+
+        If *progress_callback* is provided, it is called on each significant
+        event::
+
+            progress_callback("step", "Planning…", detail=None)
+            progress_callback("tool", "file_write", detail="wrote main.py")
+            progress_callback("eval", "Evaluating…", detail=None)
+            progress_callback("retry", "Retry 2/3", detail="Reason for retry")
+            progress_callback("done", "Goal met", detail=None)
+            progress_callback("error", str(exc), detail=None)
+        """
+        _progress = progress_callback or (lambda phase, msg, detail=None: None)
+
         log.info("agent: starting goal=%r", goal)
         self.transcript = []
         self.tools_used = []
 
+        _progress("step", f"Starting goal: {goal[:80]}")
         experience_block = ""
         if self.config.use_experience and self.memory is not None:
             try:
@@ -157,9 +176,13 @@ class AgentRuntime:
         last_eval = None
         while attempts <= self.config.max_retries:
             attempts += 1
-            steps_taken = self._loop(messages, goal)
+            if attempts > 1:
+                _progress("retry", f"Retry {attempts}/{self.config.max_retries + 1}",
+                          detail="Previous attempt did not satisfy the goal")
+            self._loop(messages, goal, progress_callback=_progress)
             # Evaluate
             transcript_text = "\n".join(self.transcript)
+            _progress("eval", "Evaluating result…")
             if Evaluation is not None:
                 try:
                     last_eval = evaluate(
@@ -185,6 +208,7 @@ class AgentRuntime:
             )
             log.info("agent: retry %d/%d", attempts, self.config.max_retries)
 
+        _progress("done", "Goal completed" if passed else f"Goal failed after {attempts} attempt(s)")
         transcript_text = "\n".join(self.transcript)
         passed = (last_eval.passed if last_eval else self._heuristic_pass(transcript_text))
 
@@ -201,6 +225,7 @@ class AgentRuntime:
                 )
             except Exception as exc:  # pragma: no cover
                 log.warning("agent: memory write failed: %s", exc)
+                _progress("error", f"Memory write failed: {exc}")
 
         return AgentResult(
             goal=goal,
@@ -213,10 +238,13 @@ class AgentRuntime:
         )
 
     # -- internal loop ---------------------------------------------------
-    def _loop(self, messages: list[dict], goal: str) -> int:
+    def _loop(self, messages: list[dict], goal: str,
+              progress_callback: ProgressCallback = lambda p, m, d=None: None) -> int:
         steps = 0
-        for _ in range(self.config.max_steps):
+        for step in range(self.config.max_steps):
             steps += 1
+            progress_callback("step", f"Step {step + 1}/{self.config.max_steps}",
+                            detail=f"Thinking about: {goal[:60]}")
             reply = self._ask(messages)
             self.transcript.append(f"AGENT:\n{reply}")
             messages.append({"role": "assistant", "content": reply})
@@ -225,6 +253,7 @@ class AgentRuntime:
             if not calls:
                 if re.search(r"(?m)^DONE\b", reply):
                     self.transcript.append("OBSERVE: agent signaled DONE (no tools)")
+                    progress_callback("done", "Agent signaled DONE")
                     break
                 # Nudge the model to actually act.
                 self.transcript.append("OBSERVE: no tool call parsed; prompting for action")
@@ -238,6 +267,7 @@ class AgentRuntime:
             # hallucinate their results (and a premature DONE) in one reply;
             # ignoring the extras forces grounding in actual tool output.
             name, args = calls[0]
+            progress_callback("tool", name, detail=args[:120])
             result = self._dispatch(name, args)
             self.tools_used.append(name)
             self.transcript.append(f"OBSERVE [{name}]:\n{result}")

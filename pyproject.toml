@@ -4,21 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "virgo-agent"
-version = "0.5.0"
+version = "0.6.0"
 description = "Multi-agent state machine with diagnostics, search, and auto-fix"
 readme = "README.md"
 license = "MIT"
+dependencies = [
+    "python-dotenv",
+    "textual>=2.0",
+]
 requires-python = ">=3.11"
 authors = [
     { name = "Virgo Contributors" },
 ]
 
 [project.optional-dependencies]
-web = ["fastapi", "uvicorn", "jinja2"]
+web = ["fastapi", "uvicorn", "jinja2", "sse-starlette"]
 yaml = ["pyyaml"]
 dev = ["pytest>=7", "pytest-cov>=4", "pytest-xdist>=3", "mypy>=1"]
 
 [project.scripts]
 virgo = "cli:main"
+virgo-mcp = "mcp_server:main"
 virgo-dashboard = "virgo_menu:master_dashboard"
-
+virgo-textual = "virgo_textual:main"

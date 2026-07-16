@@ -27,6 +27,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -50,6 +51,130 @@ except Exception:  # pragma: no cover
             pass
 
     log = _NullLog()
+
+
+# ===========================================================================
+# Permission system
+# ===========================================================================
+
+# Risk levels for tools
+RISK_UNKNOWN = 0
+RISK_SAFE = 1       # read-only, no side effects
+RISK_LOW = 2        # writes files but sandboxed
+RISK_MEDIUM = 3     # executes code/subprocess
+RISK_HIGH = 4       # destructive operations (rm, format, shutdown)
+RISK_CRITICAL = 5   # full system access
+
+_TOOL_RISK: dict[str, int] = {
+    "think": RISK_SAFE,
+    "file_read": RISK_SAFE,
+    "file_write": RISK_LOW,
+    "python_run": RISK_MEDIUM,
+    "shell": RISK_HIGH,
+    "web_fetch": RISK_LOW,
+}
+
+
+class PermissionDenied(Exception):
+    """Raised when a tool call is denied by the permission gate."""
+    pass
+
+
+@dataclass
+class AuditEntry:
+    """A single audit log entry for a tool call."""
+    ts: str
+    tool: str
+    args: str
+    decision: str          # "allowed" | "denied" | "blocked"
+    reason: str = ""
+
+
+class PermissionGate:
+    """Gatekeeper that decides whether a tool call is allowed.
+
+    Controls tool access by risk level and maintains an audit trail.
+    """
+
+    def __init__(self, max_risk: int = RISK_HIGH) -> None:
+        self.max_risk = max_risk
+        self.audit_log: list[AuditEntry] = []
+        self._allowlist: set[str] = set()     # always allowed tools
+        self._blocklist: set[str] = set()     # always blocked tools
+
+    def allow(self, *tools: str) -> None:
+        """Always allow these tools, bypassing risk checks."""
+        self._allowlist.update(tools)
+
+    def block(self, *tools: str) -> None:
+        """Always block these tools."""
+        self._blocklist.update(tools)
+
+    def risk_of(self, tool: str) -> int:
+        """Return the risk level for a tool name."""
+        return _TOOL_RISK.get(tool, RISK_UNKNOWN)
+
+    def check(self, tool: str, args: str = "") -> None:
+        """Check if *tool* is allowed. Raises PermissionDenied if blocked."""
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        if tool in self._blocklist:
+            self.audit_log.append(AuditEntry(
+                ts=now, tool=tool, args=args,
+                decision="denied", reason="tool is blocklisted",
+            ))
+            raise PermissionDenied(f"Tool '{tool}' is blocklisted")
+
+        if tool in self._allowlist:
+            self.audit_log.append(AuditEntry(
+                ts=now, tool=tool, args=args,
+                decision="allowed", reason="allowlisted",
+            ))
+            return
+
+        risk = self.risk_of(tool)
+        if risk > self.max_risk:
+            reason = (f"risk level {risk} exceeds max {self.max_risk}"
+                      if risk > RISK_UNKNOWN else "unknown tool")
+            self.audit_log.append(AuditEntry(
+                ts=now, tool=tool, args=args,
+                decision="denied", reason=reason,
+            ))
+            raise PermissionDenied(
+                f"Tool '{tool}' blocked: {reason} "
+                f"(max_risk={self.max_risk})"
+            )
+
+        self.audit_log.append(AuditEntry(
+            ts=now, tool=tool, args=args,
+            decision="allowed", reason=f"risk={risk} <= max={self.max_risk}",
+        ))
+
+    def summary(self) -> str:
+        """Return a text summary of recent audit entries."""
+        lines = [f"Permission audit ({len(self.audit_log)} entries):"]
+        for entry in self.audit_log[-20:]:
+            icon = {"allowed": "✓", "denied": "✗", "blocked": "⚠"}.get(entry.decision, "?")
+            lines.append(f"  {icon} [{entry.ts}] {entry.tool} — {entry.decision} ({entry.reason})")
+        return "\n".join(lines)
+
+
+# Default process-wide gate
+_GATE: Optional[PermissionGate] = None
+
+
+def get_gate() -> PermissionGate:
+    """Lazy singleton for the process-wide PermissionGate."""
+    global _GATE
+    if _GATE is None:
+        _GATE = PermissionGate()
+    return _GATE
+
+
+def set_gate(gate: PermissionGate) -> None:
+    """Replace the process-wide gate (used in tests)."""
+    global _GATE
+    _GATE = gate
 
 
 # ===========================================================================
@@ -319,7 +444,7 @@ def _strip_code_fences(code: str) -> str:
     if m and m.group(1).strip():
         return m.group(1).rstrip()
     # Fallback: drop bare fence lines.
-    lines = [l for l in code.splitlines() if l.strip() != "```" and not l.lstrip().startswith("```")]
+    lines = [line for line in code.splitlines() if line.strip() != "```" and not line.lstrip().startswith("```")]
     cleaned = "\n".join(lines)
     return cleaned if cleaned.strip() else code
 

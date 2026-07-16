@@ -6,10 +6,7 @@ auto-install missing third-party packages in the agent environment.
 from __future__ import annotations
 
 import ast
-import re
-import sys
-from pathlib import Path
-from typing import Optional
+from typing import Any
 
 # Standard library module names (Python 3.14, but stable enough)
 _STDLIB_MODULES: set[str] = {

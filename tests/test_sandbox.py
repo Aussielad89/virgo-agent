@@ -1,4 +1,4 @@
-"""Tests for virgo_sandbox — safe command runtime bridge."""
+"""Tests for virgo_sandbox — safe command runtime bridge (allowlist mode)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from virgo_sandbox import is_command_safe, run_sandboxed, FORBIDDEN_COMMANDS
+from virgo_sandbox import is_command_safe, run_sandboxed, ALLOWED_COMMANDS
 
 
 class TestIsCommandSafe:
@@ -26,25 +26,29 @@ class TestIsCommandSafe:
         assert safe is True
 
     def test_forbidden_rmdir(self) -> None:
+        """rmdir is not on the allowlist."""
         safe, reason = is_command_safe(["rmdir", "/s", "/q", "C:\\Windows"])
         assert safe is False
-        assert "rmdir" in reason
+        assert "not on the allowlist" in reason
 
     def test_forbidden_del(self) -> None:
+        """del is not on the allowlist."""
         safe, reason = is_command_safe(["del", "/f", "test.txt"])
         assert safe is False
 
     def test_forbidden_shutdown(self) -> None:
+        """shutdown is not on the allowlist."""
         safe, reason = is_command_safe(["shutdown", "/s"])
         assert safe is False
 
-    def test_forbidden_flag_s(self) -> None:
-        """Check that /s flag is forbidden even on allowed executables."""
+    def test_forbidden_flag_on_allowed_command(self) -> None:
+        """Check that /s flag is forbidden for ipconfig (not in allowed flags)."""
         safe, reason = is_command_safe(["ipconfig", "/s"])
         assert safe is False
         assert "/s" in reason
 
     def test_forbidden_flag_rf(self) -> None:
+        """echo does not permit -rf flag."""
         safe, reason = is_command_safe(["echo", "-rf", "/etc"])
         assert safe is False
 
@@ -52,11 +56,11 @@ class TestIsCommandSafe:
         safe, reason = is_command_safe([])
         assert safe is False
 
-    def test_all_forbidden_commands_covered(self) -> None:
-        """Every entry in FORBIDDEN_COMMANDS actually blocks."""
-        for cmd in FORBIDDEN_COMMANDS:
+    def test_all_allowed_commands_pass_basic(self) -> None:
+        """Every entry in ALLOWED_COMMANDS is allowed for a trivial invocation."""
+        for cmd in sorted(ALLOWED_COMMANDS):
             safe, _ = is_command_safe([cmd, "dummy"])
-            assert safe is False, f"{cmd} should be forbidden"
+            assert safe is True, f"{cmd} should be allowed"
 
 
 class TestRunSandboxed:

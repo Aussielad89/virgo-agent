@@ -16,10 +16,8 @@ from __future__ import annotations
 
 import ast
 import re
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 HERE = Path(__file__).parent
 
@@ -70,7 +68,6 @@ class ReviewReport:
 
 def _check_ast(tree: ast.Module, source: str, file: str, issues: list[Issue]) -> None:
     """Run AST-level checks on a parsed module."""
-    lines = source.splitlines()
 
     # --- missing __name__ guard -------------------------------------------
     has_main_guard = False

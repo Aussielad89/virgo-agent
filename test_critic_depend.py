@@ -5,7 +5,7 @@ Runs the orchestrator with run_critic=True and auto_depend=True using
 a code_gen that produces a file with a known third-party import
 and missing __name__ guard.
 """
-import os, sys, json, tempfile, shutil
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).parent

@@ -6,6 +6,8 @@ Usage::
 
     virgo                                    # launch TUI dashboard
     virgo run --goal "parse logs"            # run pipeline
+    virgo chat                               # interactive chat with file upload
+    virgo chat --resume <session>            # resume a saved chat
     virgo serve                               # launch web dashboard
     virgo replay <session>                    # replay a saved run
     virgo list                                # list saved sessions
@@ -13,6 +15,8 @@ Usage::
     virgo version                             # show version
     virgo update                              # pull latest from git
     virgo doctor                              # run health checks
+
+Chat commands: /upload <file>, /save, /history, /help, /clear
 """
 
 from __future__ import annotations
@@ -835,6 +839,72 @@ def cmd_agent(args: argparse.Namespace) -> None:
         print(f"\n  [virgo] Could not save transcript: {exc}")
 
 
+def _cmd_chat_upload(history: list[dict[str, str]], arg: str) -> None:
+    """Upload a file into the chat context.
+
+    Supports:
+      /upload <path>              — single file
+      /upload <path1> <path2> ... — multiple files (space-separated)
+      /upload *.py                — glob pattern (quoted on most shells)
+    """
+    import glob as _glob
+
+    if not arg.strip():
+        print("  [Usage: /upload <filepath>  or  /upload file1 file2 ...]\n")
+        return
+
+    paths: list[Path] = []
+    for token in arg.split():
+        expanded = list(Path(p) for p in _glob.glob(token) if Path(p).is_file())
+        if expanded:
+            paths.extend(expanded)
+        else:
+            p = HERE / token if not Path(token).is_absolute() else Path(token)
+            if p.exists() and p.is_file():
+                paths.append(p)
+            else:
+                print(f"  [File not found: {token}]\n")
+
+    if not paths:
+        print("  [No valid files found]\n")
+        return
+
+    for fp in paths:
+        try:
+            content = fp.read_text(encoding="utf-8", errors="replace")
+            ext = fp.suffix.lower()
+            lang = {"py": "python", "rs": "rust", "ts": "typescript", "js": "javascript",
+                    "json": "json", "yaml": "yaml", "yml": "yaml", "md": "markdown",
+                    "toml": "toml", "sh": "bash", "bat": "batch", "ps1": "powershell",
+                    "html": "html", "css": "css", "sql": "sql", "txt": "text",
+                    "csv": "csv", "xml": "xml"}.get(ext.lstrip("."), "")
+            header = f"File: {fp.name} ({len(content)} chars)"
+            if len(content) > 50000:
+                content = content[:50000] + f"\n... [truncated at 50000 chars, full file is {len(content)} chars]"
+            payload = f"{header}\n```{lang}\n{content}\n```"
+            history.append({"role": "user", "content": payload})
+            print(f"  [Uploaded: {fp.name} ({len(content)} chars)]\n")
+        except Exception as exc:
+            print(f"  [Error reading {fp.name}: {exc}]\n")
+
+
+def _cmd_chat_help() -> None:
+    print("""
+  Virgo Chat Commands:
+    /upload <path>    Upload a file into chat context (supports glob, multiple files)
+    /save, /s         Save current chat session
+    /history          List saved chat sessions
+    /help             Show this help
+    /clear            Clear chat history
+    exit, quit        Exit chat
+
+  Examples:
+    /upload log.txt
+    /upload src/*.py
+    /upload config.json README.md
+""")
+
+
 def cmd_chat(args: argparse.Namespace) -> None:
     """Interactive chat with virgo (backed by LLM if available)."""
     import json as _json
@@ -844,7 +914,7 @@ def cmd_chat(args: argparse.Namespace) -> None:
     chats_dir.mkdir(parents=True, exist_ok=True)
 
     print_logo()
-    print("  Virgo Chat - type 'exit' or 'quit' to stop\n")
+    print("  Virgo Chat - type '/help' for commands, 'exit' to quit\n")
 
     # Try LLM; fall back to simple echo mode.
     client = None
@@ -890,13 +960,26 @@ def cmd_chat(args: argparse.Namespace) -> None:
         if user_input.lower() == "/history":
             _list_chats(chats_dir)
             continue
+        if user_input.lower() in ("/help", "/?"):
+            _cmd_chat_help()
+            continue
+        if user_input.lower() == "/clear":
+            history.clear()
+            print("  [Chat history cleared]\n")
+            continue
+        if user_input.lower().startswith("/upload "):
+            _cmd_chat_upload(history, user_input[len("/upload "):])
+            continue
 
         if client:
             history.append({"role": "user", "content": user_input})
             try:
                 result = client.chat(history.copy(), temperature=0.7, max_tokens=2048, role="agent")
-                print(f"  => {result.strip()}\n")
-                history.append({"role": "assistant", "content": result})
+                if result and result.strip():
+                    print(f"  => {result.strip()}\n")
+                    history.append({"role": "assistant", "content": result})
+                else:
+                    print("  [Empty response from LLM]\n")
             except Exception as exc:
                 print(f"  [LLM error: {exc}]\n")
                 print(f"  => (LLM unavailable) You said: {user_input}\n")

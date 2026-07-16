@@ -15,9 +15,7 @@ Usage::
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -272,7 +270,6 @@ def install_scaffold(package: str) -> None:
 
     Raises ``SystemExit`` on failure.
     """
-    import subprocess
     import sys
 
     print(f"  Installing {package!r}...")
@@ -298,12 +295,11 @@ def install_scaffold(package: str) -> None:
             print(f"    - {s.get('name', '?')}: {s.get('description', '')}")
     else:
         print(f"  Package {package!r} installed, but no scaffolds detected.")
-        print(f"  (Scaffolds must be in a ``scaffolds/`` dir or use ``virgo_scaffolds`` entry points)")
+        print("  (Scaffolds must be in a ``scaffolds/`` dir or use ``virgo_scaffolds`` entry points)")
 
 
 def uninstall_scaffold(package: str) -> None:
     """Uninstall a scaffold package via pip."""
-    import subprocess
     import sys
 
     print(f"  Uninstalling {package!r}...")

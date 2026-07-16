@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -25,10 +25,15 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -e .
+          pip install -e .[dev,yaml,web]
 
-      - name: Lint with mypy
+      - name: Lint with ruff
+        run: |
+          ruff --version
+          ruff check *.py --statistics
+        continue-on-error: true
+
+      - name: Type check with mypy
         run: |
           mypy --version
           mypy cli.py orchestrator.py tools.py environment.py memory.py critic.py autodepend.py config.py _log.py virgo_fingerprinter.py virgo_webhook.py virgo_sandbox.py virgo_watchdog.py virgo_scaffold.py --ignore-missing-imports || true

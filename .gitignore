@@ -43,6 +43,26 @@ docs-cli-test/
 docs-test-html/
 docs-recursive-test/
 
+# Scratch / agent test stubs
+agent_*.py
+alpha.py
+beta.py
+fast.py
+slow.py
+first.py
+second.py
+generated.py
+minimal.py
+writer.py
+worker1.py
+verbose_agent.py
+fail_agent.py
+bb_test.py
+shape_test.py
+state_test.py
+test_worker.py
+planner_test.py
+
 # Environment
 .env
 .venv

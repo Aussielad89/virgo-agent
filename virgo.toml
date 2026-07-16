@@ -1,0 +1,21 @@
+[model]
+planner = "qwen2.5-coder:7b"
+generator = "qwen2.5-coder:7b"
+fixer = "qwen2.5-coder:7b"
+timeout = 300
+
+[sandbox]
+mode = "allowlist"
+allowed_commands = [
+    "python", "pip", "git", "ls", "cat", "echo",
+    "pwd", "head", "tail", "wc", "sort", "grep",
+    "find", "mkdir", "cp", "mv", "which",
+]
+
+[plugins]
+watch = true
+dirs = ["plugins", "~/.virgo/plugins"]
+
+[chat]
+model = "qwen2.5-coder:7b"
+max_tokens = 2048

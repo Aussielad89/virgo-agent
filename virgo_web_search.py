@@ -164,7 +164,7 @@ if __name__ == "__main__":
     engines = {"1": "duckduckgo", "2": "google", "3": "youtube"}
     engine_id = sys.argv[1] if len(sys.argv) > 1 else "1"
     engine_name = engines.get(engine_id, "duckduckgo")
-    query = input(f"  Enter search query: ").strip() if len(sys.argv) < 3 else " ".join(sys.argv[2:])
+    query = input("  Enter search query: ").strip() if len(sys.argv) < 3 else " ".join(sys.argv[2:])
 
     if not query:
         query = "virgo agent framework"

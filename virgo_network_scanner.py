@@ -8,8 +8,6 @@ using concurrent threads. Saves results to virgo_network_map.json.
 from __future__ import annotations
 
 import socket
-import struct
-import threading
 from concurrent.futures import ThreadPoolExecutor
 import sys
 import os

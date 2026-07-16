@@ -1,32 +1,37 @@
 {
   "title": "VIRGO AGENT FRAMEWORK - MASTER CONTROL",
-  "sections": [
+  "exit_key": "X",
+  "categories": [
     {
       "heading": "VIRGO MODULES",
+      "start": 0,
       "entries": [
-        { "key": "1", "label": "Run Subnet Network Discovery Scanner", "script": "virgo_network_scanner.py" },
-        { "key": "2", "label": "Run Full System Diagnostics Suite", "script": "virgo_diagnostics.py" },
-        { "key": "3", "label": "Evaluate Active System & Hardware Alerts", "script": "virgo_alerts.py" },
-        { "key": "4", "label": "Execute Automated Triage & Remediation Fixer", "script": "virgo_fixer.py" },
-        { "key": "5", "label": "Workflow Connectivity Check", "script": "workflow_check.py" }
+        { "key": "01", "label": "Run Subnet Network Discovery Scanner", "action": "script", "script": "virgo_network_scanner.py" },
+        { "key": "02", "label": "Run Full System Diagnostics Suite", "action": "script", "script": "virgo_diagnostics.py" },
+        { "key": "03", "label": "Evaluate Active System & Hardware Alerts", "action": "script", "script": "virgo_alerts.py" },
+        { "key": "04", "label": "Execute Automated Triage & Remediation Fixer", "action": "script", "script": "virgo_fixer.py" },
+        { "key": "05", "label": "Workflow Connectivity Check", "action": "script", "script": "workflow_check.py" }
       ]
     },
     {
       "heading": "WEB SEARCH",
+      "start": 5,
       "entries": [
-        { "key": "6", "label": "DuckDuckGo Web Search", "script": "virgo_web_search.py", "args": "1" },
-        { "key": "7", "label": "Google Search", "script": "virgo_web_search.py", "args": "2" },
-        { "key": "8", "label": "YouTube Search", "script": "virgo_web_search.py", "args": "3" }
+        { "key": "06", "label": "DuckDuckGo Web Search", "action": "script", "script": "virgo_web_search.py", "args": "1" },
+        { "key": "07", "label": "Google Search", "action": "script", "script": "virgo_web_search.py", "args": "2" },
+        { "key": "08", "label": "YouTube Search", "action": "script", "script": "virgo_web_search.py", "args": "3" }
       ]
     },
     {
       "heading": "CORE PIPELINE",
+      "start": 8,
       "entries": [
-        { "key": "9", "label": "Run Agent Pipeline (virgo run)", "action": "pipeline" }
+        { "key": "09", "label": "Run Agent Pipeline (virgo run)", "action": "pipeline" }
       ]
     },
     {
       "heading": "DATA VIEWER",
+      "start": 9,
       "entries": [
         { "key": "10", "label": "View Live Network Map (JSON)", "action": "view", "file": "virgo_network_map.json" },
         { "key": "11", "label": "View Active Alerts File (TXT)", "action": "view", "file": "ALERTS_TRIGGERED.txt" },
@@ -35,24 +40,25 @@
     },
     {
       "heading": "ADVANCED MODULES",
+      "start": 12,
       "entries": [
-        { "key": "13", "label": "Run Service Fingerprinter", "script": "virgo_fingerprinter.py" },
-        { "key": "14", "label": "Dispatch Alert Webhook", "script": "virgo_webhook.py" },
-        { "key": "15", "label": "Open Safe Command Sandbox", "script": "virgo_sandbox.py" },
-        { "key": "16", "label": "Scheduler / Watchdog", "action": "watchdog" }
+        { "key": "13", "label": "Run Service Fingerprinter", "action": "script", "script": "virgo_fingerprinter.py" },
+        { "key": "14", "label": "Dispatch Alert Webhook", "action": "script", "script": "virgo_webhook.py" },
+        { "key": "15", "label": "Open Safe Command Sandbox", "action": "script", "script": "virgo_sandbox.py" },
+        { "key": "16", "label": "Run Scheduler / Watchdog", "action": "script", "script": "virgo_watchdog.py", "args": "--cycles 3" }
       ]
     },
     {
       "heading": "SCAFFOLDING",
+      "start": 16,
       "entries": [
         { "key": "17", "label": "List Available Scaffolds", "action": "scaffold_list" },
-        { "key": "18", "label": "Generate FastAPI CRUD Project", "action": "scaffold_gen", "scaffold": "fastapi-crud" },
-        { "key": "19", "label": "Generate CLI App", "action": "scaffold_gen", "scaffold": "cli-app" },
-        { "key": "20", "label": "Generate Flask Web App", "action": "scaffold_gen", "scaffold": "flask-app" },
-        { "key": "21", "label": "Generate Python Library", "action": "scaffold_gen", "scaffold": "python-lib" },
-        { "key": "22", "label": "Generate Agent Tool Module", "action": "scaffold_gen", "scaffold": "agent-tool" }
+        { "key": "18", "label": "Generate FastAPI CRUD Project", "action": "scaffold_gen", "scaffold": "fastapi-crud", "default_name": "myapi", "var_name": "project_name" },
+        { "key": "19", "label": "Generate CLI App", "action": "scaffold_gen", "scaffold": "cli-app", "default_name": "mycli", "var_name": "project_name" },
+        { "key": "20", "label": "Generate Flask Web App", "action": "scaffold_gen", "scaffold": "flask-app", "default_name": "mywebapp", "var_name": "project_name" },
+        { "key": "21", "label": "Generate Python Library", "action": "scaffold_gen", "scaffold": "python-lib", "default_name": "mylib", "var_name": "project_name" },
+        { "key": "22", "label": "Generate Agent Tool Module", "action": "scaffold_gen", "scaffold": "agent-tool", "default_name": "virgo_mytool", "var_name": "module_name" }
       ]
     }
-  ],
-  "exit_key": "X"
+  ]
 }
