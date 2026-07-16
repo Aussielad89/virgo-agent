@@ -7,10 +7,8 @@ samples and produce hard-coded but adaptive Python code.
 
 from __future__ import annotations
 
-import os
 import re
 import sys
-import textwrap
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -19,7 +17,7 @@ sys.path.insert(0, str(HERE))
 from environment import AgentEnvironment
 from tools import ToolRegistry
 from logo import print_logo
-from orchestrator import Orchestrator, WorkspaceState
+from orchestrator import Orchestrator, TestLog, WorkspaceState
 
 
 # ===========================================================================
@@ -66,9 +64,13 @@ from pathlib import Path
 
 
 def parse_log(file_path: str) -> list[dict]:
-    """Parse a log file, returning structured entries."""
+    """Parse a log file, returning structured entries.
+
+    Accepts either ``[YYYY-MM-DD HH:MM:SS] LEVEL: msg`` or the
+    unbracketed ``YYYY-MM-DD LEVEL: msg`` format used by mock_logs.txt.
+    """
     pattern = re.compile(
-        r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] "
+        r"(?:\[)?(\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?)(?:\])?\s+"
         r"(\w+):\s+(.+)"
     )
     entries: list[dict] = []
@@ -174,7 +176,7 @@ def fixer(
     # -- SyntaxError → report and give up (shouldn't happen with syntax
     #    validation, but just in case)
     if "SyntaxError" in err:
-        print(f"  [FIXER] Syntax error — cannot auto-fix, skipping")
+        print("  [FIXER] Syntax error — cannot auto-fix, skipping")
         return None
 
     # -- Generic: print the error so the operator sees it ---------------
@@ -186,7 +188,7 @@ def fixer(
 # Main
 # ===========================================================================
 
-def main() -> None:
+def main(goal: str | None = None) -> None:
     print_logo()
 
     # -- Bootstrap infrastructure ---------------------------------------
@@ -207,10 +209,15 @@ def main() -> None:
 
     # -- Run the pipeline -----------------------------------------------
     print()
+    pipeline_goal = (
+        goal
+        if goal
+        else "Find mock_logs.txt, extract its data structure, "
+        "and write a separate script that parses it and extracts "
+        "only the lines with specific markers into a clean summary file."
+    )
     state = orch.run(
-        goal="Find mock_logs.txt, extract its data structure, "
-             "and write a separate script that parses it and extracts "
-             "only the lines with specific markers into a clean summary file.",
+        goal=pipeline_goal,
         planner=planner,
         code_gen=code_generator,
         fixer=fixer,

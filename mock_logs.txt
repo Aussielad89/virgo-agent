@@ -2,3 +2,5 @@
 2026-07-10 INFO: Database connection restored successfully.
 2026-07-10 INFO: Retrying connection...
 2026-07-10 INFO: Error 30 resolved -- harness communication re-established.
+2026-07-10 ERROR: Error 30 detected -- main harness communication lost.
+2026-07-10 CRITICAL: Device harness communication timeout. Check 48v controller wiring.

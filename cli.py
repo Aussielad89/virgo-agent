@@ -51,7 +51,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     # Load config file if provided
     if args.config:
         try:
-            from config import load, merge_with_cli
+            from config import load
             cfg = load(args.config)
             # Merge CLI overrides
             for key, val in vars(args).items():
@@ -155,7 +155,9 @@ def cmd_run(args: argparse.Namespace) -> None:
             else:
                 from generators import get_generator
                 gen = get_generator(args.lang)
-                code_gen = lambda plan, state, registry, env: gen.generate(plan)
+
+                def code_gen(plan, state, registry, env):
+                    return gen.generate(plan)
             fixer = main.my_fixer
         except ImportError as exc:
             print(f"[virgo] Could not load LLM policies: {exc}")
@@ -280,7 +282,7 @@ def cmd_replay(args: argparse.Namespace) -> None:
 def cmd_demo(args: argparse.Namespace) -> None:
     """Run the deterministic demo pipeline (no LLM required)."""
     from run import main as run_main
-    run_main()
+    run_main(goal=getattr(args, "goal", None))
 
 
 def cmd_version(_args: argparse.Namespace) -> None:
@@ -388,7 +390,6 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
 
 def cmd_config(args: argparse.Namespace) -> None:
     """View or set virgo configuration (environment variables)."""
-    import dotenv
 
     config_vars = {
         "LLM_BASE_URL": "http://localhost:11434/v1",
@@ -445,8 +446,8 @@ def cmd_config(args: argparse.Namespace) -> None:
         key = args.unset.upper()
         os.environ.pop(key, None)
         if dotenv_path.exists():
-            lines = [l for l in dotenv_path.read_text(encoding="utf-8").splitlines()
-                     if not l.strip().startswith(f"{key}=") and not l.strip().startswith(f"export {key}=")]
+            lines = [line for line in dotenv_path.read_text(encoding="utf-8").splitlines()
+                     if not line.strip().startswith(f"{key}=") and not line.strip().startswith(f"export {key}=")]
             dotenv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"[virgo] {key} removed")
         return
@@ -581,11 +582,9 @@ def cmd_swarm(args: argparse.Namespace) -> None:
 
 def cmd_watch(args: argparse.Namespace) -> None:
     """Watch a directory and re-run the pipeline on change events."""
-    from pathlib import Path
     from virgo_watcher import FileWatcher, run_pipeline
     from datetime import datetime, timezone
 
-    HERE = Path(__file__).resolve().parent
     watch_dir = Path(args.dir or ".").resolve()
 
     exclude = ["__pycache__", ".git", ".venv",
@@ -619,7 +618,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
         )
 
     if args.llm:
-        print(f"  [watch] LLM mode enabled")
+        print("  [watch] LLM mode enabled")
     if args.router:
         print(f"  [watch] Using router: {args.router}")
 
@@ -642,10 +641,10 @@ def cmd_feedback(args: argparse.Namespace) -> None:
 
 def cmd_templates(args: argparse.Namespace) -> None:
     """List and generate from built-in templates."""
-    from templates import list_templates, generate, BUILTIN_TEMPLATES
+    from templates import list_templates, generate
 
     if args.generate:
-        code = generate(
+        generate(
             args.generate,
             args.output or f"{args.generate}_output.py",
             name=args.name or args.generate,
@@ -657,10 +656,10 @@ def cmd_templates(args: argparse.Namespace) -> None:
 
     # List templates
     templates = list_templates()
-    print(f"\n  Available templates:\n")
+    print("\n  Available templates:\n")
     for t in templates:
         print(f"    {t['key']:20s}  {t['name']:15s}  {t['description']}")
-    print(f"\n  Use: virgo templates --generate <key> [--output file] [--name Name] [--description '...']\n")
+    print("\n  Use: virgo templates --generate <key> [--output file] [--name Name] [--description '...']\n")
 
 
 def cmd_export(args: argparse.Namespace) -> None:
@@ -671,7 +670,6 @@ def cmd_export(args: argparse.Namespace) -> None:
     data = load_state(args.session)
 
     # Reconstruct a minimal state-like object for the exporter
-    from dataclasses import dataclass, field
     from orchestrator import WorkspaceState, DiscoveredFile, GeneratedFile, TestLog
 
     state = WorkspaceState(
@@ -716,17 +714,17 @@ def cmd_plugins(args: argparse.Namespace) -> None:
     # List available plugin files
     files = discover()
     if not files:
-        print(f"\n  [virgo] No plugins found. Place .py files in:")
+        print("\n  [virgo] No plugins found. Place .py files in:")
         for d in PLUGIN_DIRS:
             print(f"    {d}")
-        print(f"\n  Use: virgo plugins --load to load them\n")
+        print("\n  Use: virgo plugins --load to load them\n")
         return
 
-    print(f"\n  Plugin files found:")
+    print("\n  Plugin files found:")
     for f in files:
         size = f.stat().st_size
         print(f"    {f.parent.name}/{f.name}  ({size} B)")
-    print(f"\n  Use: virgo plugins --load to load them\n")
+    print("\n  Use: virgo plugins --load to load them\n")
 
 
 def cmd_completion(args: argparse.Namespace) -> None:
@@ -736,7 +734,7 @@ def cmd_completion(args: argparse.Namespace) -> None:
     script_path = here / "completions" / f"virgo.{shell}"
     if not script_path.exists():
         print(f"  No completion script for {shell!r}.", file=sys.stderr)
-        print(f"  Supported shells: bash, zsh, powershell", file=sys.stderr)
+        print("  Supported shells: bash, zsh, powershell", file=sys.stderr)
         sys.exit(1)
     print(script_path.read_text(encoding="utf-8"), end="")
 
@@ -1142,6 +1140,8 @@ def main() -> None:
 
     # demo
     p_demo = sub.add_parser("demo", help="Run the demo pipeline (deterministic policies)")
+    p_demo.add_argument("--goal", "-g", default=None,
+                        help="Optional goal override for the demo pipeline")
     p_demo.set_defaults(func=cmd_demo)
 
     # diff
