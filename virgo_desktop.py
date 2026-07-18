@@ -9,13 +9,74 @@ Usage:
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
-from PyQt6.QtCore import Qt, QTimer
+# ── Robust launch: find a Python that actually has PyQt6 ──────────
+def _has_pyqt6(python: str) -> bool:
+    try:
+        r = subprocess.run(
+            [python, "-c", "import PyQt6"],
+            capture_output=True, text=True, timeout=20,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+def _find_pyqt6_python() -> str | None:
+    """Return a python executable (other than current) that can import PyQt6."""
+    candidates = []
+    # Windows: common install locations.
+    if sys.platform == "win32":
+        base = os.environ.get("ProgramFiles", r"C:\Program Files")
+        candidates += [
+            r"C:\Python314\python.exe",
+            r"C:\Python313\python.exe",
+            r"C:\Python312\python.exe",
+            r"C:\Python311\python.exe",
+            r"C:\Python310\python.exe",
+            os.path.join(base, "Python314", "python.exe"),
+            os.path.join(base, "Python313", "python.exe"),
+            os.path.join(base, "Python312", "python.exe"),
+            os.path.join(base, "Python311", "python.exe"),
+        ]
+    else:
+        candidates += [
+            "python3.14", "python3.13", "python3.12", "python3.11",
+            "/usr/bin/python3", "/usr/local/bin/python3",
+        ]
+    for c in candidates:
+        if c and c != sys.executable and os.path.isfile(c) and _has_pyqt6(c):
+            return c
+    return None
+
+def _ensure_pyqt6() -> None:
+    """If the current interpreter lacks PyQt6, re-exec under one that has it."""
+    try:
+        import PyQt6  # noqa: F401
+        return
+    except Exception:
+        pass
+    alt = _find_pyqt6_python()
+    if alt:
+        os.execv(alt, [alt, str(HERE / "virgo_desktop.py"), *sys.argv[1:]])
+    # No alternative found — surface a clear error instead of a traceback.
+    sys.stderr.write(
+        "ERROR: PyQt6 is not installed in this Python environment.\n"
+        "Install it with:  pip install pyqt6\n"
+        "or run this script with a Python that has PyQt6.\n"
+    )
+    sys.exit(1)
+
+
+# ── Ensure a PyQt6-capable interpreter, then import GUI deps ───────
+_ensure_pyqt6()  # re-execs under a PyQt6 Python if needed
+
+from PyQt6.QtCore import Qt, QTimer, qInstallMessageHandler
 from PyQt6.QtGui import QAction, QFont, QIcon, QPalette
 from PyQt6.QtWidgets import (
     QApplication, QDialog, QHBoxLayout, QLabel, QListWidget,
@@ -27,7 +88,6 @@ from PyQt6.QtWidgets import (
 from _console import icon
 from _log import log
 
-# ── Pages ────────────────────────────────────────────────────────────
 from virgo_desktop_pages import (
     AboutPage,
     AlertsPage,
@@ -37,13 +97,15 @@ from virgo_desktop_pages import (
     NetworkPage,
     PipelinePage,
     ScaffoldPage,
+    SessionPage,
     SettingsPage,
+    SwarmPage,
 )
 
 # ── Constants ────────────────────────────────────────────────────────
 
 APP_NAME = "Virgo Desktop"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 WIDTH = 1100
 HEIGHT = 720
 
@@ -54,6 +116,8 @@ SIDEBAR_ITEMS = [
     ("diagnostics", "Diagnostics", "diagnostics"),
     ("alerts", "Alerts", "alert"),
     ("scaffold", "Scaffolds", "scaffold"),
+    ("sessions", "Sessions", "history"),
+    ("swarm", "Swarm", "bolt"),
     ("logs", "Logs", "log"),
     ("settings", "Settings", "settings"),
     ("about", "About", "info"),
@@ -131,6 +195,8 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(DiagnosticsPage(), "diagnostics")
         self._register(AlertsPage(), "alerts")
         self._register(ScaffoldPage(), "scaffold")
+        self._register(SessionPage(), "sessions")
+        self._register(SwarmPage(), "swarm")
         self._register(LogsPage(), "logs")
         self._register(SettingsPage(), "settings")
         self._register(AboutPage(), "about")
@@ -301,8 +367,41 @@ class VirgoDesktopWindow(QMainWindow):
         """)
 
 
+def _open_file(path: str) -> None:
+    """Open a file with the OS default handler (cross-platform)."""
+    import subprocess
+    p = str(path)
+    try:
+        if sys.platform == "win32":
+            os.startfile(p)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.run(["open", p], check=False)
+        else:
+            subprocess.run(["xdg-open", p], check=False)
+    except Exception:
+        pass
+
+
+def _qt_message_handler(msgtype, context, msg: str) -> None:
+    """Filter benign Qt noise.
+
+    On Windows the system font is sized in pixels, so ``QFont.pointSize()``
+    resolves to -1 and Qt logs a harmless
+    ``QFont::setPointSize: Point size <= 0 (-1)`` warning for every widget.
+    The fonts render correctly; we just suppress that one known-benign line.
+    """
+    if "setPointSize" in msg and "Point size <= 0" in msg:
+        return
+    try:
+        print(msg)
+    except Exception:
+        pass
+
+
 def main() -> None:
+    qInstallMessageHandler(_qt_message_handler)
     app = QApplication(sys.argv)
+    app.setFont(QFont("Segoe UI", 10))
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("Virgo")
     window = VirgoDesktopWindow()
