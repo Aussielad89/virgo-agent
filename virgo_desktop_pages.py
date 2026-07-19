@@ -14,7 +14,7 @@ from typing import Any
 
 from PyQt6.QtCore import Qt, QTimer, QMetaObject, pyqtSlot, Q_ARG, QUrl, QEvent, QDir, QModelIndex, QSize
 from PyQt6.QtCore import QObject
-from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QShortcut, QKeySequence, QFileSystemModel, QPen, QBrush
+from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QShortcut, QKeySequence, QFileSystemModel, QPen, QBrush, QTextDocument
 from PyQt6.QtWidgets import (
     QComboBox, QFormLayout, QFrame, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -425,6 +425,31 @@ class _ImageDropHandler(QObject):
                 event.acceptProposedAction()
                 return True
             return False
+        # Chat search bar: Shift+Enter = previous match
+        if obj is getattr(self, "_search_bar", None) and t == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self._search_next(True)
+                return True
+        # Slash popup keyboard nav
+        if obj is self.msg_input and self._slash_popup and self._slash_popup.isVisible():
+            if t == QEvent.Type.KeyPress:
+                from PyQt6.QtCore import QEvent as _QE
+                key = event.key()
+                if key == Qt.Key.Key_Down:
+                    self._slash_popup.setCurrentRow(
+                        min(self._slash_popup.currentRow() + 1,
+                            self._slash_popup.count() - 1))
+                    return True
+                if key == Qt.Key.Key_Up:
+                    self._slash_popup.setCurrentRow(
+                        max(self._slash_popup.currentRow() - 1, 0))
+                    return True
+                if key in (Qt.Key.Key_Tab, Qt.Key.Key_Return):
+                    self._slash_accept()
+                    return True
+                if key == Qt.Key.Key_Escape:
+                    self._slash_popup.hide()
+                    return True
         return super().eventFilter(obj, event)
 
     @staticmethod
@@ -464,6 +489,25 @@ class ChatPage(PageWidget):
         self.model_combo.setCurrentText(default_model)
         self._current_model = default_model
         model_row.addWidget(self.model_combo, 1)
+
+        # Persona selector
+        model_row.addWidget(QLabel("Persona:"))
+        self.persona_combo = QComboBox()
+        self._personas = {
+            "Default": "You are Virgo, a helpful autonomous coding agent.",
+            "Concise": "You are Virgo. Reply in the fewest words possible.",
+            "Teacher": "You are Virgo. Explain concepts step by step with examples.",
+            "Sarcastic": "You are Virgo. Be witty and sarcastic but still correct.",
+            "Coder": "You are Virgo. Focus on production-ready code, minimal prose.",
+        }
+        for name in self._personas:
+            self.persona_combo.addItem(name)
+        self.persona_combo.setCurrentText("Default")
+        self.persona_combo.setMinimumWidth(110)
+        self._persona = self._personas["Default"]
+        self.persona_combo.currentTextChanged.connect(self._on_persona)
+        model_row.addWidget(self.persona_combo)
+
         self.stop_btn = QPushButton(f"{icon('error')}  Stop")
         self.stop_btn.setObjectName("stopBtn")
         self.stop_btn.setVisible(False)
@@ -484,6 +528,10 @@ class ChatPage(PageWidget):
         toolbar.addWidget(self.export_btn)
         toolbar.addWidget(self.copy_btn)
         toolbar.addWidget(self.regen_btn)
+        self.branch_btn = QPushButton(f"{icon('refresh')}  Branch")
+        self.branch_btn.setToolTip("Fork the conversation from the last message")
+        self.branch_btn.clicked.connect(self._branch_from)
+        toolbar.addWidget(self.branch_btn)
         self.speak_btn = QPushButton(f"{icon('audio')}  Speak")
         self.speak_btn.setToolTip("Read last reply aloud")
         self.speak_btn.clicked.connect(self._speak_reply)
@@ -537,6 +585,8 @@ class ChatPage(PageWidget):
         self.token_label = QLabel("tokens: —")
         self.token_label.setObjectName("metaLabel")
         opts_row.addWidget(self.token_label)
+        self._stream_chars = 0
+        self._stream_t0 = 0.0
         opts_row.addStretch()
         self.content.addLayout(opts_row)
 
@@ -560,12 +610,17 @@ class ChatPage(PageWidget):
         self.msg_input = QLineEdit()
         self.msg_input.setPlaceholderText("Message Virgo, or /help for commands...")
         self.msg_input.returnPressed.connect(self._send)
-        completer = QCompleter(
-            ["/help", "/tools", "/clear", "/read ", "/web ", "/py "], self.msg_input
-        )
-        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.msg_input.setCompleter(completer)
+        self._slash_commands = [
+            ("/help", "Show available commands"),
+            ("/tools", "List available tools"),
+            ("/clear", "Clear the chat history"),
+            ("/read <path>", "Read a file into context"),
+            ("/web <url>", "Fetch a web page"),
+            ("/py <code>", "Run a Python snippet"),
+        ]
         self.msg_input.textChanged.connect(self._update_token_count)
+        self.msg_input.textChanged.connect(self._on_input_typed)
+        self.msg_input.installEventFilter(self)
         input_row.addWidget(self.msg_input, 1)
         self.send_btn = QPushButton(f"{icon('send')}  Send")
         self.send_btn.setObjectName("sendBtn")
@@ -579,6 +634,7 @@ class ChatPage(PageWidget):
         self.multi_btn.clicked.connect(self._toggle_multi)
         input_row.addWidget(self.multi_btn)
         self._multi_models: list[str] = []
+        self._slash_popup: QListWidget | None = None
         self.content.addLayout(input_row)
 
         # Ctrl+Enter / Ctrl+Return sends the message.
@@ -594,6 +650,8 @@ class ChatPage(PageWidget):
             lambda: self._zoom_font(0)
         )
         self._chat_font_size = 13
+        # Chat search
+        QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self._show_search)
 
         # LLM client (lazy, set on first activate)
         self._client = None
@@ -781,7 +839,7 @@ class ChatPage(PageWidget):
     def _stream_reply(self, msg: str) -> None:
         from cli import VIRGO_SYSTEM_PROMPT, _parse_tool_calls  # lazy import (safe)
 
-        messages = [{"role": "system", "content": VIRGO_SYSTEM_PROMPT}] + self._history
+        messages = [{"role": "system", "content": self._persona}] + self._history
         # Forward streamed tokens into the chat box live (and keep the full text).
         collector = _GuiStream(self)
         old_stdout = sys.stdout
@@ -839,6 +897,62 @@ class ChatPage(PageWidget):
         text = self.msg_input.text()
         est = len(text) // 4 or 0
         self.token_label.setText(f"~{est} tokens (input)")
+
+    def _on_input_typed(self, text: str) -> None:
+        """Show the slash-command popup when the input starts with '/'."""
+        if text.startswith("/") and " " not in text:
+            self._show_slash_popup(text)
+        elif self._slash_popup and self._slash_popup.isVisible():
+            self._slash_popup.hide()
+
+    def _show_slash_popup(self, prefix: str) -> None:
+        if self._slash_popup is None:
+            self._slash_popup = QListWidget()
+            self._slash_popup.setParent(self)
+            self._slash_popup.setWindowFlags(Qt.WindowType.Popup)
+            self._slash_popup.itemClicked.connect(lambda _: self._slash_accept())
+            t = self.window().themes.get(
+                getattr(self.window(), "_active_theme", "mocha"), {})
+            bg = t.get("surface", "#181825")
+            fg = t.get("text", "#cdd6f4")
+            self._slash_popup.setStyleSheet(
+                f"QListWidget{{background:{bg};border:1px solid #45475a;"
+                f"border-radius:6px;color:{fg};padding:4px;}}"
+                f"QListWidget::item{{padding:4px 8px;border-radius:4px;}}"
+                f"QListWidget::item:selected{{background:#45475a;color:#89b4fa;}}")
+        q = prefix[1:].lower()
+        self._slash_popup.clear()
+        for cmd, desc in self._slash_commands:
+            if not q or cmd[1:].lower().startswith(q):
+                item = QListWidgetItem(f"{cmd}  —  {desc}")
+                item.setData(Qt.ItemDataRole.UserRole, cmd)
+                self._slash_popup.addItem(item)
+        if not self._slash_popup.count():
+            self._slash_popup.hide()
+            return
+        self._slash_popup.setCurrentRow(0)
+        # Position above the input box
+        pos = self.msg_input.mapToGlobal(
+            self.msg_input.rect().bottomLeft())
+        self._slash_popup.move(pos.x(), pos.y() + 4)
+        self._slash_popup.setMinimumWidth(self.msg_input.width())
+        self._slash_popup.setVisible(True)
+
+    def _slash_accept(self) -> None:
+        if not self._slash_popup or not self._slash_popup.isVisible():
+            return
+        item = self._slash_popup.currentItem()
+        if item:
+            cmd = item.data(Qt.ItemDataRole.UserRole)
+            # Keep arg placeholder (e.g. /read <path>) but strip the <...>
+            base = cmd.split(" <")[0]
+            self.msg_input.setText(base + (" " if "<" in cmd else ""))
+            self.msg_input.setFocus()
+        self._slash_popup.hide()
+
+    def _on_persona(self, name: str) -> None:
+        self._persona = self._personas.get(name, self._personas["Default"])
+        self.chat_log.append(f"<i>[Persona: {name}]</i>")
 
     def _switch_model(self, model: str) -> None:
         """Reconnect the chat client to a different local model."""
@@ -935,6 +1049,8 @@ class ChatPage(PageWidget):
     @pyqtSlot()
     def _stream_start(self) -> None:
         """Replace the 'thinking...' placeholder with the live reply line."""
+        self._stream_chars = 0
+        self._stream_t0 = __import__("time").time()
         cursor = self.chat_log.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         cursor.movePosition(cursor.MoveOperation.StartOfBlock, cursor.MoveMode.KeepAnchor)
@@ -949,6 +1065,12 @@ class ChatPage(PageWidget):
         self.chat_log.verticalScrollBar().setValue(
             self.chat_log.verticalScrollBar().maximum()
         )
+        # Live token-rate estimate
+        self._stream_chars += len(chunk)
+        elapsed = __import__("time").time() - self._stream_t0
+        if elapsed > 0.3:
+            tps = (self._stream_chars / 4) / elapsed
+            self.token_label.setText(f"~{tps:.1f} tok/s · {self._stream_chars // 4} tok")
 
     @pyqtSlot(str, bool)
     def _render_reply(self, reply: str, streamed: bool = False) -> None:
@@ -999,7 +1121,64 @@ class ChatPage(PageWidget):
         self._busy = False
         self._save_chat()
 
-    def _run_tool(self, name: str, kwargs: dict[str, str]) -> None:
+    def _show_search(self) -> None:
+        """Open a small search bar to find text in the chat log."""
+        if getattr(self, "_search_bar", None) is None:
+            self._search_bar = QLineEdit()
+            self._search_bar.setPlaceholderText("Search chat… (Enter = next, Shift+Enter = prev)")
+            self._search_bar.returnPressed.connect(
+                lambda: self._search_next(False))
+            self._search_bar.setObjectName("searchBar")
+            self.content.addWidget(self._search_bar)
+        self._search_bar.setVisible(True)
+        self._search_bar.setFocus()
+        self._search_bar.selectAll()
+
+    def _search_next(self, backward: bool) -> bool:
+        bar = getattr(self, "_search_bar", None)
+        if not bar or not bar.isVisible():
+            return False
+        needle = bar.text()
+        if not needle:
+            return False
+        cur = self.chat_log.textCursor()
+        flags = QTextDocument.FindFlag.FindBackward if backward else QTextDocument.FindFlag(0)
+        found = cur.isNull() and self.chat_log.document().find(needle, 0, flags) or cur
+        if found.isNull() or not found.selectedText():
+            found = self.chat_log.document().find(needle, cur, flags)
+        if found.isNull():
+            # Wrap around
+            new_cur = self.chat_log.textCursor()
+            new_cur.movePosition(
+                new_cur.MoveOperation.End if backward
+                else new_cur.MoveOperation.Start)
+            found = self.chat_log.document().find(needle, new_cur, flags)
+        if not found.isNull() and found.selectedText():
+            self.chat_log.setTextCursor(found)
+            bar.setStyleSheet("")
+            return True
+        bar.setStyleSheet("border: 1px solid #f38ba8;")
+        return False
+
+    def _branch_from(self) -> None:
+        """Fork the conversation: keep history up to the last user message."""
+        # Find the last user message index in history
+        last_user = -1
+        for i in range(len(self._history) - 1, -1, -1):
+            if self._history[i]["role"] == "user":
+                last_user = i
+                break
+        if last_user < 0:
+            self.chat_log.append("<i>[Nothing to branch from]</i>")
+            return
+        branch = self._history[:last_user + 1]
+        # Start a fresh branch in a new session id
+        self._history[:] = branch
+        self._session_id = __import__("uuid").uuid4().hex[:12]
+        self.chat_log.append(
+            f"<hr><i>[Branched — new session {self._session_id}]</i><hr>")
+        self._save_chat()
+        self.msg_input.setFocus()
         from cli import _run_chat_tool  # lazy import (safe)
         try:
             out = _run_chat_tool(name, kwargs)
