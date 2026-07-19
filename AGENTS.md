@@ -46,7 +46,11 @@ agent-framework/
 ├── virgo_watchdog.py         # Scheduled watchdog: diagnostics→alerts→fixer on a timer
 ├── virgo_web_search.py       # DuckDuckGo / Google / YouTube search
 ├── logo.py                   # ASCII banner (pure ASCII — always safe)
-├── logo.svg                  # SVG version of logo
+├── logo.svg                  # Brand lockup (constellation mark + VIRGO wordmark, transparent)
+├── logo_icon.svg             # Square mark only (transparent) — for favicons/web
+├── logo_icon.png             # 512x512 square mark (transparent corners, dark badge)
+├── logo.ico                  # Multi-resolution Windows app icon (16-256), used by virgo_desktop
+├── _make_logo.py             # Regenerates logo.ico / logo_icon.png from the constellation geometry
 ├── dashboard.json            # Structured menu config for virgo_menu.py
 ├── mock_logs.txt             # Sample log data for demo/testing
 ├── scaffolds/                # Project scaffold definitions (JSON)

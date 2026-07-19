@@ -12,6 +12,7 @@ a = Analysis(
     datas=[
         ("virgo_desktop_pages.py", "."),
         ("scaffolds", "scaffolds"),
+        ("logo.ico", "."),
     ],
     hiddenimports=[
         "virgo_desktop_pages",

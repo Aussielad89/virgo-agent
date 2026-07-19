@@ -252,9 +252,9 @@ def _md_to_html(text: str) -> str:
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     # Code blocks (```...```) — protect from other rules
-    code_blocks: list[str] = []
+    code_blocks: list[tuple[str, str]] = []
     def _save_code(m: re.Match) -> str:
-        code_blocks.append(m.group(2))
+        code_blocks.append((m.group(1) or "", m.group(2)))
         return f"\x00CODEBLOCK{len(code_blocks)-1}\x00"
 
     text = re.sub(
@@ -331,12 +331,22 @@ def _md_to_html(text: str) -> str:
     # Newlines → <br> (not inside block elements)
     text = text.replace("\n", "<br>")
 
-    # Restore code blocks
-    for i, code in enumerate(code_blocks):
-        lang = ""
+    # Restore code blocks — with language badge + copy button
+    for i, (lang, code) in enumerate(code_blocks):
+        escaped = code.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         text = text.replace(
             f"\x00CODEBLOCK{i}\x00",
-            f"<pre><code>{code}</code></pre>",
+            f"<div style='background:#1e1e2e; border:1px solid #313244; "
+            f"border-radius:6px; margin:8px 0; overflow:hidden;'>"
+            f"<div style='display:flex; justify-content:space-between; "
+            f"align-items:center; padding:4px 10px; background:#181825; "
+            f"border-bottom:1px solid #313244; font-size:11px; color:#6c7086;'>"
+            f"<span>{lang or 'code'}</span>"
+            f"<a href='copy:{i}' style='color:#89b4fa; text-decoration:none;' "
+            f"onclick='navigator.clipboard.writeText(\"{escaped}\")'>Copy</a>"
+            f"</div>"
+            f"<pre style='margin:0; padding:10px; font-size:12px;'><code>{code}</code></pre>"
+            f"</div>",
         )
 
     # Restore inline code
@@ -469,6 +479,10 @@ class ChatPage(PageWidget):
         self.mic_btn.clicked.connect(self._mic_input)
         toolbar.addWidget(self.speak_btn)
         toolbar.addWidget(self.mic_btn)
+        self.prompt_btn = QPushButton(f"{icon('file')}  Prompts")
+        self.prompt_btn.setToolTip("Save / load prompt templates")
+        self.prompt_btn.clicked.connect(self._show_prompt_lib)
+        toolbar.addWidget(self.prompt_btn)
         toolbar.addStretch()
         self.content.addLayout(toolbar)
 
@@ -495,6 +509,8 @@ class ChatPage(PageWidget):
         self.chat_log = QTextEdit()
         self.chat_log.setReadOnly(True)
         self.chat_log.setPlaceholderText("Start a conversation...")
+        self.chat_log.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.chat_log.customContextMenuRequested.connect(self._chat_context_menu)
         self._drop_handler = _ImageDropHandler(self.chat_log, self._handle_image_drop)
         self._add(self.chat_log)
 
@@ -515,6 +531,7 @@ class ChatPage(PageWidget):
         )
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.msg_input.setCompleter(completer)
+        self.msg_input.textChanged.connect(self._update_token_count)
         input_row.addWidget(self.msg_input, 1)
         self.send_btn = QPushButton(f"{icon('send')}  Send")
         self.send_btn.setObjectName("sendBtn")
@@ -752,6 +769,11 @@ class ChatPage(PageWidget):
         self._temperature = val / 10.0
         self.temp_label.setText(f"{self._temperature:.1f}")
 
+    def _update_token_count(self) -> None:
+        text = self.msg_input.text()
+        est = len(text) // 4 or 0
+        self.token_label.setText(f"~{est} tokens (input)")
+
     def _switch_model(self, model: str) -> None:
         """Reconnect the chat client to a different local model."""
         if not model or self._busy:
@@ -897,6 +919,99 @@ class ChatPage(PageWidget):
         path = _chat_session_path()
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
+    # ── Prompt library ─────────────────────────────────────────────────
+    _PROMPTS_DIR = Path(__file__).parent / ".virgo_prompts"
+
+    def _show_prompt_lib(self) -> None:
+        """Open the prompt library dialog — save or load prompt templates."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Prompt Library")
+        dlg.resize(400, 350)
+        dlg.setStyleSheet(f"QDialog {{ background: #1e1e2e; }}")
+        layout = QVBoxLayout(dlg)
+
+        # ── List existing prompts ──
+        lbl = QLabel("Saved prompts (click to load):")
+        lbl.setStyleSheet("color:#cdd6f4; font-weight:bold;")
+        layout.addWidget(lbl)
+
+        lst = QListWidget()
+        lst.setStyleSheet(
+            "background:#181825; border:1px solid #313244; border-radius:6px; "
+            "color:#cdd6f4;"
+        )
+        layout.addWidget(lst)
+
+        # Load prompts from disk
+        self._PROMPTS_DIR.mkdir(exist_ok=True)
+        prompt_files = sorted(self._PROMPTS_DIR.glob("*.json"))
+        for pf in prompt_files:
+            try:
+                data = json.loads(pf.read_text(encoding="utf-8"))
+                name = data.get("name", pf.stem)
+                item = QListWidgetItem(f"{icon('file')}  {name}")
+                item.setData(33, str(pf))
+                lst.addItem(item)
+            except Exception:
+                pass
+
+        def _load_prompt(item) -> None:
+            path = Path(item.data(33))
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                text = data.get("text", "")
+                self.msg_input.setText(text)
+                self.msg_input.setFocus()
+                dlg.accept()
+            except Exception:
+                pass
+
+        lst.itemDoubleClicked.connect(_load_prompt)
+
+        # ── Save a new prompt ──
+        save_row = QHBoxLayout()
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("Prompt name…")
+        name_input.setStyleSheet(
+            "background:#181825; border:1px solid #313244; border-radius:6px; "
+            "color:#cdd6f4; padding:6px 10px;"
+        )
+        save_row.addWidget(name_input, 1)
+        save_btn = QPushButton("Save current input")
+        save_btn.setStyleSheet(
+            "background:#313244; border:1px solid #45475a; border-radius:6px; "
+            "color:#cdd6f4; padding:6px 12px;"
+        )
+        save_row.addWidget(save_btn)
+        layout.addLayout(save_row)
+
+        def _save_prompt() -> None:
+            name = name_input.text().strip()
+            if not name:
+                return
+            text = self.msg_input.text().strip()
+            if not text:
+                return
+            slug = name.lower().replace(" ", "_").replace("/", "_")
+            payload = {"name": name, "text": text}
+            dest = self._PROMPTS_DIR / f"{slug}.json"
+            dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            # Re-open dialog to refresh list
+            dlg.accept()
+            self._show_prompt_lib()
+
+        save_btn.clicked.connect(_save_prompt)
+
+        close_btn = QPushButton("Close")
+        close_btn.setStyleSheet(
+            "background:#313244; border:1px solid #45475a; border-radius:6px; "
+            "color:#cdd6f4; padding:6px 12px;"
+        )
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn)
+
+        dlg.exec()
+
     def _speak_reply(self) -> None:
         """Read the last assistant reply aloud via edge-tts."""
         text = getattr(self, "_last_reply", "")
@@ -974,13 +1089,29 @@ class ChatPage(PageWidget):
 
     def _handle_image_drop(self, path: str) -> None:
         """Insert a dropped image into the chat log and history."""
-        self.chat_log.append(f"<b>You:</b> <img src='file:///{path}' width='400'>")
+        self.chat_log.append(f"<b>You:</b> <img src='file:///{path}' width='400'><br>")
         self._history.append({"role": "user", "content": f"[image: {path}]"})
-        self.chat_log.append("<i>Image attached — Virgo can see file paths.</i>")
+        self._save_chat()
+        self._last_user = f"[image: {path}]"
+
+    def _chat_context_menu(self, pos) -> None:
+        """Right-click on chat log: edit & resend last user message."""
+        menu = self.chat_log.createStandardContextMenu()
+        if self._last_user:
+            act = menu.addAction(f"{icon('edit')}  Edit & Resend")
+            act.triggered.connect(self._edit_last_message)
+        menu.exec(self.chat_log.viewport().mapToGlobal(pos))
+
+    def _edit_last_message(self) -> None:
+        """Load the last user message into input for editing + resend."""
+        text = self._last_user
+        # Strip HTML tags for editing
+        import re
+        text = re.sub(r'<[^>]+>', '', text)
+        self.msg_input.setText(text)
+        self.msg_input.setFocus()
 
     def _load_history(self, msgs: list[dict], model: str = "", sid: str = "") -> None:
-        """Replace current chat with a previous session."""
-        self.chat_log.clear()
         self._history[:] = list(msgs)
         self._current_model = model or self._current_model
         self._session_id = sid or self._session_id

@@ -9,6 +9,7 @@ __pycache__/
 .coverage.*
 .virgo_memory/
 .virgo_chat_history/
+.virgo_prompts/
 build/
 dist/
 
