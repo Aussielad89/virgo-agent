@@ -20,7 +20,25 @@ authors = [
 [project.optional-dependencies]
 web = ["fastapi", "uvicorn", "jinja2", "sse-starlette"]
 yaml = ["pyyaml"]
-dev = ["pytest>=7", "pytest-cov>=4", "pytest-xdist>=3", "mypy>=1"]
+dev = ["pytest>=7", "pytest-cov>=4", "pytest-xdist>=3", "mypy>=1", "ruff>=0.5"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = ["agent_env", ".virgo_memory", "venv", "__pycache__", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = ["E501", "B008", "C401", "C408", "SIM105", "UP038", "B904"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402", "F403", "F405"]
+"cli.py" = ["E402"]
+"run.py" = ["E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [project.scripts]
 virgo = "cli:main"

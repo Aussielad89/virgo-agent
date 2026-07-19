@@ -107,6 +107,26 @@ def _handle_tools_call(req: dict, registry: ToolRegistry) -> str:
         return _rpc_error(req["id"], -32000, str(exc))
 
 
+def _dispatch(req: dict, registry: ToolRegistry) -> Optional[str]:
+    """Route one MCP request to its handler.
+
+    Returns the JSON-RPC response string, or ``None`` when no response is
+    expected (e.g. notifications).
+    """
+    method = req.get("method", "")
+    req_id = req.get("id")
+    if method == "initialize":
+        return _handle_initialize(req)
+    elif method == "tools/list":
+        return _handle_tools_list(req, registry)
+    elif method == "tools/call":
+        return _handle_tools_call(req, registry)
+    elif method == "notifications/initialized":
+        return None
+    else:
+        return _rpc_error(req_id, -32601, f"Method not found: {method}")
+
+
 # ── Main loop ─────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -126,22 +146,15 @@ def main() -> None:
             print(_rpc_error(None, -32700, "Parse error"), flush=True)
             continue
 
-        method = req.get("method", "")
-        req_id = req.get("id")
+        try:
+            resp = _dispatch(req, registry)
+        except Exception as exc:  # defensive: never let one bad request kill the server
+            print(f"[virgo-mcp] unhandled error: {exc}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
+            resp = _rpc_error(req.get("id"), -32603, f"Internal error: {exc}")
 
-        if method == "initialize":
-            resp = _handle_initialize(req)
-        elif method == "tools/list":
-            resp = _handle_tools_list(req, registry)
-        elif method == "tools/call":
-            resp = _handle_tools_call(req, registry)
-        elif method == "notifications/initialized":
-            # No response expected for notifications
-            continue
-        else:
-            resp = _rpc_error(req_id, -32601, f"Method not found: {method}")
-
-        print(resp, flush=True)
+        if resp is not None:
+            print(resp, flush=True)
 
 
 if __name__ == "__main__":

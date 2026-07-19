@@ -172,6 +172,13 @@ class PipelinePage(PageWidget):
         self._build_dag()
         self._dag_view.mousePressEvent = self._dag_clicked  # type: ignore
         dag_group.layout().addWidget(self.status_label)  # type: ignore
+        # Export graph button
+        export_row = QHBoxLayout()
+        export_btn = QPushButton(f"{icon('save')}  Export graph PNG")
+        export_btn.clicked.connect(self._export_dag)
+        export_row.addWidget(export_btn)
+        export_row.addStretch()
+        dag_group.layout().addLayout(export_row)  # type: ignore
         self._add(dag_group)
 
         # Progress
@@ -181,12 +188,14 @@ class PipelinePage(PageWidget):
 
         # Splitter: log output only
         splitter = QSplitter(Qt.Orientation.Vertical)
+        self._splitter = splitter
 
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setPlaceholderText("Pipeline output will appear here...")
         splitter.addWidget(self.output)
         self._add(splitter)
+        self._restore_splitter()
 
         # Timer for polling subprocess
         self._timer = QTimer()
@@ -198,6 +207,33 @@ class PipelinePage(PageWidget):
 
     def _toggle_llm(self) -> None:
         self.use_llm.setText(f"{icon('llm')}  LLM: {'ON' if self.use_llm.isChecked() else 'OFF'}")
+
+    def _restore_splitter(self) -> None:
+        try:
+            import json
+            p = HERE / ".virgo_pipeline_ui.json"
+            if p.exists():
+                d = json.loads(p.read_text())
+                sizes = d.get("splitter")
+                if sizes and len(sizes) == self._splitter.count():
+                    self._splitter.setSizes([int(s) for s in sizes])
+        except Exception:
+            pass
+
+    def _save_splitter(self) -> None:
+        try:
+            import json
+            p = HERE / ".virgo_pipeline_ui.json"
+            d = {}
+            if p.exists():
+                try:
+                    d = json.loads(p.read_text())
+                except Exception:
+                    d = {}
+            d["splitter"] = list(self._splitter.sizes())
+            p.write_text(json.dumps(d))
+        except Exception:
+            pass
 
     def _build_dag(self) -> None:
         """Draw the 5 pipeline phase nodes + connecting arrows."""
@@ -282,6 +318,27 @@ class PipelinePage(PageWidget):
         except Exception as exc:
             self._update_dag(phase, "failed")
             self.output.appendPlainText(f"{icon('error')} Phase {phase} failed: {exc}")
+
+    def _export_dag(self) -> None:
+        """Render the pipeline DAG scene to a PNG file."""
+        from PyQt6.QtGui import QImage, QPainter
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export DAG", str(HERE / "pipeline_graph.png"),
+            "PNG (*.png)")
+        if not path:
+            return
+        try:
+            scene = self._dag_scene
+            img = QImage(int(scene.width()), int(scene.height()),
+                         QImage.Format.Format_ARGB32)
+            img.fill(QColor("#1e1e2e"))
+            painter = QPainter(img)
+            scene.render(painter)
+            painter.end()
+            img.save(path)
+            self.output.appendPlainText(f"{icon('ok')} DAG exported → {path}")
+        except Exception as exc:
+            self.output.appendPlainText(f"{icon('error')} Export failed: {exc}")
 
     def _phase_from_line(self, line: str) -> str | None:
         low = line.lower()

@@ -711,8 +711,11 @@ class VirgoDesktopWindow(QMainWindow):
         # ── Shortcuts ────────────────────────────────────────────
         self._setup_shortcuts()
 
-        # ── Navigate to default ──────────────────────────────────
-        self._navigate("pipeline")
+        # ── Navigate to last-used page (or pipeline) ───────────────
+        last = self._config.get("last_page", "pipeline")
+        if last not in [p for p, _l, _e in SIDEBAR_ITEMS]:
+            last = "pipeline"
+        self._navigate(last)
 
         # ── Theme (honours auto dark/light) ──────────────────────
         self.refresh_theme()
@@ -774,11 +777,18 @@ class VirgoDesktopWindow(QMainWindow):
     def _navigate(self, page_id: str) -> None:
         if page_id == self.current_page:
             return
+        # Persist leaving page UI state
+        if self.current_page:
+            prev = self.pages.get(self.current_page)
+            if hasattr(prev, "_save_splitter"):
+                prev._save_splitter()
         item = self._nav_items.get(page_id)
         if item is not None:
             self.nav_list.setCurrentItem(item)
         self.stack.setCurrentWidget(self.pages[page_id])
         self.current_page = page_id
+        self._config["last_page"] = page_id
+        self._save_config()
         page = self.pages[page_id]
         if hasattr(page, "on_activate"):
             page.on_activate()
@@ -904,6 +914,36 @@ class VirgoDesktopWindow(QMainWindow):
             )
         else:
             self.set_status(f"{title}: {message}")
+        self._toast(title, message)
+
+    def _toast(self, title: str, message: str) -> None:
+        """Show a transient in-app toast in the top-right corner."""
+        try:
+            from PyQt6.QtWidgets import QLabel as _QLabel
+            toast = QFrame(self)
+            toast.setObjectName("toast")
+            toast.setFrameShape(QFrame.Shape.StyledPanel)
+            t_layout = QVBoxLayout(toast)
+            t_layout.setContentsMargins(12, 8, 12, 8)
+            t_layout.setSpacing(2)
+            t_title = _QLabel(f"<b>{title}</b>")
+            t_title.setStyleSheet("color: #cdd6f4;")
+            t_msg = _QLabel(message)
+            t_msg.setStyleSheet("color: #a6adc8;")
+            t_msg.setWordWrap(True)
+            t_layout.addWidget(t_title)
+            t_layout.addWidget(t_msg)
+            toast.setStyleSheet(
+                "QFrame#toast { background: #313244; border: 1px solid #45475a; "
+                "border-radius: 8px; }")
+            toast.adjustSize()
+            toast.setFixedWidth(min(320, toast.width() + 24))
+            x = self.width() - toast.width() - 16
+            toast.move(x, 16)
+            toast.show()
+            QTimer.singleShot(4000, lambda: toast.deleteLater())
+        except Exception:
+            pass
 
     def _fuzzy_score(self, query: str, text: str) -> int:
         """Subsequence fuzzy score: higher is better, -1 means no match."""
@@ -1162,6 +1202,17 @@ class VirgoDesktopWindow(QMainWindow):
         layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignCenter)
         dlg.exec()
 
+    def hideEvent(self, event) -> None:
+        """Persist UI state when the window is hidden (minimised / tray)."""
+        try:
+            cur = self.pages.get(self.current_page)
+            if hasattr(cur, "_save_splitter"):
+                cur._save_splitter()
+            self._save_geom()
+        except Exception:
+            pass
+        super().hideEvent(event)
+
     def closeEvent(self, event) -> None:
         """Minimize to tray instead of quitting, unless a real quit was asked."""
         if getattr(self, "tray", None) and not self._real_close:
@@ -1235,6 +1286,12 @@ class VirgoDesktopWindow(QMainWindow):
         if getattr(self, "_custom_css", ""):
             ss += "\n" + self._custom_css
         self.setStyleSheet(ss)
+        # Live-apply to any popped-out windows too.
+        for win in getattr(self, "_popped", {}).values():
+            try:
+                win.setStyleSheet(ss)
+            except Exception:
+                pass
 
     def refresh_theme(self) -> None:
         """Resolve the active theme from the current mode and re-apply."""

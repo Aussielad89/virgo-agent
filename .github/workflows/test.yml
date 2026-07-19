@@ -30,7 +30,12 @@ jobs:
       - name: Lint with ruff
         run: |
           ruff --version
-          ruff check *.py --statistics
+          ruff check . --statistics
+        continue-on-error: true
+
+      - name: Format check with ruff
+        run: |
+          ruff format --check .
         continue-on-error: true
 
       - name: Type check with mypy

@@ -148,13 +148,87 @@ python -m pytest tests/ -v            # 276 tests
 python -m pytest tests/ --cov=.       # With coverage
 ```
 
+## Desktop App (PyQt6)
+
+A full GUI (`virgo_desktop.py`) with sidebar navigation, theming, and live
+pipeline/swarm monitoring. Requires PyQt6 (PyQt6 6.11 under `C:/Python314` on
+this machine):
+
+```bash
+C:/Python314/python.exe virgo_desktop.py
+# or with the bundled interpreter:
+python virgo_desktop.py
+```
+
+**Features**
+- **Sidebar** pages: Pipeline, Chat, Files, Network, Diagnostics, Alerts,
+  Scaffolds, Sessions, Swarm, Logs, Plugins, Settings, Procs, Bench.
+- **Theming** — Mocha / Latte / Nord / Gruvbox built in, plus a live theme
+  editor (pick colours → save as a new theme) and custom CSS injection.
+  Theme + mode persist to `.virgo_desktop_config.json`.
+- **Pop-out** any page into its own window (Ctrl+P → select → Pop out).
+- **Command palette** (`Ctrl+Shift+P`) — fuzzy search pages *and* actions
+  (Run Pipeline, Export Chat, Toggle Theme, Quit, …).
+- **Chat** — slash autocomplete, branching, regeneration, Ctrl+F search,
+  persona switcher, streaming token rate, voice mode, A/B model compare,
+  multi-model parallel chat, image drag-drop + gallery.
+- **Pipeline** — live DAG visualiser (discover → plan → generate → test → fix),
+  click a node to re-run that phase, export the graph as PNG.
+- **Files** — tree browser + Git panel (status / commit / push).
+- **Logs** — level filter + regex filter + tail-follow.
+- **Procs** — live python/ollama process table with kill button.
+- **Bench** — benchmark Ollama models on a standard prompt (latency/token table).
+- **Toasts** + tray notifications on pipeline/swarm completion; completion chime.
+- **Persistence** — window geometry, sidebar order/collapse, last page, and
+  per-page splitter positions are restored on launch.
+
+Config files (all gitignored):
+
+| File | Purpose |
+|------|---------|
+| `.virgo_desktop_config.json` | Theme, mode, sidebar order/collapse, last page |
+| `.virgo_desktop_geom.json` | Window X/Y/W/H |
+| `.virgo_pipeline_ui.json` | Pipeline splitter sizes |
+| `.virgo_themes.json` | User-saved custom themes |
+| `.virgo_chat_history/` | Chat sessions |
+| `.virgo_prompts/` | Saved prompt templates |
+
 ## Build
+
+Library / CLI wheel:
 
 ```bash
 pip install build
 python -m build
 pip install dist/virgo_agent-*.whl
 ```
+
+Standalone desktop executable (PyInstaller, uses `logo.ico`):
+
+```bash
+pip install pyinstaller
+pyinstaller virgo_desktop.spec
+# → dist/virgo_desktop/virgo_desktop.exe
+```
+
+## Changelog
+
+### v0.2.x — Desktop UI overhaul
+- PyQt6 desktop app (`virgo_desktop.py`) with 14 sidebar pages.
+- Data-driven theme system: Mocha / Latte / Nord / Gruvbox, live theme editor,
+  custom CSS injection, persisted to `.virgo_desktop_config.json`.
+- Pop-out pages into separate windows; theme/CSS apply live to popped windows.
+- Command palette (`Ctrl+Shift+P`) for pages **and** actions; page quick-nav
+  (`Ctrl+P`).
+- Chat: slash autocomplete, branching, regeneration, Ctrl+F search, persona
+  switcher, streaming token rate, voice mode, A/B compare, multi-model chat,
+  image drag-drop + gallery, font zoom, markdown export, split-view.
+- Pipeline: live DAG visualiser with per-phase re-run and PNG export.
+- Files: tree browser + Git panel (status / commit / push).
+- Logs: level + regex filter, tail-follow.
+- Procs monitor (kill button), port scanner, benchmark runner, .env editor.
+- Toasts + tray notifications, completion chime.
+- Persisted layout: geometry, sidebar order/collapse, last page, splitter sizes.
 
 ## Environment Variables
 

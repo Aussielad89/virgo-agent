@@ -12,6 +12,7 @@ __pycache__/
 .virgo_prompts/
 .virgo_desktop_config.json
 .virgo_desktop_geom.json
+.virgo_pipeline_ui.json
 .virgo_themes.json
 build/
 dist/

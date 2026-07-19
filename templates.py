@@ -18,27 +18,55 @@ HERE = Path(__file__).parent
 # Simple template engine
 # ===========================================================================
 
-_VAR_RE = re.compile(r"\{\{(\w+)\}\}")
+_VAR_RE = re.compile(r"\{\{\s*(\w+)(?:\s*[:|]\s*(\w+))?\s*\}\}")
+
+
+def _apply_filter(value: Any, filt: str) -> str:
+    s = str(value)
+    if filt == "upper":
+        return s.upper()
+    if filt == "lower":
+        return s.lower()
+    if filt == "capitalize":
+        return s.capitalize()
+    if filt == "title":
+        return s.title()
+    if filt == "strip":
+        return s.strip()
+    if filt == "int":
+        try:
+            return str(int(value))
+        except (TypeError, ValueError):
+            return s
+    if filt == "bool":
+        return str(bool(value))
+    if filt == "json":
+        import json as _json
+
+        try:
+            return _json.dumps(value)
+        except (TypeError, ValueError):
+            return s
+    return s
 
 
 def render(template: str, **vars: Any) -> str:
     """Render a template by substituting ``{{var}}`` placeholders.
 
-    Simple built-in filters:
-      ``{{var:upper}}``, ``{{var:lower}}``, ``{{var:capitalize}}``
+    Built-in filters (applied with ``:`` or ``|``):
+      ``{{var:upper}}`` / ``{{var|upper}}``, ``lower``, ``capitalize``,
+      ``title``, ``strip``, ``int``, ``bool``, ``json``.
+    Unknown variables are left untouched.
     """
     def _replace(m: re.Match) -> str:
-        key = m.group(1)
-        name, _, filter_name = key.partition(":")
-        value = str(vars.get(name, m.group(0)))
-
-        if filter_name == "upper":
-            return value.upper()
-        if filter_name == "lower":
-            return value.lower()
-        if filter_name == "capitalize":
-            return value.capitalize()
-        return value
+        name = m.group(1)
+        filt = m.group(2)
+        if name not in vars:
+            return m.group(0)
+        value = vars[name]
+        if filt:
+            value = _apply_filter(value, filt)
+        return str(value)
 
     return _VAR_RE.sub(_replace, template)
 
@@ -62,8 +90,16 @@ def main() -> int:
     parser.add_argument("--output", "-o", type=str, help="Output file path")
     args = parser.parse_args()
 
-    # TODO: implement {{name}} logic here
-    print(f"{{name}}: running with input={args.input}, output={args.output}")
+    if args.input:
+        path = Path(args.input)
+        if path.exists():
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            print(f"{{name}}: read {len(lines)} lines from {args.input}")
+        else:
+            print(f"{{name}}: input not found: {args.input}", file=sys.stderr)
+            return 1
+    else:
+        parser.print_help()
     return 0
 
 
@@ -75,6 +111,7 @@ DATA_PIPELINE = r'''"""
 {{description}}
 """
 
+import argparse
 import csv
 import json
 import sys
@@ -96,9 +133,22 @@ def load_data(path: str) -> list[dict[str, Any]]:
 
 
 def transform(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Apply transformations to the data."""
-    # TODO: implement {{name}} transformation logic
-    return data
+    """Normalize every record: trim strings and drop empty/None values."""
+    def _clean(value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    out: list[dict[str, Any]] = []
+    for row in data:
+        new_row: dict[str, Any] = {}
+        for k, v in row.items():
+            cleaned = _clean(v)
+            if cleaned in ("", None):
+                continue
+            new_row[k] = cleaned
+        out.append(new_row)
+    return out
 
 
 def save_output(data: list[dict[str, Any]], path: str) -> None:
@@ -108,11 +158,15 @@ def save_output(data: list[dict[str, Any]], path: str) -> None:
 
 
 def main() -> int:
-    # TODO: wire up input/output paths
-    data = load_data("input.csv")
+    parser = argparse.ArgumentParser(description="{{description}}")
+    parser.add_argument("--input", "-i", required=True, help="Input CSV/JSON path")
+    parser.add_argument("--output", "-o", required=True, help="Output JSON path")
+    args = parser.parse_args()
+
+    data = load_data(args.input)
     result = transform(data)
-    save_output(result, "output.json")
-    print(f"Processed {len(result)} records")
+    save_output(result, args.output)
+    print(f"Processed {len(result)} records -> {args.output}")
     return 0
 
 

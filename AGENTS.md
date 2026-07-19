@@ -284,7 +284,21 @@ Pipeline configuration can be loaded from JSON/YAML files via
 `virgo run --config pipeline.json`. CLI flags override config file values.
 YAML requires `pyyaml` (optional, not in pyproject.toml).
 
-### Tool registry pattern
+Desktop app (`virgo_desktop.py`) persists UI state to gitignored JSON files:
+
+| File | Purpose |
+|------|---------|
+| `.virgo_desktop_config.json` | Theme name/mode, sidebar order + collapse state, last page |
+| `.virgo_desktop_geom.json` | Window X/Y/W/H geometry |
+| `.virgo_pipeline_ui.json` | Pipeline page splitter sizes |
+| `.virgo_themes.json` | User-saved custom themes (from the theme editor) |
+| `.virgo_chat_history/` | Per-session chat transcripts (JSON) |
+| `.virgo_prompts/` | Saved prompt templates |
+
+All are listed in `.gitignore` — running the desktop app must not litter the
+repo root with runtime artifacts (per repo hygiene rules).
+
+
 Tools are registered via `ToolRegistry` and looked up by name string.
 The orchestrator and policies both interact with tools through this
 registry, enabling consistent logging and future tool-approval hooks.
