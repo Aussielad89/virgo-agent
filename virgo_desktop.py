@@ -449,7 +449,7 @@ from PyQt6.QtWidgets import (
     QApplication, QDialog, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
     QStackedWidget, QSystemTrayIcon, QMenu, QStatusBar, QVBoxLayout,
-    QWidget, QSplitter,
+    QWidget, QSplitter, QLineEdit,
 )
 
 # ── Import virgo modules ─────────────────────────────────────────────
