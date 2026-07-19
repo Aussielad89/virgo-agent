@@ -312,6 +312,15 @@ class VirgoDesktopWindow(QMainWindow):
         chat_action.triggered.connect(
             lambda: (self.showNormal(), self._navigate("chat"))
         )
+        pipeline_action = menu.addAction("Run Pipeline")
+        pipeline_action.triggered.connect(
+            lambda: (self.showNormal(), self._navigate("pipeline"))
+        )
+        swarm_action = menu.addAction("Launch Swarm")
+        swarm_action.triggered.connect(
+            lambda: (self.showNormal(), self._navigate("swarm"))
+        )
+        menu.addSeparator()
         quit_action = menu.addAction("Quit")
         quit_action.triggered.connect(self._quit)
         self.tray.setContextMenu(menu)

@@ -12,8 +12,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import Qt, QTimer, QMetaObject, pyqtSlot, Q_ARG, QUrl
-from PyQt6.QtGui import QFont, QShortcut, QKeySequence
+from PyQt6.QtCore import Qt, QTimer, QMetaObject, pyqtSlot, Q_ARG, QUrl, QEvent
+from PyQt6.QtCore import QObject
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
     QComboBox, QFormLayout, QFrame, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -224,6 +225,10 @@ class PipelinePage(PageWidget):
             rc = self._process.returncode
             self.status_label.setText(f"Finished (exit code {rc})")
             self._process = None
+            # Desktop notification
+            w = self.window()
+            if hasattr(w, "notify"):
+                w.notify("Pipeline", f"Exit code {rc} — {self.goal_input.text()[:60]}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -370,6 +375,40 @@ class _StopStream(Exception):
     """Raised inside the stream writer to abort an in-flight reply."""
 
 
+class _ImageDropHandler(QObject):
+    """Event filter that accepts image drops onto a QTextEdit."""
+
+    def __init__(self, target: QTextEdit, callback):
+        super().__init__(target)
+        self._cb = callback
+        target.installEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:
+        t = event.type()
+        if t == QEvent.Type.DragEnter:
+            if event.mimeData().hasUrls():
+                for url in event.mimeData().urls():
+                    if url.isLocalFile() and self._is_image(url.toLocalFile()):
+                        event.acceptProposedAction()
+                        return True
+            return False
+        if t == QEvent.Type.Drop:
+            if event.mimeData().hasUrls():
+                for url in event.mimeData().urls():
+                    if url.isLocalFile():
+                        p = url.toLocalFile()
+                        if self._is_image(p):
+                            self._cb(p)
+                event.acceptProposedAction()
+                return True
+            return False
+        return super().eventFilter(obj, event)
+
+    @staticmethod
+    def _is_image(path: str) -> bool:
+        return path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))
+
+
 class ChatPage(PageWidget):
     """Interactive streaming chat with Virgo (local LLM)."""
 
@@ -456,6 +495,7 @@ class ChatPage(PageWidget):
         self.chat_log = QTextEdit()
         self.chat_log.setReadOnly(True)
         self.chat_log.setPlaceholderText("Start a conversation...")
+        self._drop_handler = _ImageDropHandler(self.chat_log, self._handle_image_drop)
         self._add(self.chat_log)
 
         self._cancel = False
@@ -930,6 +970,31 @@ class ChatPage(PageWidget):
     @pyqtSlot(str)
     def _append_log(self, html: str) -> None:
         self.chat_log.append(html)
+
+    def _handle_image_drop(self, path: str) -> None:
+        """Insert a dropped image into the chat log and history."""
+        self.chat_log.append(f"<b>You:</b> <img src='file:///{path}' width='400'>")
+        self._history.append({"role": "user", "content": f"[image: {path}]"})
+        self.chat_log.append("<i>Image attached — Virgo can see file paths.</i>")
+
+    def _load_history(self, msgs: list[dict], model: str = "", sid: str = "") -> None:
+        """Replace current chat with a previous session."""
+        self.chat_log.clear()
+        self._history[:] = list(msgs)
+        self._current_model = model or self._current_model
+        self._session_id = sid or self._session_id
+        self.model_combo.setCurrentText(self._current_model)
+        for m in self._history:
+            role = m.get("role", "?")
+            content = m.get("content", "")
+            if role == "user":
+                self.chat_log.append(f"<b>You:</b> {content[:200]}")
+            elif role == "assistant":
+                self.chat_log.append(f"<b>Virgo:</b> {_md_to_html(content[:500])}")
+            else:
+                self.chat_log.append(f"<i>[{role}]: {content[:200]}</i>")
+        self.chat_log.append(f"<i>— Loaded {len(msgs)} messages from {sid or 'session'} —</i>")
+        self._save_chat()
 
     @staticmethod
     def _help_text() -> str:
@@ -1682,30 +1747,30 @@ class SessionPage(PageWidget):
     def __init__(self) -> None:
         super().__init__(
             "Sessions",
-            "Inspect and replay saved pipeline / swarm sessions.",
+            "Browse and replay pipeline / swarm runs, or load chat history.",
         )
 
         self._add_row(
             QPushButton(f"{icon('refresh')}  Refresh", clicked=self._refresh),
         )
-        search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Filter:"))
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("type to filter sessions…")
-        self.search_input.textChanged.connect(lambda _: self._refresh())
-        search_row.addWidget(self.search_input, 1)
-        self.content.addLayout(search_row)
 
-        self.session_list = QListWidget()
-        self.session_list.setMinimumHeight(220)
-        self.session_list.currentItemChanged.connect(self._on_select)
-        self._add(self.session_list)
+        self.tabs = QTabWidget()
+        self.pipeline_list = QListWidget()
+        self.pipeline_list.setMinimumHeight(180)
+        self.pipeline_list.currentItemChanged.connect(self._on_pipeline_select)
+        self.tabs.addTab(self.pipeline_list, "Pipeline")
+
+        self.chat_list = QListWidget()
+        self.chat_list.setMinimumHeight(180)
+        self.chat_list.currentItemChanged.connect(self._on_chat_select)
+        self.tabs.addTab(self.chat_list, "Chat")
+        self._add(self.tabs)
 
         # Detail panel
-        detail = self._section("Session detail")
+        detail = self._section("Detail")
         self.detail_text = QPlainTextEdit()
         self.detail_text.setReadOnly(True)
-        self.detail_text.setMaximumHeight(160)
+        self.detail_text.setMaximumHeight(140)
         detail.layout().addWidget(self.detail_text)  # type: ignore
 
         self._add_row(
@@ -1718,8 +1783,25 @@ class SessionPage(PageWidget):
         self._add(self.status)
         self._sessions: list[dict[str, Any]] = []
         self._current: dict[str, Any] | None = None
+        self._chat_sessions: list[dict[str, Any]] = []
+        self._current_chat: dict[str, Any] | None = None
 
     def _delete(self) -> None:
+        if self.tabs.currentIndex() == 1:
+            # Chat session deletion
+            if not self._current_chat:
+                self.status.setText("Select a chat session first.")
+                return
+            path = self._current_chat.get("path", "")
+            try:
+                if path and Path(path).exists():
+                    Path(path).unlink()
+                self.status.setText(f"Deleted '{self._current_chat.get('name', '')}'")
+            except Exception as exc:
+                self.status.setText(f"Delete failed: {exc}")
+            self._refresh()
+            return
+        # Pipeline session deletion (existing logic)
         if not self._current:
             self.status.setText("Select a session first.")
             return
@@ -1745,7 +1827,9 @@ class SessionPage(PageWidget):
         self._refresh()
 
     def _refresh(self) -> None:
-        self.session_list.clear()
+        """Reload both pipeline and chat session lists."""
+        # ── Pipeline sessions ──
+        self.pipeline_list.clear()
         self._current = None
         try:
             from memory import list_sessions
@@ -1754,13 +1838,6 @@ class SessionPage(PageWidget):
             self.status.setText(f"Error: {exc}")
             return
         self._sessions = sessions
-
-        if not sessions:
-            self.status.setText("No sessions found in .virgo_memory/")
-            return
-
-        q = self.search_input.text().strip().lower()
-        shown = 0
         for s in sessions:
             label = s.get("name", "?")
             goal = (s.get("goal") or "").strip()
@@ -1769,15 +1846,37 @@ class SessionPage(PageWidget):
             phase = s.get("phase")
             if phase:
                 label += f"  [{phase}]"
-            if q and q not in label.lower():
-                continue
             item = QListWidgetItem(label)
-            item.setData(256, s)  # Qt.UserRole
-            self.session_list.addItem(item)
-            shown += 1
-        self.status.setText(f"{shown}/{len(sessions)} session(s)")
+            item.setData(256, s)
+            self.pipeline_list.addItem(item)
 
-    def _on_select(self, current, _prev) -> None:
+        # ── Chat sessions ──
+        self.chat_list.clear()
+        self._current_chat = None
+        chat_dir = HERE / ".virgo_chat_history"
+        self._chat_sessions = []
+        if chat_dir.exists():
+            for fp in sorted(chat_dir.glob("chat_*.json"), reverse=True):
+                try:
+                    data = json.loads(fp.read_text())
+                    msgs = data.get("messages", [])
+                    sid = data.get("session_id", "")[:8]
+                    model = data.get("model", "?")
+                    label = f"{fp.stem}  [{model}]  ({len(msgs)} msgs)"
+                    entry = {"name": fp.stem, "path": str(fp), "session_id": sid,
+                             "model": model, "messages": len(msgs)}
+                    item = QListWidgetItem(label)
+                    item.setData(256, entry)
+                    self.chat_list.addItem(item)
+                    self._chat_sessions.append(entry)
+                except Exception:
+                    pass
+
+        pipe_count = len(self._sessions)
+        chat_count = len(self._chat_sessions)
+        self.status.setText(f"{pipe_count} pipeline / {chat_count} chat session(s)")
+
+    def _on_pipeline_select(self, current, _prev) -> None:
         if not current:
             return
         self._current = current.data(256)
@@ -1796,7 +1895,34 @@ class SessionPage(PageWidget):
         ]
         self.detail_text.setPlainText("\n".join(lines))
 
+    def _on_chat_select(self, current, _prev) -> None:
+        if not current:
+            return
+        self._current_chat = current.data(256)
+        if not self._current_chat:
+            return
+        c = self._current_chat
+        lines = [
+            f"Session:   {c.get('name', '?')}",
+            f"Model:     {c.get('model', '?')}",
+            f"Messages:  {c.get('messages', 0)}",
+            f"Path:      {c.get('path', '')}",
+        ]
+        # Preview first few messages
+        try:
+            data = json.loads(Path(c['path']).read_text())
+            for m in data.get("messages", [])[:4]:
+                role = m.get("role", "?")
+                content = m.get("content", "")[:80]
+                lines.append(f"  [{role}] {content}")
+        except Exception:
+            pass
+        self.detail_text.setPlainText("\n".join(lines))
+
     def _replay(self) -> None:
+        if self.tabs.currentIndex() == 1:
+            self._load_chat_into_chat()
+            return
         if not self._current:
             self.status.setText("Select a session first.")
             return
@@ -1808,7 +1934,40 @@ class SessionPage(PageWidget):
         )
         self.status.setText(f"Launched replay for '{name}' in a new process.")
 
+    def _load_chat_into_chat(self) -> None:
+        """Load the selected chat session into ChatPage."""
+        if not self._current_chat:
+            self.status.setText("Select a chat session first.")
+            return
+        path = self._current_chat.get("path", "")
+        try:
+            data = json.loads(Path(path).read_text())
+            msgs = data.get("messages", [])
+            model = data.get("model", "")
+            sid = data.get("session_id", "")
+            # Find ChatPage and load
+            w = self.window()
+            if not w:
+                self.status.setText("Cannot access main window.")
+                return
+            cp = getattr(w, "pages", {}).get("chat")
+            if cp and hasattr(cp, "_load_history"):
+                cp._load_history(msgs, model, sid)
+                if hasattr(w, "_navigate"):
+                    w._navigate("chat")
+                self.status.setText(f"Loaded '{self._current_chat.get('name', '')}' into Chat.")
+            else:
+                self.status.setText("Chat page not found or lacks _load_history.")
+        except Exception as exc:
+            self.status.setText(f"Load failed: {exc}")
+
     def _open_json(self) -> None:
+        if self.tabs.currentIndex() == 1:
+            if self._current_chat:
+                from virgo_desktop import _open_file
+                _open_file(self._current_chat.get("path", ""))
+                self.status.setText(f"Opened {self._current_chat.get('path', '')}")
+            return
         if not self._current:
             self.status.setText("Select a session first.")
             return
@@ -1934,6 +2093,9 @@ class SwarmPage(PageWidget):
         from cli import icon as _icon
         self.output.appendPlainText(f"\n{_icon('done')}  Swarm finished.")
         self._running = False
+        w = self.window()
+        if hasattr(w, "notify"):
+            w.notify("Swarm", f"Finished — {self.goal_input.text()[:60]}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
