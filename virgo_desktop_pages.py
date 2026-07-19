@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy, QSplitter, QTabWidget,
     QTextEdit, QVBoxLayout, QWidget, QFileDialog,
     QSlider, QCompleter, QCheckBox, QDialog,
+    QColorDialog, QGridLayout,
 )
 
 HERE = Path(__file__).parent
@@ -2375,17 +2376,75 @@ class SettingsPage(PageWidget):
                 form.layout().addLayout(row)  # type: ignore
                 self._fields[key] = edit
 
-        # ── Theme selector ──────────────────────────────────────────────
-        from virgo_desktop import THEMES as _theme_data
+        # ── Appearance: theme mode + theme ──────────────────────────────
+        from virgo_desktop import EDITABLE_THEME_KEYS
+
         theme_section = self._section("Appearance")
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Theme mode:"))
+        self.mode_combo = QComboBox()
+        for mode, label in (
+            ("system", "Auto (follow system)"),
+            ("dark", "Dark"),
+            ("light", "Light"),
+            ("manual", "Manual pick"),
+        ):
+            self.mode_combo.addItem(label, mode)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_change)
+        mode_row.addWidget(self.mode_combo, 1)
+        theme_section.layout().addLayout(mode_row)  # type: ignore
+
         theme_row = QHBoxLayout()
         theme_row.addWidget(QLabel("Theme:"))
         self.theme_combo = QComboBox()
-        for key, t in _theme_data.items():
-            self.theme_combo.addItem(t["name"], key)
         self.theme_combo.currentIndexChanged.connect(self._on_theme_change)
         theme_row.addWidget(self.theme_combo, 1)
         theme_section.layout().addLayout(theme_row)  # type: ignore
+
+        # ── Custom theme editor ─────────────────────────────────────────
+        editor = self._section("Custom theme editor")
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Name:"))
+        self.theme_name_edit = QLineEdit()
+        self.theme_name_edit.setPlaceholderText("My theme")
+        name_row.addWidget(self.theme_name_edit, 1)
+        editor.layout().addLayout(name_row)  # type: ignore
+
+        self._color_btns: dict[str, QPushButton] = {}
+        self._editor_colors: dict[str, str] = {}
+        grid = QGridLayout()
+        for i, (key, nice) in enumerate(EDITABLE_THEME_KEYS):
+            lbl = QLabel(nice)
+            btn = QPushButton()
+            btn.setFixedSize(34, 20)
+            btn.clicked.connect(lambda _checked=False, k=key: self._pick_color(k))
+            row, col = divmod(i, 2)
+            grid.addWidget(lbl, row, col * 2)
+            grid.addWidget(btn, row, col * 2 + 1)
+            self._color_btns[key] = btn
+        editor.layout().addLayout(grid)  # type: ignore
+
+        save_theme_btn = QPushButton(f"{icon('save')}  Save as new theme")
+        save_theme_btn.clicked.connect(self._save_custom_theme)
+        editor.layout().addWidget(save_theme_btn)  # type: ignore
+
+        # ── Custom CSS injection ─────────────────────────────────────────
+        css_section = self._section("Custom CSS (advanced)")
+        self.css_edit = QPlainTextEdit()
+        self.css_edit.setPlaceholderText(
+            "Paste Qt stylesheet overrides, e.g.\nQPushButton { border-radius: 12px; }"
+        )
+        self.css_edit.setMaximumHeight(120)
+        css_section.layout().addWidget(self.css_edit)  # type: ignore
+        css_row = QHBoxLayout()
+        apply_css = QPushButton(f"{icon('ok')}  Apply CSS")
+        apply_css.clicked.connect(self._apply_css)
+        reset_css = QPushButton(f"{icon('refresh')}  Reset CSS")
+        reset_css.clicked.connect(self._reset_css)
+        css_row.addWidget(apply_css)
+        css_row.addWidget(reset_css)
+        css_section.layout().addLayout(css_row)  # type: ignore
 
         btn_row = QHBoxLayout()
         save_btn = QPushButton(f"{icon('save')}  Save")
@@ -2453,14 +2512,43 @@ class SettingsPage(PageWidget):
         self.save_status.setText("Defaults restored — click Save to persist")
 
     def on_activate(self) -> None:
-        """Sync theme combo with the window's current theme."""
+        """Sync the appearance controls with the window's current state."""
         w = self.window()
-        name = getattr(w, "_theme_name", "mocha")
-        idx = self.theme_combo.findData(name)
+        mode = getattr(w, "_theme_mode", "system")
+        idx = self.mode_combo.findData(mode)
         if idx >= 0:
-            self.theme_combo.setCurrentIndex(idx)
+            self.mode_combo.setCurrentIndex(idx)
+        self._populate_themes()
+        active = getattr(w, "_active_theme", w._theme_name)
+        tidx = self.theme_combo.findData(active)
+        if tidx >= 0:
+            self.theme_combo.setCurrentIndex(tidx)
+        self.theme_combo.setEnabled(mode == "manual")
+        self._refresh_theme_editor()
+        self.css_edit.setPlainText(getattr(w, "_custom_css", "") or "")
+
+    def _populate_themes(self) -> None:
+        self.theme_combo.clear()
+        for key, t in self.window().themes.items():
+            self.theme_combo.addItem(t["name"], key)
+
+    def _on_mode_change(self, idx: int) -> None:
+        mode = self.mode_combo.itemData(idx)
+        if not mode:
+            return
+        w = self.window()
+        w.set_theme_mode(mode)
+        self.theme_combo.setEnabled(mode == "manual")
+        active = getattr(w, "_active_theme", w._theme_name)
+        tidx = self.theme_combo.findData(active)
+        if tidx >= 0:
+            self.theme_combo.setCurrentIndex(tidx)
+        self.save_status.setText(f"Theme mode: {self.mode_combo.currentText()}")
+        QTimer.singleShot(3000, lambda: self.save_status.setText(""))
 
     def _on_theme_change(self, idx: int) -> None:
+        if self.mode_combo.currentData() != "manual":
+            return
         name = self.theme_combo.itemData(idx)
         if not name:
             return
@@ -2468,6 +2556,54 @@ class SettingsPage(PageWidget):
         if hasattr(w, "switch_theme"):
             w.switch_theme(name)
         self.save_status.setText(f"Theme switched to {self.theme_combo.currentText()}")
+        QTimer.singleShot(3000, lambda: self.save_status.setText(""))
+
+    def _refresh_theme_editor(self) -> None:
+        t = self.window()._current_theme()
+        for key, btn in self._color_btns.items():
+            col = t.get(key, "#000000")
+            self._editor_colors[key] = col
+            btn.setStyleSheet(
+                f"background-color: {col}; border: 1px solid #00000055; border-radius: 4px;"
+            )
+
+    def _pick_color(self, key: str) -> None:
+        from PyQt6.QtGui import QColor
+        cur = self._editor_colors.get(key, "#000000")
+        dlg = QColorDialog(self)
+        dlg.setCurrentColor(QColor(cur))
+        if dlg.exec():
+            col = dlg.currentColor().name()
+            self._editor_colors[key] = col
+            self._color_btns[key].setStyleSheet(
+                f"background-color: {col}; border: 1px solid #00000055; border-radius: 4px;"
+            )
+
+    def _save_custom_theme(self) -> None:
+        name = self.theme_name_edit.text().strip()
+        if not name:
+            self.save_status.setText(f"{icon('warn')} Enter a theme name first")
+            return
+        w = self.window()
+        w.save_custom_theme(name, dict(self._editor_colors))
+        self._populate_themes()
+        tidx = self.theme_combo.findData(name.strip().lower().replace(" ", "_"))
+        if tidx >= 0:
+            self.theme_combo.setCurrentIndex(tidx)
+        self.save_status.setText(f"{icon('ok')} Saved theme '{name}'")
+        QTimer.singleShot(3000, lambda: self.save_status.setText(""))
+
+    def _apply_css(self) -> None:
+        w = self.window()
+        w.set_custom_css(self.css_edit.toPlainText())
+        self.save_status.setText(f"{icon('ok')} Custom CSS applied")
+        QTimer.singleShot(3000, lambda: self.save_status.setText(""))
+
+    def _reset_css(self) -> None:
+        self.css_edit.clear()
+        w = self.window()
+        w.set_custom_css("")
+        self.save_status.setText(f"{icon('ok')} Custom CSS cleared")
         QTimer.singleShot(3000, lambda: self.save_status.setText(""))
 
 

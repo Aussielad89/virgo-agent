@@ -81,7 +81,13 @@ def load_user_themes() -> dict[str, dict[str, str]]:
         return {}
     try:
         data = json.loads(USER_THEMES_PATH.read_text())
-        return {k: v for k, v in data.items() if isinstance(v, dict) and "bg" in v}
+        out: dict[str, dict[str, str]] = {}
+        for k, v in data.items():
+            if isinstance(v, dict) and "bg" in v:
+                v = dict(v)
+                v.setdefault("name", k)
+                out[k] = v
+        return out
     except Exception:
         return {}
 
@@ -160,6 +166,25 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     }
     #stopBtn:hover {
         background: @red@22 !important;
+    }
+    #navList {
+        background: @surface@;
+        border: none;
+        outline: 0;
+    }
+    #navList::item {
+        padding: 8px 12px;
+        border-radius: 6px;
+        color: @subtext@;
+    }
+    #navList::item:hover {
+        background: @border@;
+        color: @text@;
+    }
+    #navList::item:selected {
+        background: @sidebar_active@;
+        color: @accent@;
+        font-weight: bold;
     }
     #pageArea {
         background-color: @bg@;
@@ -423,7 +448,8 @@ from PyQt6.QtGui import QAction, QFont, QIcon, QPalette, QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QDialog, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
-    QStackedWidget, QSystemTrayIcon, QMenu, QStatusBar, QVBoxLayout, QWidget,
+    QStackedWidget, QSystemTrayIcon, QMenu, QStatusBar, QVBoxLayout,
+    QWidget, QSplitter,
 )
 
 # ── Import virgo modules ─────────────────────────────────────────────
@@ -1133,6 +1159,8 @@ class VirgoDesktopWindow(QMainWindow):
     def save_custom_theme(self, name: str, colors: dict[str, str]) -> None:
         """Persist a user-built theme and switch to it immediately."""
         key = name.strip().lower().replace(" ", "_") or "custom"
+        colors = dict(colors)
+        colors["name"] = name
         themes = load_user_themes()
         themes[key] = colors
         try:
