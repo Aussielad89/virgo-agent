@@ -12,9 +12,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import Qt, QTimer, QMetaObject, pyqtSlot, Q_ARG, QUrl, QEvent, QDir, QModelIndex
+from PyQt6.QtCore import Qt, QTimer, QMetaObject, pyqtSlot, Q_ARG, QUrl, QEvent, QDir, QModelIndex, QSize
 from PyQt6.QtCore import QObject
-from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QShortcut, QKeySequence, QFileSystemModel
+from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QShortcut, QKeySequence, QFileSystemModel, QPen, QBrush
 from PyQt6.QtWidgets import (
     QComboBox, QFormLayout, QFrame, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget, QFileDialog,
     QSlider, QCompleter, QCheckBox, QDialog,
     QColorDialog, QGridLayout, QTreeView,
+    QGraphicsScene, QGraphicsView, QGraphicsRectItem,
+    QGraphicsTextItem, QGraphicsEllipseItem,
 )
 
 HERE = Path(__file__).parent
@@ -83,6 +85,16 @@ class PageWidget(QWidget):
         gb = QGroupBox(title)
         gl = QVBoxLayout(gb)
         gl.setSpacing(8)
+        gb.setCheckable(True)
+        gb.setChecked(True)
+        # Collapse/expand by hiding content when unchecked
+        gb.toggled.connect(lambda checked: gb.setFixedHeight(
+            28 if not checked else gb.sizeHint().height()
+        ))
+        gb.toggled.connect(lambda checked: gb.setStyleSheet(
+            f"QGroupBox::title {{ subcontrol-position: top left; padding: 4px 8px; "
+            f"color: {'#89b4fa' if checked else '#6c7086'}; }}"
+        ))
         self.content.addWidget(gb)
         return gb
 
@@ -484,8 +496,29 @@ class ChatPage(PageWidget):
         self.prompt_btn.setToolTip("Save / load prompt templates")
         self.prompt_btn.clicked.connect(self._show_prompt_lib)
         toolbar.addWidget(self.prompt_btn)
+        self.copy_md_btn = QPushButton(f"{icon('file')}  Copy MD")
+        self.copy_md_btn.setToolTip("Copy full chat as Markdown to clipboard")
+        self.copy_md_btn.clicked.connect(self._copy_markdown)
+        toolbar.addWidget(self.copy_md_btn)
+        self.split_btn = QPushButton(f"{icon('ok')}  Split view")
+        self.split_btn.setToolTip("Toggle side-by-side comparison view")
+        self.split_btn.setCheckable(True)
+        self.split_btn.clicked.connect(self._toggle_split)
+        toolbar.addWidget(self.split_btn)
         toolbar.addStretch()
         self.content.addLayout(toolbar)
+
+        # Image gallery strip (collects images referenced in chat)
+        self.gallery = QListWidget()
+        self.gallery.setViewMode(QListWidget.ViewMode.IconMode)
+        self.gallery.setIconSize(QSize(64, 64))
+        self.gallery.setMaximumHeight(80)
+        self.gallery.setFlow(QListWidget.Flow.LeftToRight)
+        self.gallery.setWrapping(False)
+        self.gallery.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.gallery.itemDoubleClicked.connect(self._open_gallery_image)
+        self.gallery.setVisible(False)
+        self.content.addWidget(self.gallery)
 
         # ── Options row: temperature + token estimate ──
         opts_row = QHBoxLayout()
@@ -551,6 +584,16 @@ class ChatPage(PageWidget):
         # Ctrl+Enter / Ctrl+Return sends the message.
         for seq in ("Ctrl+Return", "Ctrl+Enter"):
             QShortcut(QKeySequence(seq), self).activated.connect(self._send)
+
+        # Font zoom
+        for seq, delta in (("Ctrl++", 1), ("Ctrl+=", 1), ("Ctrl+-", -1)):
+            QShortcut(QKeySequence(seq), self).activated.connect(
+                lambda d=delta: self._zoom_font(d)
+            )
+        QShortcut(QKeySequence("Ctrl+0"), self).activated.connect(
+            lambda: self._zoom_font(0)
+        )
+        self._chat_font_size = 13
 
         # LLM client (lazy, set on first activate)
         self._client = None
@@ -932,7 +975,12 @@ class ChatPage(PageWidget):
             self._append_assistant(reply)
         self._history.append({"role": "assistant", "content": reply})
 
-        # Agentic tool-use: run any [[virgo.<tool>]] calls the model emitted.
+        # Detect local image paths in the reply and add to gallery.
+        import re
+        for m in re.findall(r"(?:!\[[^\]]*\]\(([^)]+)\)|`?([\w./\\-]+\.(?:png|jpe?g|gif|webp|bmp))`?)", reply, re.IGNORECASE):
+            cand = m[0] or m[1]
+            if cand and not cand.startswith("http"):
+                self._add_to_gallery(cand)
         from cli import _run_chat_tool, _CHAT_TOOLS, _parse_tool_calls  # lazy import (safe)
         for tname, tkwargs in _parse_tool_calls(reply):
             if tname in _CHAT_TOOLS:
@@ -970,6 +1018,59 @@ class ChatPage(PageWidget):
             return
         QApplication.clipboard().setText(text)
         self.chat_log.append("<i>[Copied last reply to clipboard]</i>")
+
+    def _copy_markdown(self) -> None:
+        """Copy the entire conversation as Markdown to the clipboard."""
+        if not self._history:
+            self.chat_log.append("<i>[Nothing to copy yet]</i>")
+            return
+        md_lines = []
+        for msg in self._history:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "user":
+                md_lines.append(f"**You:** {content}")
+            elif role == "assistant":
+                md_lines.append(f"**Virgo:** {content}")
+            else:
+                md_lines.append(f"*{role}:* {content}")
+            md_lines.append("")
+        QApplication.clipboard().setText("\n".join(md_lines))
+        self.chat_log.append("<i>[Copied full chat as Markdown]</i>")
+
+    def _zoom_font(self, delta: int) -> None:
+        """Zoom chat font: +1 / -1 step, or 0 to reset."""
+        if delta == 0:
+            self._chat_font_size = 13
+        else:
+            self._chat_font_size = max(9, min(24, self._chat_font_size + delta))
+        self.chat_log.setStyleSheet(
+            f"QTextEdit {{ font-size: {self._chat_font_size}px; }}"
+        )
+        if delta != 0:
+            self.chat_log.append(
+                f"<i>[Font size: {self._chat_font_size}px]</i>"
+            )
+
+    def _toggle_split(self) -> None:
+        """Toggle a side-by-side comparison view (second chat log)."""
+        if self.split_btn.isChecked():
+            if not hasattr(self, "_split_log"):
+                self._split_log = QTextEdit()
+                self._split_log.setReadOnly(True)
+                self._split_log.setPlaceholderText(
+                    "Comparison pane — paste or compare output here."
+                )
+                self._split_log.setStyleSheet(
+                    f"font-size: {self._chat_font_size}px;"
+                )
+                self.content.addWidget(self._split_log)
+            self._split_log.setVisible(True)
+            self.chat_log.append("<i>[Split view ON]</i>")
+        else:
+            if hasattr(self, "_split_log"):
+                self._split_log.setVisible(False)
+            self.chat_log.append("<i>[Split view OFF]</i>")
 
     def _regenerate(self) -> None:
         """Re-ask the last user message, dropping the previous reply."""
@@ -1190,6 +1291,31 @@ class ChatPage(PageWidget):
         self._history.append({"role": "user", "content": f"[image: {path}]"})
         self._save_chat()
         self._last_user = f"[image: {path}]"
+        self._add_to_gallery(path)
+
+    def _add_to_gallery(self, path: str) -> None:
+        """Add an image thumbnail to the gallery strip (files only)."""
+        from PyQt6.QtGui import QIcon, QPixmap
+        p = Path(path)
+        if not p.exists() or not p.is_file():
+            return
+        try:
+            pm = QPixmap(str(p)).scaled(
+                64, 64, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            item = QListWidgetItem(QIcon(pm), p.name)
+            item.setData(Qt.ItemDataRole.UserRole, str(p))
+            self.gallery.addItem(item)
+            self.gallery.setVisible(True)
+        except Exception:
+            pass
+
+    def _open_gallery_image(self, item: QListWidgetItem) -> None:
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if path:
+            import webbrowser
+            webbrowser.open(f"file:///{path}")
 
     def _chat_context_menu(self, pos) -> None:
         """Right-click on chat log: edit & resend last user message."""

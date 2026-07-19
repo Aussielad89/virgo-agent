@@ -837,6 +837,7 @@ class VirgoDesktopWindow(QMainWindow):
 
         # Ctrl+P quick page switcher
         QShortcut(QKeySequence("Ctrl+P"), self).activated.connect(self._show_quick_switcher)
+        QShortcut(QKeySequence("Ctrl+Shift+P"), self).activated.connect(self._command_palette)
         # Ctrl+B toggle sidebar collapse
         QShortcut(QKeySequence("Ctrl+B"), self).activated.connect(self._toggle_sidebar)
         # ? shortcuts overlay
@@ -1005,6 +1006,103 @@ class VirgoDesktopWindow(QMainWindow):
         layout.addLayout(btn_row)
         _refresh("")
         dlg.exec()
+
+    def _command_palette(self) -> None:
+        """Ctrl+Shift+P — searchable action palette (pages + commands)."""
+        t = self.themes.get(getattr(self, "_active_theme", self._theme_name),
+                            self.themes["mocha"])
+
+        # Build action list: (label, kind, callback)
+        actions: list[tuple[str, str, callable]] = []
+        for pid, label, emoji in SIDEBAR_ITEMS:
+            actions.append((f"{emoji}  Go to {label}", "page",
+                            lambda p=pid: self._navigate(p)))
+        # Global commands
+        actions += [
+            ("\u26A1  Toggle Theme", "cmd", lambda: self._cycle_theme()),
+            ("\U0001F4BE  Export Chat", "cmd",
+             lambda: self._route_to_page_action("chat", "_export")),
+            ("\U0001F4C4  Files: refresh", "cmd",
+             lambda: self._route_to_page_action("files", "on_activate")),
+            ("\U0001F680  Run Pipeline", "cmd",
+             lambda: self._route_to_page_action("pipeline", "_run_pipeline")),
+            ("\U0001F504  Reload UI", "cmd", lambda: self._apply_style()),
+            ("\u2699  Open Settings", "cmd", lambda: self._navigate("settings")),
+            ("\u2139  About", "cmd", lambda: self._navigate("about")),
+            ("\U0001F514  Toggle sidebar", "cmd", lambda: self._toggle_sidebar()),
+            ("\u274C  Quit", "cmd", lambda: self.close()),
+        ]
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Command Palette")
+        dlg.resize(420, 420)
+        dlg.setStyleSheet(f"""
+            QDialog {{ background: {t["bg"]}; }}
+            QLineEdit {{
+                background: {t["border"]}; border: 1px solid {t["border2"]};
+                border-radius: 6px; padding: 8px 12px; color: {t["text"]};
+                font-size: 15px;
+            }}
+            QListWidget {{
+                background: {t["surface"]}; border: 1px solid {t["border"]};
+                border-radius: 6px; color: {t["text"]};
+            }}
+            QListWidget::item {{ padding: 6px 12px; border-radius: 4px; }}
+            QListWidget::item:selected {{ background: {t["border2"]}; color: {t["accent"]}; }}
+        """)
+        lo = QVBoxLayout(dlg)
+        inp = QLineEdit()
+        inp.setPlaceholderText("Type a command…")
+        inp.setFocus()
+        lo.addWidget(inp)
+        lst = QListWidget()
+        lo.addWidget(lst)
+
+        def _refresh(q: str) -> None:
+            q = q.strip().lower()
+            lst.clear()
+            if not q:
+                scored = [(0, a) for a in actions]
+            else:
+                scored = [(self._fuzzy_score(q, a[0]), a) for a in actions]
+                scored = [(s, a) for s, a in scored if s >= 0]
+                scored.sort(key=lambda x: -x[0])
+            for _s, a in scored:
+                item = QListWidgetItem(a[0])
+                item.setData(Qt.ItemDataRole.UserRole, a)
+                lst.addItem(item)
+            if lst.count():
+                lst.setCurrentRow(0)
+
+        def _run() -> None:
+            cur = lst.currentItem()
+            if cur:
+                _, _, cb = cur.data(Qt.ItemDataRole.UserRole)
+                dlg.accept()
+                cb()
+
+        inp.textChanged.connect(_refresh)
+        lst.itemDoubleClicked.connect(lambda _: _run())
+        inp.returnPressed.connect(_run)
+        _refresh("")
+        dlg.exec()
+
+    def _route_to_page_action(self, page_id: str, method: str) -> None:
+        """Navigate to a page and call one of its methods if present."""
+        self._navigate(page_id)
+        page = self.pages.get(page_id)
+        if page and hasattr(page, method):
+            getattr(page, method)()
+
+    def _cycle_theme(self) -> None:
+        """Advance to the next available theme."""
+        names = list(self.themes.keys())
+        idx = names.index(getattr(self, "_active_theme", self._theme_name))
+        nxt = names[(idx + 1) % len(names)]
+        self._theme_name = nxt
+        self._active_theme = nxt
+        self._apply_style()
+        self._save_theme_pref(nxt)
 
     def _show_shortcuts_overlay(self) -> None:
         """Show a dialog listing all keyboard shortcuts."""
