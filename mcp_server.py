@@ -111,20 +111,26 @@ def _dispatch(req: dict, registry: ToolRegistry) -> Optional[str]:
     """Route one MCP request to its handler.
 
     Returns the JSON-RPC response string, or ``None`` when no response is
-    expected (e.g. notifications).
+    expected (e.g. notifications). Never raises — a handler failure is
+    converted into a JSON-RPC internal-error response.
     """
     method = req.get("method", "")
     req_id = req.get("id")
-    if method == "initialize":
-        return _handle_initialize(req)
-    elif method == "tools/list":
-        return _handle_tools_list(req, registry)
-    elif method == "tools/call":
-        return _handle_tools_call(req, registry)
-    elif method == "notifications/initialized":
-        return None
-    else:
-        return _rpc_error(req_id, -32601, f"Method not found: {method}")
+    try:
+        if method == "initialize":
+            return _handle_initialize(req)
+        elif method == "tools/list":
+            return _handle_tools_list(req, registry)
+        elif method == "tools/call":
+            return _handle_tools_call(req, registry)
+        elif method == "notifications/initialized":
+            return None
+        else:
+            return _rpc_error(req_id, -32601, f"Method not found: {method}")
+    except Exception as exc:  # defensive: never let one bad request kill the server
+        print(f"[virgo-mcp] unhandled error: {exc}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
+        return _rpc_error(req_id, -32603, f"Internal error: {exc}")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────

@@ -610,31 +610,6 @@ class _ImageDropHandler(QObject):
                 event.acceptProposedAction()
                 return True
             return False
-        # Chat search bar: Shift+Enter = previous match
-        if obj is getattr(self, "_search_bar", None) and t == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                self._search_next(True)
-                return True
-        # Slash popup keyboard nav
-        if obj is self.msg_input and self._slash_popup and self._slash_popup.isVisible():
-            if t == QEvent.Type.KeyPress:
-                from PyQt6.QtCore import QEvent as _QE
-                key = event.key()
-                if key == Qt.Key.Key_Down:
-                    self._slash_popup.setCurrentRow(
-                        min(self._slash_popup.currentRow() + 1,
-                            self._slash_popup.count() - 1))
-                    return True
-                if key == Qt.Key.Key_Up:
-                    self._slash_popup.setCurrentRow(
-                        max(self._slash_popup.currentRow() - 1, 0))
-                    return True
-                if key in (Qt.Key.Key_Tab, Qt.Key.Key_Return):
-                    self._slash_accept()
-                    return True
-                if key == Qt.Key.Key_Escape:
-                    self._slash_popup.hide()
-                    return True
         return super().eventFilter(obj, event)
 
     @staticmethod
@@ -1364,6 +1339,36 @@ class ChatPage(PageWidget):
         self._search_bar.setVisible(True)
         self._search_bar.setFocus()
         self._search_bar.selectAll()
+        self._search_bar.installEventFilter(self)
+
+    def eventFilter(self, obj, event) -> bool:
+        """ChatPage-level key handling: slash popup nav + search bar."""
+        t = event.type()
+        # Chat search bar: Shift+Enter = previous match
+        if obj is getattr(self, "_search_bar", None) and t == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self._search_next(True)
+                return True
+        # Slash popup keyboard nav (typed in msg_input)
+        popup = getattr(self, "_slash_popup", None)
+        if obj is getattr(self, "msg_input", None) and popup and popup.isVisible():
+            if t == QEvent.Type.KeyPress:
+                key = event.key()
+                if key == Qt.Key.Key_Down:
+                    popup.setCurrentRow(
+                        min(popup.currentRow() + 1, popup.count() - 1))
+                    return True
+                if key == Qt.Key.Key_Up:
+                    popup.setCurrentRow(
+                        max(popup.currentRow() - 1, 0))
+                    return True
+                if key in (Qt.Key.Key_Tab, Qt.Key.Key_Return):
+                    self._slash_accept()
+                    return True
+                if key == Qt.Key.Key_Escape:
+                    popup.hide()
+                    return True
+        return super().eventFilter(obj, event)
 
     def _search_next(self, backward: bool) -> bool:
         bar = getattr(self, "_search_bar", None)
