@@ -10,6 +10,9 @@ __pycache__/
 .virgo_memory/
 .virgo_chat_history/
 .virgo_prompts/
+.virgo_desktop_config.json
+.virgo_desktop_geom.json
+.virgo_themes.json
 build/
 dist/
 

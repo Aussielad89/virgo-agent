@@ -171,7 +171,7 @@ def _build_stylesheet(t: dict[str, str]) -> str:
         color: @subtext@;
         border: 1px solid @border@;
         border-radius: 6px;
-        background: @surface0@;
+        background: @surface@;
         font-weight: bold;
     }
     #multiBtn:checked {
