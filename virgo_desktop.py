@@ -16,6 +16,314 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
+from _console import icon
+from _log import log, OUTDIR
+
+# ── Theme system ────────────────────────────────────────────────────
+THEMES: dict[str, dict[str, str]] = {
+    "mocha": {
+        "name": "Catppuccin Mocha",
+        "bg": "#1e1e2e", "surface": "#181825", "crust": "#11111b",
+        "border": "#313244", "border2": "#45475a",
+        "text": "#cdd6f4", "subtext": "#a6adc8", "disabled": "#6c7086",
+        "accent": "#89b4fa", "accent2": "#a6e3a1",
+        "red": "#f38ba8", "yellow": "#f9e2af", "green": "#a6e3a1",
+        "sidebar_active": "#45475a",
+    },
+    "latte": {
+        "name": "Catppuccin Latte",
+        "bg": "#eff1f5", "surface": "#e6e9ef", "crust": "#dce0e8",
+        "border": "#ccd0da", "border2": "#bcc0cc",
+        "text": "#4c4f69", "subtext": "#5c5f77", "disabled": "#9ca0b0",
+        "accent": "#1e66f5", "accent2": "#40a02b",
+        "red": "#d20f39", "yellow": "#df8e1d", "green": "#40a02b",
+        "sidebar_active": "#ccd0da",
+    },
+    "nord": {
+        "name": "Nord",
+        "bg": "#2e3440", "surface": "#3b4252", "crust": "#434c5e",
+        "border": "#4c566a", "border2": "#5e6a83",
+        "text": "#eceff4", "subtext": "#d8dee9", "disabled": "#6c7086",
+        "accent": "#88c0d0", "accent2": "#a3be8c",
+        "red": "#bf616a", "yellow": "#ebcb8b", "green": "#a3be8c",
+        "sidebar_active": "#4c566a",
+    },
+    "gruvbox": {
+        "name": "Gruvbox Dark",
+        "bg": "#282828", "surface": "#3c3836", "crust": "#504945",
+        "border": "#665c54", "border2": "#7c6f64",
+        "text": "#ebdbb2", "subtext": "#a89984", "disabled": "#6c7086",
+        "accent": "#d79921", "accent2": "#689d6a",
+        "red": "#cc241d", "yellow": "#d79921", "green": "#98971a",
+        "sidebar_active": "#665c54",
+    },
+}
+
+
+def _build_stylesheet(t: dict[str, str]) -> str:
+    """Build the full app stylesheet from a theme dict.
+
+    Placeholders like ``@bg@`` are substituted with the theme's colour.
+    """
+    import textwrap
+    raw = textwrap.dedent("""\
+    QMainWindow, QWidget {
+        background-color: @bg@;
+        color: @text@;
+        font-family: 'Segoe UI', 'SF Pro', sans-serif;
+        font-size: 13px;
+    }
+    #sidebar {
+        background-color: @surface@;
+        border-right: 1px solid @border@;
+    }
+    #sidebarTitle {
+        color: @accent@;
+        padding: 0 4px;
+    }
+    #sidebarHeader {
+        background-color: @surface@;
+        border-bottom: 1px solid @border@;
+        border-radius: 8px;
+        padding: 6px;
+    }
+    #sidebarAvatar {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 @accent@, stop:1 @accent2@);
+        color: @bg@;
+        border-radius: 10px;
+        min-width: 34px;
+        max-width: 34px;
+        min-height: 34px;
+        max-height: 34px;
+    }
+    #sidebar QPushButton {
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 12px;
+        text-align: left;
+        color: @subtext@;
+        font-size: 13px;
+    }
+    #sidebar QPushButton:hover {
+        background: @border@;
+        color: @text@;
+    }
+    #sidebar QPushButton:checked {
+        background: @sidebar_active@;
+        color: @accent@;
+        font-weight: bold;
+    }
+    #quitBtn {
+        color: @red@ !important;
+    }
+    #quitBtn:hover {
+        background: @red@22 !important;
+    }
+    #stopBtn {
+        color: @red@ !important;
+        border-color: @red@;
+    }
+    #stopBtn:hover {
+        background: @red@22 !important;
+    }
+    #pageArea {
+        background-color: @bg@;
+    }
+    #pageTitle {
+        color: @text@;
+        font-size: 20px;
+        padding-bottom: 2px;
+    }
+    #metaLabel {
+        color: @disabled@;
+        font-size: 11px;
+    }
+    #statusBar {
+        background: @surface@;
+        color: @subtext@;
+        border-top: 1px solid @border@;
+        padding: 3px 10px;
+        font-size: 12px;
+    }
+    QPushButton {
+        background: @border@;
+        border: 1px solid @border2@;
+        border-radius: 6px;
+        padding: 6px 16px;
+        color: @text@;
+    }
+    QPushButton:hover {
+        background: @border2@;
+    }
+    QPushButton#sendBtn {
+        background: @accent@;
+        color: @bg@;
+        font-weight: bold;
+        border: none;
+        padding: 6px 18px;
+    }
+    QPushButton#sendBtn:hover {
+        background: @accent@bb;
+    }
+    QPushButton:pressed {
+        background: @sidebar_active@;
+    }
+    QTextEdit, QPlainTextEdit {
+        background: @surface@;
+        border: 1px solid @border@;
+        border-radius: 6px;
+        color: @text@;
+        padding: 8px;
+        font-family: 'Cascadia Code', 'Fira Code', monospace;
+        font-size: 12px;
+    }
+    QListWidget {
+        background: @surface@;
+        border: 1px solid @border@;
+        border-radius: 6px;
+        color: @text@;
+    }
+    QListWidget::item:hover {
+        background: @border@;
+    }
+    QListWidget::item:selected {
+        background: @sidebar_active@;
+        color: @accent@;
+    }
+    QLineEdit {
+        background: @surface@;
+        border: 1px solid @border@;
+        border-radius: 6px;
+        padding: 6px 10px;
+        color: @text@;
+    }
+    QProgressBar {
+        background: @border@;
+        border: none;
+        border-radius: 4px;
+        height: 6px;
+        text-align: center;
+    }
+    QProgressBar::chunk {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @accent@, stop:1 @accent2@);
+        border-radius: 4px;
+    }
+    QGroupBox {
+        background-color: @surface@;
+        border: 1px solid @border@;
+        border-radius: 10px;
+        margin-top: 18px;
+        padding: 18px 14px 14px;
+        font-weight: bold;
+        color: @accent@;
+    }
+    QGroupBox::title {
+        subcontrol-origin: margin;
+        left: 12px;
+        padding: 0 6px;
+    }
+    QComboBox {
+        background: @border@;
+        border: 1px solid @border2@;
+        border-radius: 6px;
+        padding: 6px 10px;
+        color: @text@;
+        min-width: 100px;
+    }
+    QComboBox:hover {
+        border-color: @sidebar_active@;
+    }
+    QComboBox::drop-down {
+        border: none;
+        width: 24px;
+    }
+    QComboBox::down-arrow {
+        image: none;
+        border-left: 5px solid transparent;
+        border-right: 5px solid transparent;
+        border-top: 6px solid @subtext@;
+        margin-right: 6px;
+    }
+    QComboBox QAbstractItemView {
+        background: @surface@;
+        border: 1px solid @border2@;
+        border-radius: 4px;
+        color: @text@;
+        selection-background-color: @border2@;
+        outline: none;
+    }
+    QTabWidget::pane { border: none; background: transparent; }
+    QTabBar::tab {
+        background: @surface@;
+        border: 1px solid @border@;
+        border-bottom: none;
+        border-top-left-radius: 6px;
+        border-top-right-radius: 6px;
+        padding: 6px 16px;
+        margin-right: 2px;
+        color: @disabled@;
+    }
+    QTabBar::tab:selected {
+        background: @border@;
+        color: @accent@;
+        font-weight: bold;
+    }
+    QTabBar::tab:hover:!selected { color: @subtext@; }
+    QScrollBar:vertical {
+        background: @bg@; width: 10px; margin: 0; border: none;
+    }
+    QScrollBar::handle:vertical {
+        background: @border2@; border-radius: 5px; min-height: 30px;
+    }
+    QScrollBar::handle:vertical:hover { background: @sidebar_active@; }
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+        height: 0; border: none;
+    }
+    QScrollBar:horizontal {
+        background: @bg@; height: 10px; border: none;
+    }
+    QScrollBar::handle:horizontal {
+        background: @border2@; border-radius: 5px; min-width: 30px;
+    }
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+        width: 0; border: none;
+    }
+    QSplitter::handle {
+        background: @border@;
+    }
+    QSplitter::handle:horizontal { width: 2px; }
+    QSplitter::handle:vertical { height: 2px; }
+    QSlider::groove:horizontal {
+        background: @border@; height: 6px; border-radius: 3px;
+    }
+    QSlider::handle:horizontal {
+        background: @accent@; width: 16px; height: 16px;
+        margin: -5px 0; border-radius: 8px;
+    }
+    QSlider::handle:horizontal:hover { background: @accent@bb; }
+    QCheckBox { color: @text@; spacing: 6px; }
+    QCheckBox::indicator {
+        width: 16px; height: 16px;
+        border: 1px solid @border2@; border-radius: 4px;
+        background: @surface@;
+    }
+    QCheckBox::indicator:checked {
+        background: @accent@; border-color: @accent@;
+    }
+    QToolTip {
+        background: @border@; border: 1px solid @border2@;
+        border-radius: 4px; color: @text@;
+        padding: 4px 8px; font-size: 12px;
+    }
+    """)
+    for key, val in t.items():
+        raw = raw.replace(f"@{key}@", val)
+    return raw
+
+
 # ── Robust launch: find a Python that actually has PyQt6 ──────────
 def _has_pyqt6(python: str) -> bool:
     try:
@@ -26,6 +334,7 @@ def _has_pyqt6(python: str) -> bool:
         return r.returncode == 0
     except Exception:
         return False
+
 
 def _find_pyqt6_python() -> str | None:
     """Return a python executable (other than current) that can import PyQt6."""
@@ -251,6 +560,17 @@ class VirgoDesktopWindow(QMainWindow):
         self._navigate("pipeline")
 
         # ── Stylesheet ────────────────────────────────────────────
+        self._theme_name = "mocha"
+        try:
+            env_path = HERE / ".env"
+            if env_path.exists():
+                for line in env_path.read_text().splitlines():
+                    if line.startswith("VIRGO_THEME="):
+                        theme = line.split("=", 1)[1].strip()
+                        if theme in THEMES:
+                            self._theme_name = theme
+        except Exception:
+            pass
         self._apply_style()
 
         # ── Restore saved window geometry ────────────────────────
@@ -378,298 +698,32 @@ class VirgoDesktopWindow(QMainWindow):
             pass
 
     def _apply_style(self) -> None:
-        """Apply dark theme stylesheet."""
-        self.setStyleSheet("""
-            QMainWindow, QWidget {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
-                font-family: 'Segoe UI', 'SF Pro', sans-serif;
-                font-size: 13px;
-            }
-            #sidebar {
-                background-color: #181825;
-                border-right: 1px solid #313244;
-            }
-            #sidebarTitle {
-                color: #89b4fa;
-                padding: 0 4px;
-            }
-            #sidebarHeader {
-                background-color: #181825;
-                border-bottom: 1px solid #313244;
-                border-radius: 8px;
-                padding: 6px;
-            }
-            #sidebarAvatar {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #89b4fa, stop:1 #a6e3a1);
-                color: #1e1e2e;
-                border-radius: 10px;
-                min-width: 34px;
-                max-width: 34px;
-                min-height: 34px;
-                max-height: 34px;
-            }
-            #sidebar QPushButton {
-                background: transparent;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 12px;
-                text-align: left;
-                color: #a6adc8;
-                font-size: 13px;
-            }
-            #sidebar QPushButton:hover {
-                background: #313244;
-                color: #cdd6f4;
-            }
-            #sidebar QPushButton:checked {
-                background: #45475a;
-                color: #89b4fa;
-                font-weight: bold;
-            }
-            #quitBtn {
-                color: #f38ba8 !important;
-            }
-            #quitBtn:hover {
-                background: #45232e !important;
-            }
-            #stopBtn {
-                color: #f38ba8 !important;
-                border-color: #f38ba8;
-            }
-            #stopBtn:hover {
-                background: #45232e !important;
-            }
-            #pageArea {
-                background-color: #1e1e2e;
-            }
-            #pageTitle {
-                color: #cdd6f4;
-                font-size: 20px;
-                padding-bottom: 2px;
-            }
-            #metaLabel {
-                color: #6c7086;
-                font-size: 11px;
-            }
-            #statusBar {
-                background: #181825;
-                color: #a6adc8;
-                border-top: 1px solid #313244;
-                padding: 3px 10px;
-                font-size: 12px;
-            }
-            QPushButton {
-                background: #313244;
-                border: 1px solid #45475a;
-                border-radius: 6px;
-                padding: 6px 16px;
-                color: #cdd6f4;
-            }
-            QPushButton:hover {
-                background: #45475a;
-            }
-            QPushButton#sendBtn {
-                background: #89b4fa;
-                color: #1e1e2e;
-                font-weight: bold;
-                border: none;
-                padding: 6px 18px;
-            }
-            QPushButton#sendBtn:hover {
-                background: #b4d0fb;
-            }
-            QPushButton:pressed {
-                background: #585b70;
-            }
-            QTextEdit, QPlainTextEdit {
-                background: #181825;
-                border: 1px solid #313244;
-                border-radius: 6px;
-                color: #cdd6f4;
-                padding: 8px;
-                font-family: 'Cascadia Code', 'Fira Code', monospace;
-                font-size: 12px;
-            }
-            QListWidget {
-                background: #181825;
-                border: 1px solid #313244;
-                border-radius: 6px;
-                color: #cdd6f4;
-            }
-            QListWidget::item:hover {
-                background: #313244;
-            }
-            QListWidget::item:selected {
-                background: #45475a;
-                color: #89b4fa;
-            }
-            QLineEdit {
-                background: #181825;
-                border: 1px solid #313244;
-                border-radius: 6px;
-                padding: 6px 10px;
-                color: #cdd6f4;
-            }
-            QProgressBar {
-                background: #313244;
-                border: none;
-                border-radius: 4px;
-                height: 6px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #89b4fa, stop:1 #a6e3a1);
-                border-radius: 4px;
-            }
-            QGroupBox {
-                background-color: #181825;
-                border: 1px solid #313244;
-                border-radius: 10px;
-                margin-top: 18px;
-                padding: 18px 14px 14px;
-                font-weight: bold;
-                color: #89b4fa;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 12px;
-                padding: 0 6px;
-            }
-            QComboBox {
-                background: #313244;
-                border: 1px solid #45475a;
-                border-radius: 6px;
-                padding: 6px 10px;
-                color: #cdd6f4;
-                min-width: 100px;
-            }
-            QComboBox:hover {
-                border-color: #585b70;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 24px;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid #a6adc8;
-                margin-right: 6px;
-            }
-            QComboBox QAbstractItemView {
-                background: #181825;
-                border: 1px solid #45475a;
-                border-radius: 4px;
-                color: #cdd6f4;
-                selection-background-color: #45475a;
-                outline: none;
-            }
-            QTabWidget::pane {
-                border: none;
-                background: transparent;
-            }
-            QTabBar::tab {
-                background: #181825;
-                border: 1px solid #313244;
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                padding: 6px 16px;
-                margin-right: 2px;
-                color: #6c7086;
-            }
-            QTabBar::tab:selected {
-                background: #313244;
-                color: #89b4fa;
-                font-weight: bold;
-            }
-            QTabBar::tab:hover:!selected {
-                color: #a6adc8;
-            }
-            QScrollBar:vertical {
-                background: #1e1e2e;
-                width: 10px;
-                margin: 0;
-                border: none;
-            }
-            QScrollBar::handle:vertical {
-                background: #45475a;
-                border-radius: 5px;
-                min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #585b70;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0;
-                border: none;
-            }
-            QScrollBar:horizontal {
-                background: #1e1e2e;
-                height: 10px;
-                border: none;
-            }
-            QScrollBar::handle:horizontal {
-                background: #45475a;
-                border-radius: 5px;
-                min-width: 30px;
-            }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-                width: 0;
-                border: none;
-            }
-            QSplitter::handle {
-                background: #313244;
-            }
-            QSplitter::handle:horizontal {
-                width: 2px;
-            }
-            QSplitter::handle:vertical {
-                height: 2px;
-            }
-            QSlider::groove:horizontal {
-                background: #313244;
-                height: 6px;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #89b4fa;
-                width: 16px;
-                height: 16px;
-                margin: -5px 0;
-                border-radius: 8px;
-            }
-            QSlider::handle:horizontal:hover {
-                background: #b4d0fb;
-            }
-            QCheckBox {
-                color: #cdd6f4;
-                spacing: 6px;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 1px solid #45475a;
-                border-radius: 4px;
-                background: #181825;
-            }
-            QCheckBox::indicator:checked {
-                background: #89b4fa;
-                border-color: #89b4fa;
-            }
-            QToolTip {
-                background: #313244;
-                border: 1px solid #45475a;
-                border-radius: 4px;
-                color: #cdd6f4;
-                padding: 4px 8px;
-                font-size: 12px;
-            }
-        """)
+        """Build and apply stylesheet from the active theme."""
+        name = getattr(self, "_theme_name", "mocha")
+        t = THEMES.get(name, THEMES["mocha"])
+        self.setStyleSheet(_build_stylesheet(t))
+
+    def switch_theme(self, name: str) -> None:
+        """Switch the app to a different colour theme."""
+        if name not in THEMES:
+            return
+        self._theme_name = name
+        self._apply_style()
+        # Persist to .env
+        try:
+            env_path = HERE / ".env"
+            lines = env_path.read_text().splitlines() if env_path.exists() else []
+            found = False
+            for i, line in enumerate(lines):
+                if line.startswith("VIRGO_THEME="):
+                    lines[i] = f"VIRGO_THEME={name}"
+                    found = True
+                    break
+            if not found:
+                lines.append(f"VIRGO_THEME={name}")
+            env_path.write_text("\n".join(lines) + "\n")
+        except Exception:
+            pass
 
 
 def _open_file(path: str) -> None:

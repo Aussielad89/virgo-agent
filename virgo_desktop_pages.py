@@ -2244,6 +2244,18 @@ class SettingsPage(PageWidget):
                 form.layout().addLayout(row)  # type: ignore
                 self._fields[key] = edit
 
+        # ── Theme selector ──────────────────────────────────────────────
+        from virgo_desktop import THEMES as _theme_data
+        theme_section = self._section("Appearance")
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(QLabel("Theme:"))
+        self.theme_combo = QComboBox()
+        for key, t in _theme_data.items():
+            self.theme_combo.addItem(t["name"], key)
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_change)
+        theme_row.addWidget(self.theme_combo, 1)
+        theme_section.layout().addLayout(theme_row)  # type: ignore
+
         btn_row = QHBoxLayout()
         save_btn = QPushButton(f"{icon('save')}  Save")
         save_btn.clicked.connect(self._save)
@@ -2308,6 +2320,24 @@ class SettingsPage(PageWidget):
             else:
                 widget.setText(val)
         self.save_status.setText("Defaults restored — click Save to persist")
+
+    def on_activate(self) -> None:
+        """Sync theme combo with the window's current theme."""
+        w = self.window()
+        name = getattr(w, "_theme_name", "mocha")
+        idx = self.theme_combo.findData(name)
+        if idx >= 0:
+            self.theme_combo.setCurrentIndex(idx)
+
+    def _on_theme_change(self, idx: int) -> None:
+        name = self.theme_combo.itemData(idx)
+        if not name:
+            return
+        w = self.window()
+        if hasattr(w, "switch_theme"):
+            w.switch_theme(name)
+        self.save_status.setText(f"Theme switched to {self.theme_combo.currentText()}")
+        QTimer.singleShot(3000, lambda: self.save_status.setText(""))
 
 
 # ═══════════════════════════════════════════════════════════════════════
