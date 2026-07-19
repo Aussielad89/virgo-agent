@@ -167,6 +167,18 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     #stopBtn:hover {
         background: @red@22 !important;
     }
+    #multiBtn {
+        color: @subtext@;
+        border: 1px solid @border@;
+        border-radius: 6px;
+        background: @surface0@;
+        font-weight: bold;
+    }
+    #multiBtn:checked {
+        background: @green@;
+        color: @base@;
+        border-color: @green@;
+    }
     #navList {
         background: @surface@;
         border: none;
@@ -461,6 +473,7 @@ from virgo_desktop_pages import (
     AlertsPage,
     ChatPage,
     DiagnosticsPage,
+    FilesPage,
     LogsPage,
     NetworkPage,
     PipelinePage,
@@ -483,6 +496,7 @@ HEIGHT = 720
 DESKTOP_ICONS = {
     "pipeline": "\U0001F680",      # 🚀
     "chat": "\U0001F4AC",          # 💬
+    "files": "\U0001F4C1",         # 📁
     "network": "\U0001F310",       # 🌐
     "diagnostics": "\U0001F527",   # 🔧
     "alerts": "\U0001F514",        # 🔔
@@ -498,6 +512,7 @@ DESKTOP_ICONS = {
 SIDEBAR_ITEMS = [
     ("pipeline", "Pipeline", DESKTOP_ICONS["pipeline"]),
     ("chat", "Chat", DESKTOP_ICONS["chat"]),
+    ("files", "Files", DESKTOP_ICONS["files"]),
     ("network", "Network", DESKTOP_ICONS["network"]),
     ("diagnostics", "Diagnostics", DESKTOP_ICONS["diagnostics"]),
     ("alerts", "Alerts", DESKTOP_ICONS["alerts"]),
@@ -658,6 +673,7 @@ class VirgoDesktopWindow(QMainWindow):
 
         self._register(PipelinePage(), "pipeline")
         self._register(ChatPage(), "chat")
+        self._register(FilesPage(), "files")
         self._register(NetworkPage(), "network")
         self._register(DiagnosticsPage(), "diagnostics")
         self._register(AlertsPage(), "alerts")

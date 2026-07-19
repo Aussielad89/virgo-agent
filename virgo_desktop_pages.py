@@ -12,9 +12,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import Qt, QTimer, QMetaObject, pyqtSlot, Q_ARG, QUrl, QEvent
+from PyQt6.QtCore import Qt, QTimer, QMetaObject, pyqtSlot, Q_ARG, QUrl, QEvent, QDir, QModelIndex
 from PyQt6.QtCore import QObject
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QShortcut, QKeySequence
+from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QShortcut, QKeySequence, QFileSystemModel
 from PyQt6.QtWidgets import (
     QComboBox, QFormLayout, QFrame, QGroupBox,
     QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy, QSplitter, QTabWidget,
     QTextEdit, QVBoxLayout, QWidget, QFileDialog,
     QSlider, QCompleter, QCheckBox, QDialog,
-    QColorDialog, QGridLayout,
+    QColorDialog, QGridLayout, QTreeView,
 )
 
 HERE = Path(__file__).parent
@@ -538,6 +538,14 @@ class ChatPage(PageWidget):
         self.send_btn.setObjectName("sendBtn")
         self.send_btn.clicked.connect(self._send)
         input_row.addWidget(self.send_btn)
+        self.multi_btn = QPushButton("M")
+        self.multi_btn.setToolTip("Multi-model: send to several models at once")
+        self.multi_btn.setCheckable(True)
+        self.multi_btn.setFixedWidth(32)
+        self.multi_btn.setObjectName("multiBtn")
+        self.multi_btn.clicked.connect(self._toggle_multi)
+        input_row.addWidget(self.multi_btn)
+        self._multi_models: list[str] = []
         self.content.addLayout(input_row)
 
         # Ctrl+Enter / Ctrl+Return sends the message.
@@ -706,6 +714,20 @@ class ChatPage(PageWidget):
             return
 
         self._history.append({"role": "user", "content": msg})
+
+        if self._multi_models and len(self._multi_models) > 1:
+            self.chat_log.append(
+                f"<i>[Sending to {len(self._multi_models)} models...]</i>"
+            )
+            self._cancel = False
+            self.stop_btn.setVisible(True)
+            self.stop_btn.setEnabled(True)
+            for model in self._multi_models:
+                threading.Thread(
+                    target=self._multi_stream, args=(msg, model), daemon=True
+                ).start()
+            return
+
         self.chat_log.append("<i>Virgo is thinking...</i>")
         self._cancel = False
         self.stop_btn.setVisible(True)
@@ -792,6 +814,80 @@ class ChatPage(PageWidget):
             self.chat_log.append(
                 f"<i>[Model switch failed ({exc}) — echo mode]</i>"
             )
+
+    def _toggle_multi(self) -> None:
+        """Open a dialog to select models for multi-model chat."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Multi-model — select models")
+        dlg.resize(300, 350)
+        dlg.setStyleSheet("QDialog { background: #1e1e2e; }")
+        lo = QVBoxLayout(dlg)
+        lo.addWidget(QLabel("<b style='color:#cdd6f4;'>Select 2+ models:</b>"))
+
+        checks: list[tuple[QCheckBox, str]] = []
+        for m in (getattr(self, "_available_models", [])
+                  or [self.model_combo.itemText(i) for i in range(self.model_combo.count())]):
+            if not m:
+                continue
+            cb = QCheckBox(m)
+            cb.setStyleSheet("color:#cdd6f4;")
+            cb.setChecked(m in self._multi_models)
+            lo.addWidget(cb)
+            checks.append((cb, m))
+
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("OK")
+        ok_btn.setStyleSheet(
+            "background:#89b4fa; color:#1e1e2e; border-radius:6px; padding:6px 16px;"
+        )
+        ok_btn.clicked.connect(dlg.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet(
+            "background:#313244; color:#cdd6f4; border-radius:6px; padding:6px 16px;"
+        )
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        lo.addLayout(btn_row)
+
+        if dlg.exec():
+            self._multi_models = [m for cb, m in checks if cb.isChecked()]
+            self.multi_btn.setChecked(bool(self._multi_models))
+            if self._multi_models:
+                self.multi_btn.setText(f"M ({len(self._multi_models)})")
+                self.chat_log.append(
+                    f"<i>[Multi-mode: {', '.join(self._multi_models)}]</i>"
+                )
+            else:
+                self.multi_btn.setText("M")
+
+    def _multi_stream(self, msg: str, model: str) -> None:
+        """Send to a single model in multi-mode."""
+        from cli import VIRGO_SYSTEM_PROMPT
+        import main
+        try:
+            client = main.get_client(model=model)
+            msgs = [{"role": "system", "content": VIRGO_SYSTEM_PROMPT}] + self._history
+            reply = client.chat_stream(msgs, temperature=self._temperature, max_tokens=2048)
+        except Exception as exc:
+            reply = f"(error: {exc})"
+
+        # Append model's response to chat log (cross-thread safe).
+        QMetaObject.invokeMethod(
+            self, "_append_multi_reply", Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, model), Q_ARG(str, reply or "(empty)"),
+        )
+
+    @pyqtSlot(str, str)
+    def _append_multi_reply(self, model: str, reply: str) -> None:
+        self.chat_log.append(
+            f"<hr><b>{model}</b><br>{reply}"
+        )
+        self._history.append({"role": "assistant", "content": f"[{model}] {reply}"})
+        if all(f"[{m}]" in str(self._history) for m in self._multi_models):
+            self._busy = False
+            self.stop_btn.setVisible(False)
 
     @pyqtSlot()
     def _stream_start(self) -> None:
@@ -2648,3 +2744,49 @@ class AboutPage(PageWidget):
         about_text.setWordWrap(True)
         about_text.setTextFormat(Qt.TextFormat.RichText)
         self._add(about_text)
+
+
+class FilesPage(PageWidget):
+    """File browser — tree view of the workspace."""
+
+    def __init__(self) -> None:
+        super().__init__("Files", "Browse and open project files")
+
+        self._model = QFileSystemModel()
+        root = str(HERE)
+        self._model.setRootPath(root)
+        self._model.setFilter(
+            QDir.Filter.AllDirs | QDir.Filter.Files | QDir.Filter.NoDotAndDotDot
+        )
+
+        self.tree = QTreeView()
+        self.tree.setModel(self._model)
+        self.tree.setRootIndex(self._model.index(root))
+        self.tree.setAnimated(True)
+        self.tree.setSortingEnabled(True)
+        self.tree.setColumnWidth(0, 280)
+        self.tree.setIndentation(16)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
+        self.tree.doubleClicked.connect(self._open_file)
+        self._add(self.tree)
+        self.content.addStretch(1)
+
+        self.preview = QTextEdit()
+        self.preview.setReadOnly(True)
+        self.preview.setMaximumHeight(200)
+        self._add(self.preview)
+
+    def _open_file(self, idx: QModelIndex) -> None:
+        path = Path(self._model.filePath(idx))
+        if path.is_dir():
+            return
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            self.preview.setPlainText(text[:5000])
+            if len(text) > 5000:
+                self.preview.append(
+                    f"\n\n[... truncated — file is {path.stat().st_size:,} bytes]"
+                )
+        except Exception as e:
+            self.preview.setPlainText(f"Error reading {path.name}: {e}")
