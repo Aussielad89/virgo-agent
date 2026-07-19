@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import threading
+import winsound  # Windows-only; safe no-op elsewhere
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,17 @@ from _log import log, OUTDIR
 # ═══════════════════════════════════════════════════════════════════════
 # Helper: page wrapper with title bar
 # ═══════════════════════════════════════════════════════════════════════
+
+def _beep(kind: str = "done") -> None:
+    """Play a short completion chime (Windows). kind: done|error."""
+    try:
+        if kind == "error":
+            winsound.MessageBeep(winsound.MB_ICONHAND)
+        else:
+            winsound.MessageBeep(winsound.MB_ICONINFORMATION)
+    except Exception:
+        pass
+
 
 class PageWidget(QWidget):
     """Base page with title + optional action bar."""
@@ -145,22 +157,34 @@ class PipelinePage(PageWidget):
         opt_row.addStretch()
         goal_group.layout().addLayout(opt_row)  # type: ignore
 
+        # ── DAG visualizer ──
+        dag_group = self._section("Pipeline Graph")
+        self.status_label = QLabel("Idle")
+        self._phases = ["discover", "plan", "generate", "test", "fix"]
+        self._phase_status: dict[str, str] = {p: "idle" for p in self._phases}
+        self._dag_scene = QGraphicsScene()
+        self._dag_view = QGraphicsView(self._dag_scene)
+        self._dag_view.setMinimumHeight(140)
+        self._dag_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._dag_view.setStyleSheet("border: 1px solid #313244; border-radius: 6px;")
+        dag_group.layout().addWidget(self._dag_view)  # type: ignore
+        self._build_dag()
+        self._dag_view.mousePressEvent = self._dag_clicked  # type: ignore
+        dag_group.layout().addWidget(self.status_label)  # type: ignore
+        self._add(dag_group)
+
         # Progress
         self.progress = QProgressBar()
         self.progress.setVisible(False)
         self._add(self.progress)
 
-        # Splitter: log output + status
+        # Splitter: log output only
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setPlaceholderText("Pipeline output will appear here...")
         splitter.addWidget(self.output)
-
-        status_group = self._section("Status")
-        self.status_label = QLabel("Idle")
-        status_group.layout().addWidget(self.status_label)  # type: ignore
         self._add(splitter)
 
         # Timer for polling subprocess
@@ -174,19 +198,110 @@ class PipelinePage(PageWidget):
     def _toggle_llm(self) -> None:
         self.use_llm.setText(f"{icon('llm')}  LLM: {'ON' if self.use_llm.isChecked() else 'OFF'}")
 
-    def _run_pipeline(self) -> None:
+    def _build_dag(self) -> None:
+        """Draw the 5 pipeline phase nodes + connecting arrows."""
+        self._dag_scene.clear()
+        self._dag_nodes: dict[str, QGraphicsRectItem] = {}
+        self._dag_text: dict[str, QGraphicsTextItem] = {}
+        n = len(self._phases)
+        node_w, node_h, gap = 120, 50, 40
+        total_w = n * node_w + (n - 1) * gap
+        y = 30
+        x0 = 20
+        colors = {
+            "idle": "#45475a", "running": "#f9e2af",
+            "done": "#a6e3a1", "failed": "#f38ba8",
+        }
+        for i, phase in enumerate(self._phases):
+            x = x0 + i * (node_w + gap)
+            rect = QGraphicsRectItem(x, y, node_w, node_h)
+            rect.setBrush(QBrush(QColor(colors["idle"])))
+            rect.setPen(QPen(QColor("#1e1e2e"), 2))
+            rect.setFlags(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable)
+            rect.setData(0, phase)
+            self._dag_scene.addItem(rect)
+            self._dag_nodes[phase] = rect
+            txt = QGraphicsTextItem(phase.upper(), rect)
+            txt.setPos(x + 10, y + 15)
+            self._dag_text[phase] = txt
+            if i < n - 1:
+                ax = x + node_w + 4
+                self._dag_scene.addLine(
+                    ax, y + node_h / 2, ax + gap - 8, y + node_h / 2,
+                    QPen(QColor("#6c7086"), 2))
+                arrow = QGraphicsTextItem("→")
+                arrow.setPos(ax + gap / 2 - 6, y + node_h / 2 - 14)
+        self._dag_scene.setSceneRect(0, 0, total_w + 40, 110)
+        self._dag_view.setSceneRect(0, 0, total_w + 40, 110)
+        self._dag_view.fitInView(self._dag_scene.sceneRect(),
+                                  Qt.AspectRatioMode.KeepAspectRatio)
+
+    def _update_dag(self, phase: str, status: str) -> None:
+        if phase not in self._phase_status:
+            return
+        self._phase_status[phase] = status
+        colors = {"idle": "#45475a", "running": "#f9e2af",
+                  "done": "#a6e3a1", "failed": "#f38ba8"}
+        node = self._dag_nodes.get(phase)
+        if node:
+            node.setBrush(QBrush(QColor(colors.get(status, "#45475a"))))
+
+    def _dag_clicked(self, event) -> None:  # type: ignore[override]
+        """Click a phase node to re-run just that phase."""
+        item = self._dag_view.itemAt(event.pos())
+        phase = None
+        if item is not None:
+            phase = item.data(0)
+        if phase:
+            self._rerun_phase(phase)
+        # Call original to keep zoom/pan working
+        QGraphicsView.mousePressEvent(self._dag_view, event)
+
+    def _rerun_phase(self, phase: str) -> None:
+        """Re-run a single pipeline phase against the current goal."""
         goal = self.goal_input.text().strip()
         if not goal:
-            self.output.appendPlainText(f"{icon('warn')} Please enter a goal first.")
+            self.output.appendPlainText(f"{icon('warn')} Enter a goal first.")
             return
+        self.output.appendPlainText(f"{icon('run')} Re-running phase: {phase}")
+        self._update_dag(phase, "running")
+        args = [
+            sys.executable, str(HERE / "cli.py"),
+            "run", "--goal", goal,
+            "--phase", phase,
+            "--max-iterations", self.iter_input.text() or "5",
+        ]
+        if self.use_llm.isChecked():
+            args.append("--llm")
+        try:
+            subprocess.run(args, capture_output=True, text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+            self._update_dag(phase, "done")
+            self.output.appendPlainText(f"{icon('ok')} Phase {phase} complete")
+        except Exception as exc:
+            self._update_dag(phase, "failed")
+            self.output.appendPlainText(f"{icon('error')} Phase {phase} failed: {exc}")
 
-        self.output.clear()
-        self._running = True
+    def _phase_from_line(self, line: str) -> str | None:
+        low = line.lower()
+        for kw, phase in (
+            ("discover", "discover"), ("plan", "plan"),
+            ("generat", "generate"), ("test", "test"), ("fix", "fix"),
+        ):
+            if kw in low and ("phase" in low or "→" in low or "running" in low
+                              or "starting" in low or kw == low.strip()):
+                return phase
+        return None
+
+    def _run_pipeline(self) -> None:
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)  # indeterminate
         self.status_label.setText("Running...")
+        # Reset DAG
+        for p in self._phases:
+            self._update_dag(p, "idle")
 
         args = [
             sys.executable, str(HERE / "cli.py"),
@@ -225,6 +340,10 @@ class PipelinePage(PageWidget):
             line = self._process.stdout.readline()
             if line:
                 self.output.appendPlainText(line.rstrip())
+                # Light up DAG nodes from phase markers
+                ph = self._phase_from_line(line)
+                if ph:
+                    self._update_dag(ph, "running")
         if self._process.poll() is not None:
             # Drain remaining output
             if self._process.stdout:
@@ -237,11 +356,19 @@ class PipelinePage(PageWidget):
             self.progress.setVisible(False)
             rc = self._process.returncode
             self.status_label.setText(f"Finished (exit code {rc})")
+            # Mark all running nodes done (or failed if rc != 0)
+            final = "failed" if rc not in (0, None) else "done"
+            for p in self._phases:
+                if self._phase_status.get(p) == "running":
+                    self._update_dag(p, final)
+                elif self._phase_status.get(p) == "idle":
+                    self._update_dag(p, "done" if final == "done" else "idle")
             self._process = None
             # Desktop notification
             w = self.window()
             if hasattr(w, "notify"):
                 w.notify("Pipeline", f"Exit code {rc} — {self.goal_input.text()[:60]}")
+            _beep("error" if rc not in (0, None) else "done")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -3081,6 +3208,53 @@ class FilesPage(PageWidget):
         self.preview.setReadOnly(True)
         self.preview.setMaximumHeight(200)
         self._add(self.preview)
+
+        # ── Git panel ──
+        git_group = self._section("Git")
+        git_row = QHBoxLayout()
+        status_btn = QPushButton(f"{icon('refresh')}  Status")
+        status_btn.clicked.connect(self._git_status)
+        commit_btn = QPushButton(f"{icon('save')}  Commit")
+        commit_btn.clicked.connect(self._git_commit)
+        push_btn = QPushButton(f"{icon('upload')}  Push")
+        push_btn.clicked.connect(self._git_push)
+        git_row.addWidget(status_btn)
+        git_row.addWidget(commit_btn)
+        git_row.addWidget(push_btn)
+        git_row.addStretch()
+        git_group.layout().addLayout(git_row)  # type: ignore
+        self.git_output = QPlainTextEdit()
+        self.git_output.setReadOnly(True)
+        self.git_output.setMaximumHeight(120)
+        self.git_output.setPlaceholderText("Git status will appear here…")
+        git_group.layout().addWidget(self.git_output)  # type: ignore
+        self._add(git_group)
+
+    def _git_run(self, args: list[str]) -> str:
+        try:
+            res = subprocess.run(
+                ["git"] + args, cwd=str(HERE), capture_output=True,
+                text=True, timeout=30)
+            return (res.stdout + res.stderr).strip() or "(no output)"
+        except Exception as exc:
+            return f"git error: {exc}"
+
+    def _git_status(self) -> None:
+        self.git_output.setPlainText(self._git_run(["status", "--short"]))
+
+    def _git_commit(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(
+            self, "Git Commit", "Commit message:")
+        if ok and text.strip():
+            out = self._git_run(["add", "-A"])
+            out += "\n" + self._git_run(["commit", "-m", text.strip()])
+            self.git_output.setPlainText(out)
+        elif ok:
+            self.git_output.setPlainText("Empty message — commit skipped.")
+
+    def _git_push(self) -> None:
+        self.git_output.setPlainText(self._git_run(["push"]))
 
     def _open_file(self, idx: QModelIndex) -> None:
         path = Path(self._model.filePath(idx))
