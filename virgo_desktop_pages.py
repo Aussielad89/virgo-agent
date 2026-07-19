@@ -236,6 +236,136 @@ def _strip_think(text: str) -> str:
     return re.sub(r'\s*<think>.*?</think>\s*', '', text, flags=re.DOTALL)
 
 
+_CHAT_HISTORY_DIR = HERE / ".virgo_chat_history"
+
+
+def _md_to_html(text: str) -> str:
+    """Convert basic markdown to safe HTML for the chat log."""
+    import re
+
+    # Escape HTML entities first, then apply markdown rules.
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # Code blocks (```...```) — protect from other rules
+    code_blocks: list[str] = []
+    def _save_code(m: re.Match) -> str:
+        code_blocks.append(m.group(2))
+        return f"\x00CODEBLOCK{len(code_blocks)-1}\x00"
+
+    text = re.sub(
+        r'```(\w*)[^\S\n]*\n(.*?)```',
+        lambda m: _save_code(m),
+        text,
+        flags=re.DOTALL,
+    )
+
+    # Inline code `` `...` `` — protect from other rules
+    inline_codes: list[str] = []
+    def _save_inline(m: re.Match) -> str:
+        inline_codes.append(m.group(1))
+        return f"\x00INLINE{len(inline_codes)-1}\x00"
+
+    text = re.sub(r'`([^`\n]+)`', lambda m: _save_inline(m), text)
+
+    # Headings
+    text = re.sub(r'^### (.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
+
+    # Bold **text** or __text__
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'__(.+?)__', r'<b>\1</b>', text)
+
+    # Italic *text* or _text_ (single, not double)
+    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
+    text = re.sub(r'(?<!_)_(?!_)(.+?)(?<!_)_(?!_)', r'<i>\1</i>', text)
+
+    # Links [text](url)
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+
+    # Unordered lists
+    lines = text.split("\n")
+    in_list = False
+    result: list[str] = []
+    for line in lines:
+        m = re.match(r'^(\s*)[-*+]\s+(.+)$', line)
+        if m:
+            if not in_list:
+                result.append("<ul>")
+                in_list = True
+            result.append(f"<li>{m.group(2)}</li>")
+        else:
+            if in_list:
+                result.append("</ul>")
+                in_list = False
+            result.append(line)
+    if in_list:
+        result.append("</ul>")
+    text = "\n".join(result)
+
+    # Ordered lists
+    lines = text.split("\n")
+    in_list = False
+    result = []
+    for line in lines:
+        m = re.match(r'^(\s*)\d+\.\s+(.+)$', line)
+        if m:
+            if not in_list:
+                result.append("<ol>")
+                in_list = True
+            result.append(f"<li>{m.group(2)}</li>")
+        else:
+            if in_list:
+                result.append("</ol>")
+                in_list = False
+            result.append(line)
+    if in_list:
+        result.append("</ol>")
+    text = "\n".join(result)
+
+    # Newlines → <br> (not inside block elements)
+    text = text.replace("\n", "<br>")
+
+    # Restore code blocks
+    for i, code in enumerate(code_blocks):
+        lang = ""
+        text = text.replace(
+            f"\x00CODEBLOCK{i}\x00",
+            f"<pre><code>{code}</code></pre>",
+        )
+
+    # Restore inline code
+    for i, code in enumerate(inline_codes):
+        text = text.replace(f"\x00INLINE{i}\x00", f"<code>{code}</code>")
+
+    return text
+
+
+def _chat_session_path(prefix: str = "chat") -> Path:
+    """Return a unique path for a new chat history file."""
+    from datetime import datetime
+    _CHAT_HISTORY_DIR.mkdir(exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return _CHAT_HISTORY_DIR / f"{prefix}_{ts}.json"
+
+
+def _load_recent_chat() -> tuple[list[dict[str, str]], str, str] | None:
+    """Load the most recent chat session. Returns (messages, model, session_id) or None."""
+    if not _CHAT_HISTORY_DIR.exists():
+        return None
+    sessions = sorted(_CHAT_HISTORY_DIR.glob("chat_*.json"), reverse=True)
+    if not sessions:
+        return None
+    try:
+        data = json.loads(sessions[0].read_text())
+        msgs = data.get("messages", [])
+        model = data.get("model", "")
+        sid = data.get("session_id", "")
+        return (msgs, model, sid) if msgs else None
+    except Exception:
+        return None
+
+
 class _StopStream(Exception):
     """Raised inside the stream writer to abort an in-flight reply."""
 
@@ -352,13 +482,38 @@ class ChatPage(PageWidget):
         self._client_checked = False
         self._history: list[dict[str, str]] = []
         self._busy = False
+        self._session_id = __import__("uuid").uuid4().hex[:12]
 
-        # Banner
-        self.chat_log.append(
-            "<i>Virgo chat — local LLM. Commands: /help, /tools, /clear, "
-            "/read &lt;path&gt;, /web &lt;url&gt;, /py &lt;code&gt;. "
-            "Use Attach to send files or photos.</i>"
-        )
+        # Restore previous chat session if available
+        prev = _load_recent_chat()
+        if prev:
+            msgs, model, sid = prev
+            self._history[:] = msgs
+            self._session_id = sid or self._session_id
+            if model:
+                self.chat_log.append(
+                    f"<i>[Restored previous chat — {model}]</i>"
+                )
+            self.chat_log.append(
+                f"<i>Type /clear to start fresh, or continue below.</i>"
+            )
+            for msg in msgs:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if role == "user":
+                    self.chat_log.append(f"<b>You:</b> {content}")
+                elif role == "assistant":
+                    self._append_assistant(content)
+                elif role == "system":
+                    self.chat_log.append(f"<i>[System: {content[:100]}…]</i>")
+
+        if not prev:
+            # Banner
+            self.chat_log.append(
+                "<i>Virgo chat — local LLM. Commands: /help, /tools, /clear, "
+                "/read &lt;path&gt;, /web &lt;url&gt;, /py &lt;code&gt;. "
+                "Use Attach to send files or photos.</i>"
+            )
 
     def _attach(self) -> None:
         """Open a file picker and attach selected files / photos to the chat."""
@@ -579,7 +734,7 @@ class ChatPage(PageWidget):
     @pyqtSlot(str)
     def _stream_chunk(self, chunk: str) -> None:
         """Append one streamed chunk to the live reply line."""
-        self.chat_log.insertPlainText(chunk)
+        self.chat_log.insertHtml(self._escape(chunk))
         self.chat_log.verticalScrollBar().setValue(
             self.chat_log.verticalScrollBar().maximum()
         )
@@ -590,7 +745,15 @@ class ChatPage(PageWidget):
         self._last_reply = reply
         est = (len(reply) + len(self._last_user)) // 4
         self.token_label.setText(f"~{est} tokens")
-        if not streamed:
+        if streamed:
+            # Replace the streamed plain-text with full markdown rendering.
+            cursor = self.chat_log.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            cursor.movePosition(cursor.MoveOperation.StartOfBlock, cursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
+            cursor.insertHtml(_md_to_html(reply))
+            self.chat_log.moveCursor(cursor.MoveOperation.End)
+        else:
             # Replace the trailing "thinking..." line with the real reply.
             cursor = self.chat_log.textCursor()
             cursor.movePosition(cursor.MoveOperation.End)
@@ -618,6 +781,7 @@ class ChatPage(PageWidget):
 
         self.stop_btn.setVisible(False)
         self._busy = False
+        self._save_chat()
 
     def _run_tool(self, name: str, kwargs: dict[str, str]) -> None:
         from cli import _run_chat_tool  # lazy import (safe)
@@ -628,7 +792,7 @@ class ChatPage(PageWidget):
         self._append_assistant(f"[tool {name}] {out[:800]}")
 
     def _append_assistant(self, text: str) -> None:
-        self.chat_log.append(f"<b>Virgo:</b> {text}")
+        self.chat_log.append(f"<b>Virgo:</b> {_md_to_html(text)}")
 
     def _copy_reply(self) -> None:
         """Copy Virgo's last reply to the clipboard."""
@@ -671,6 +835,18 @@ class ChatPage(PageWidget):
         else:
             Path(path).write_text(self.chat_log.toPlainText(), encoding="utf-8")
         self.chat_log.append(f"<i>[Exported to {Path(path).name}]</i>")
+
+    def _save_chat(self) -> None:
+        """Persist the current conversation to a JSON file."""
+        if not self._history:
+            return
+        payload = {
+            "session_id": self._session_id,
+            "model": self._current_model,
+            "messages": self._history,
+        }
+        path = _chat_session_path()
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     @staticmethod
     def _help_text() -> str:

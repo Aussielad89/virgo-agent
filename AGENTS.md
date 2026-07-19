@@ -131,6 +131,11 @@ virgo export <session-name>
 python virgo_menu.py
 # or: virgo-dashboard
 
+# Desktop GUI (PyQt6) — requires PyQt6:
+python virgo_desktop.py
+# Explicit Python path (if system python lacks PyQt6):
+C:/Python314/python.exe virgo_desktop.py
+
 # New tools (infrastructure pass):
 python virgo_fingerprinter.py     # TCP banner grab (connects to localhost:11434)
 python virgo_webhook.py           # Build telemetry JSON, dispatch via print or HTTP POST

@@ -1,7 +1,7 @@
 [model]
-planner = "qwen2.5-coder:7b"
-generator = "qwen2.5-coder:7b"
-fixer = "qwen2.5-coder:7b"
+planner = "ornith:latest"
+generator = "ornith:latest"
+fixer = "ornith:latest"
 timeout = 300
 
 [sandbox]
@@ -17,5 +17,5 @@ watch = true
 dirs = ["plugins", "~/.virgo/plugins"]
 
 [chat]
-model = "qwen2.5-coder:7b"
+model = "ornith:latest"
 max_tokens = 2048

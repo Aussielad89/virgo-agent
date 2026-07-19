@@ -46,9 +46,23 @@ LLM_API_KEY    = os.getenv("LLM_API_KEY", "sk-no-key-required")
 LLM_TIMEOUT    = int(os.getenv("LLM_TIMEOUT", "300"))
 
 # You can point these at different models if they are available:
-MODEL_PLANNER  = os.getenv("MODEL_PLANNER", "qwen2.5-coder:7b")
-MODEL_GENERATOR = os.getenv("MODEL_GENERATOR", "qwen2.5-coder:7b")
-MODEL_FIXER   = os.getenv("MODEL_FIXER", "qwen2.5-coder:7b")
+MODEL_PLANNER  = os.getenv("MODEL_PLANNER", "ornith:latest")
+MODEL_GENERATOR = os.getenv("MODEL_GENERATOR", "ornith:latest")
+MODEL_FIXER   = os.getenv("MODEL_FIXER", "ornith:latest")
+
+# virgo.toml is the source of truth — override model defaults if present.
+try:
+    from config import load as _cfg_load
+    _cfg = _cfg_load()
+    _model_cfg = _cfg.get("model", {})
+    if _model_cfg.get("planner"):
+        MODEL_PLANNER = _model_cfg["planner"]
+    if _model_cfg.get("generator"):
+        MODEL_GENERATOR = _model_cfg["generator"]
+    if _model_cfg.get("fixer"):
+        MODEL_FIXER = _model_cfg["fixer"]
+except Exception:
+    pass
 
 # Fallback models — used when primary LLM call fails
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "")

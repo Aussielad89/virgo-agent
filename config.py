@@ -40,9 +40,9 @@ from typing import Any
 # Default config values
 DEFAULT_CONFIG: dict[str, Any] = {
     "model": {
-        "planner": os.getenv("MODEL_PLANNER", "qwen2.5-coder:7b"),
-        "generator": os.getenv("MODEL_GENERATOR", "qwen2.5-coder:7b"),
-        "fixer": os.getenv("MODEL_FIXER", "qwen2.5-coder:7b"),
+        "planner": os.getenv("MODEL_PLANNER", "ornith:latest"),
+        "generator": os.getenv("MODEL_GENERATOR", "ornith:latest"),
+        "fixer": os.getenv("MODEL_FIXER", "ornith:latest"),
         "timeout": int(os.getenv("LLM_TIMEOUT", "300")),
     },
     "sandbox": {
@@ -58,7 +58,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dirs": ["plugins"],
     },
     "chat": {
-        "model": os.getenv("MODEL_PLANNER", "qwen2.5-coder:7b"),
+        "model": os.getenv("MODEL_PLANNER", "ornith:latest"),
         "max_tokens": 2048,
     },
 }
