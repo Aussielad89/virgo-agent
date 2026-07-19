@@ -517,6 +517,7 @@ class ChatPage(PageWidget):
         self.msg_input.setCompleter(completer)
         input_row.addWidget(self.msg_input, 1)
         self.send_btn = QPushButton(f"{icon('send')}  Send")
+        self.send_btn.setObjectName("sendBtn")
         self.send_btn.clicked.connect(self._send)
         input_row.addWidget(self.send_btn)
         self.content.addLayout(input_row)

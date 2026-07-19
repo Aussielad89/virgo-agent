@@ -72,6 +72,7 @@ _ICONS: dict[str, tuple[str, str]] = {
     "syntax":      ("\U0001F52C", "[SYNTAX]"), # 🔬
     "audio":       ("\U0001F399\ufe0f", "[AUDIO]"), # 🎙️
     "mic":         ("\U0001F3A4", "[MIC]"),   # 🎤
+    "send":        ("\U0001F4E4", "[SEND]"),  # 📤
 }
 
 _use_emoji = _supports_emoji()
