@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QColorDialog, QGridLayout, QTreeView,
     QGraphicsScene, QGraphicsView, QGraphicsRectItem,
     QGraphicsTextItem, QGraphicsEllipseItem,
+    QTableWidget, QTableWidgetItem, QStatusBar,
 )
 
 HERE = Path(__file__).parent
@@ -665,8 +666,12 @@ class ChatPage(PageWidget):
         self.mic_btn = QPushButton(f"{icon('mic')}  Mic")
         self.mic_btn.setToolTip("Speak into your microphone")
         self.mic_btn.clicked.connect(self._mic_input)
+        self.voice_mode = QPushButton(f"{icon('audio')}  Voice mode")
+        self.voice_mode.setCheckable(True)
+        self.voice_mode.setToolTip("Toggle: recognized speech auto-sends")
         toolbar.addWidget(self.speak_btn)
         toolbar.addWidget(self.mic_btn)
+        toolbar.addWidget(self.voice_mode)
         self.prompt_btn = QPushButton(f"{icon('file')}  Prompts")
         self.prompt_btn.setToolTip("Save / load prompt templates")
         self.prompt_btn.clicked.connect(self._show_prompt_lib)
@@ -680,6 +685,10 @@ class ChatPage(PageWidget):
         self.split_btn.setCheckable(True)
         self.split_btn.clicked.connect(self._toggle_split)
         toolbar.addWidget(self.split_btn)
+        self.ab_btn = QPushButton(f"{icon('compare')}  A/B")
+        self.ab_btn.setToolTip("Compare two models on the same prompt, scored")
+        self.ab_btn.clicked.connect(self._ab_compare)
+        toolbar.addWidget(self.ab_btn)
         toolbar.addStretch()
         self.content.addLayout(toolbar)
 
@@ -1098,6 +1107,44 @@ class ChatPage(PageWidget):
             self.chat_log.append(
                 f"<i>[Model switch failed ({exc}) — echo mode]</i>"
             )
+
+    def _ab_compare(self) -> None:
+        """Send the current prompt to two models and score both replies."""
+        prompt = self.msg_input.text().strip()
+        if not prompt:
+            self.chat_log.append("<i>[Enter a prompt to A/B test]</i>")
+            return
+        models = [self._current_model] + [
+            m for m in (self._multi_models or [])
+            if m != self._current_model
+        ][:1]
+        if len(models) < 2:
+            models = [self._current_model, "ornith:latest"]
+        self.chat_log.append(
+            f"<i>[A/B comparing {models[0]} vs {models[1]}…]</i>")
+        for model in models:
+            try:
+                import main
+                cli = main.get_client(model=model)
+                reply = main.complete(cli, prompt, model=model)
+            except Exception as exc:
+                reply = f"(error: {exc})"
+            score = self._score_reply(prompt, reply)
+            self.chat_log.append(
+                f"<b>[{model}] — score {score:.2f}</b><br>{_md_to_html(reply)}")
+        self._save_chat()
+
+    @staticmethod
+    def _score_reply(prompt: str, reply: str) -> float:
+        """Heuristic quality score: length + overlap with prompt keywords."""
+        import re as _re
+        words = _re.findall(r"\w+", reply.lower())
+        if not words:
+            return 0.0
+        pwords = set(_re.findall(r"\w+", prompt.lower()))
+        overlap = len([w for w in words if w in pwords]) / max(1, len(pwords))
+        length_ok = min(1.0, len(words) / 150.0)
+        return round((0.6 * length_ok + 0.4 * overlap) * 10, 2)
 
     def _toggle_multi(self) -> None:
         """Open a dialog to select models for multi-model chat."""
@@ -1580,6 +1627,8 @@ class ChatPage(PageWidget):
         if text:
             self.msg_input.setText(text)
             self.msg_input.setFocus()
+            if self.voice_mode.isChecked():
+                self._send()
         elif err:
             self.chat_log.append(f"<i>[Mic: {err}]</i>")
 
@@ -2094,6 +2143,24 @@ class NetworkPage(PageWidget):
         self.status = QLabel("Ready")
         self._add(self.status)
 
+        # ── Port scanner ──
+        port_group = self._section("Port scanner")
+        port_row = QHBoxLayout()
+        port_row.addWidget(QLabel("Host:"))
+        self.port_host = QLineEdit("localhost")
+        self.port_host.setFixedWidth(160)
+        port_row.addWidget(self.port_host)
+        port_row.addWidget(QLabel("Ports:"))
+        self.port_range = QLineEdit("11434,8080,80,443,22,5432")
+        port_row.addWidget(self.port_range, 1)
+        self.port_scan_btn = QPushButton(f"{icon('run')}  Scan ports")
+        self.port_scan_btn.clicked.connect(self._scan_ports)
+        port_row.addWidget(self.port_scan_btn)
+        port_group.layout().addLayout(port_row)  # type: ignore
+        self.port_results = QListWidget()
+        port_group.layout().addWidget(self.port_results)  # type: ignore
+        self._add(port_group)
+
         self._timer = QTimer()
         self._timer.setInterval(30000)
         self._timer.timeout.connect(self._scan)
@@ -2132,6 +2199,50 @@ class NetworkPage(PageWidget):
                 self.results_list.addItem(line)
         self.status.setText(f"{self.results_list.count()} device(s)")
         self.scan_btn.setEnabled(True)
+
+    def _scan_ports(self) -> None:
+        host = self.port_host.text().strip()
+        ports: list[int] = []
+        for part in self.port_range.text().split(","):
+            part = part.strip()
+            if "-" in part:
+                a, b = part.split("-")
+                ports.extend(range(int(a), int(b) + 1))
+            elif part.isdigit():
+                ports.append(int(part))
+        if not host or not ports:
+            return
+        self.port_scan_btn.setEnabled(False)
+        self.port_results.clear()
+
+        def _run() -> None:
+            import socket
+            open_ports: list[int] = []
+            for port in ports:
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.settimeout(0.5)
+                        if s.connect_ex((host, port)) == 0:
+                            open_ports.append(port)
+                except Exception:
+                    pass
+            QMetaObject.invokeMethod(
+                self, "_show_ports", Qt.ConnectionType.QueuedConnection,
+                Q_ARG(list, open_ports), Q_ARG(list, ports),
+            )
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    @pyqtSlot(list, list)
+    def _show_ports(self, open_ports: list, all_ports: list) -> None:
+        self.port_results.clear()
+        for port in all_ports:
+            state = "OPEN" if port in open_ports else "closed"
+            item = QListWidgetItem(f"{port}: {state}")
+            if port in open_ports:
+                item.setForeground(QColor("#a6e3a1"))
+            self.port_results.addItem(item)
+        self.port_scan_btn.setEnabled(True)
 
     def _export(self) -> None:
         if self.results_list.count() == 0:
@@ -2427,6 +2538,13 @@ class SessionPage(PageWidget):
         self.tabs.addTab(self.chat_list, "Chat")
         self._add(self.tabs)
 
+        # Agent memory explorer tab
+        self.memory_list = QListWidget()
+        self.memory_list.setMinimumHeight(180)
+        self.tabs.addTab(self.memory_list, "Memory")
+        self.memory_list.currentItemChanged.connect(self._on_memory_select)
+        self._add(self.tabs)
+
         # Detail panel
         detail = self._section("Detail")
         self.detail_text = QPlainTextEdit()
@@ -2536,6 +2654,34 @@ class SessionPage(PageWidget):
         pipe_count = len(self._sessions)
         chat_count = len(self._chat_sessions)
         self.status.setText(f"{pipe_count} pipeline / {chat_count} chat session(s)")
+
+        # ── Agent memory (experience.jsonl) ──
+        self.memory_list.clear()
+        self._memories = []
+        mem_file = HERE / ".virgo_memory" / "experience.jsonl"
+        if mem_file.exists():
+            for i, line in enumerate(mem_file.read_text().splitlines()):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    entry = {"raw": line[:200]}
+                label = entry.get("goal") or entry.get("task") or \
+                    entry.get("prompt") or entry.get("raw") or f"entry {i}"
+                if isinstance(label, str):
+                    label = label[:70]
+                item = QListWidgetItem(f"#{i}  {label}")
+                item.setData(256, entry)
+                self.memory_list.addItem(item)
+                self._memories.append(entry)
+
+    def _on_memory_select(self, current, _prev) -> None:
+        if not current:
+            return
+        entry = current.data(256)
+        self.detail_text.setPlainText(json.dumps(entry, indent=2)[:2000])
 
     def _on_pipeline_select(self, current, _prev) -> None:
         if not current:
@@ -2776,9 +2922,18 @@ class LogsPage(PageWidget):
         self.level_combo.addItems(["ALL", "INFO", "WARN", "ERROR", "DEBUG"])
         self.level_combo.setCurrentText("ALL")
         self.level_combo.currentTextChanged.connect(lambda _: self._refresh())
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText("regex filter (empty = all)…")
+        self.filter_input.textChanged.connect(lambda _: self._refresh())
+        self.tail_chk = QCheckBox("Tail follow")
+        self.tail_chk.setChecked(True)
+        self.tail_chk.stateChanged.connect(lambda _: self._refresh())
         self._add_row(
             QLabel("Level:"),
             self.level_combo,
+            QLabel("Filter:"),
+            self.filter_input,
+            self.tail_chk,
             QPushButton(f"{icon('refresh')}  Refresh", clicked=self._refresh),
             QPushButton(f"{icon('delete')}  Clear", clicked=self._clear_logs),
         )
@@ -2802,13 +2957,187 @@ class LogsPage(PageWidget):
             lvl = self.level_combo.currentText()
             if lvl != "ALL":
                 lines = [l for l in lines if lvl in l.upper()]
+            # Regex filter
+            pat = self.filter_input.text().strip()
+            if pat:
+                try:
+                    rx = re.compile(pat, re.IGNORECASE)
+                    lines = [l for l in lines if rx.search(l)]
+                except re.error:
+                    lines = [l for l in lines if pat.lower() in l.lower()]
             self.log_output.setPlainText("\n".join(lines))
+            if self.tail_chk.isChecked():
+                self.log_output.verticalScrollBar().setValue(
+                    self.log_output.verticalScrollBar().maximum()
+                )
 
     def _clear_logs(self) -> None:
         log_file = OUTDIR / "virgo.log"
         if log_file.exists():
             log_file.write_text("")
         self.log_output.clear()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Process monitor page
+# ═══════════════════════════════════════════════════════════════════════
+
+class ProcessMonitorPage(PageWidget):
+    """Show running python/ollama processes with a kill button."""
+
+    def __init__(self) -> None:
+        super().__init__("Procs", "Running python / ollama processes")
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(
+            ["PID", "Name", "CPU %", "Kill"])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setColumnWidth(0, 80)
+        self._table.setColumnWidth(1, 260)
+        self._table.setColumnWidth(2, 80)
+        self._add(self._table)
+
+        row = QHBoxLayout()
+        row.addWidget(QPushButton(f"{icon('refresh')}  Refresh", clicked=self._refresh))
+        self.auto_chk = QCheckBox("Auto (2s)")
+        self.auto_chk.stateChanged.connect(self._toggle_auto)
+        row.addWidget(self.auto_chk)
+        row.addStretch()
+        self.content.addLayout(row)
+
+        self._timer = QTimer()
+        self._timer.setInterval(2000)
+        self._timer.timeout.connect(self._refresh)
+
+    def _toggle_auto(self, state: int) -> None:
+        if state:
+            self._timer.start()
+        else:
+            self._timer.stop()
+
+    def on_activate(self) -> None:
+        self._refresh()
+
+    def _list_procs(self) -> list[tuple[int, str, str]]:
+        procs: list[tuple[int, str, str]] = []
+        try:
+            import psutil
+            for p in psutil.process_iter(["pid", "name", "cpu_percent"]):
+                name = (p.info.get("name") or "").lower()
+                if "python" in name or "ollama" in name:
+                    procs.append((
+                        p.info["pid"],
+                        p.info.get("name") or "?",
+                        f"{p.info.get('cpu_percent') or 0:.1f}",
+                    ))
+        except Exception:
+            # Fallback: tasklist (Windows)
+            try:
+                out = subprocess.run(
+                    ["tasklist", "/FO", "CSV"], capture_output=True,
+                    text=True, timeout=15).stdout
+                for line in out.splitlines()[1:]:
+                    parts = line.strip('"').split('","')
+                    if len(parts) >= 2 and ("python" in parts[0].lower()
+                                            or "ollama" in parts[0].lower()):
+                        procs.append((int(parts[1]), parts[0], "—"))
+            except Exception:
+                pass
+        return procs
+
+    def _refresh(self) -> None:
+        procs = self._list_procs()
+        self._table.setRowCount(len(procs))
+        for r, (pid, name, cpu) in enumerate(procs):
+            self._table.setItem(r, 0, QTableWidgetItem(str(pid)))
+            self._table.setItem(r, 1, QTableWidgetItem(name))
+            self._table.setItem(r, 2, QTableWidgetItem(cpu))
+            btn = QPushButton("Kill")
+            btn.clicked.connect(
+                lambda _checked, p=pid: self._kill(p))
+            self._table.setCellWidget(r, 3, btn)
+
+    def _kill(self, pid: int) -> None:
+        try:
+            import psutil
+            psutil.Process(pid).terminate()
+        except Exception:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/F"],
+                capture_output=True, text=True)
+        self._refresh()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Benchmark page
+# ═══════════════════════════════════════════════════════════════════════
+
+_BENCH_PROMPT = "Write a Python function that returns the nth Fibonacci number using memoization."
+
+class BenchmarkPage(PageWidget):
+    """Time local models on a standard prompt and show a latency table."""
+
+    def __init__(self) -> None:
+        super().__init__("Bench", "Benchmark local Ollama models")
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(_live_ollama_models() or PREFERRED_MODELS)
+        self._add_row(
+            QLabel("Model:"),
+            self.model_combo,
+            QPushButton(f"{icon('run')}  Run 1x", clicked=self._bench_once),
+            QPushButton(f"{icon('run')}  Run all", clicked=self._bench_all),
+        )
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(
+            ["Model", "Time (s)", "Tokens"])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._add(self._table)
+        self._result = QPlainTextEdit()
+        self._result.setReadOnly(True)
+        self._result.setMaximumHeight(160)
+        self._add(self._result)
+
+    def _bench_once(self) -> None:
+        model = self.model_combo.currentText()
+        self._run_model(model)
+
+    def _bench_all(self) -> None:
+        for m in (self.model_combo.model().stringList()
+                  if hasattr(self.model_combo.model(), "stringList")
+                  else PREFERRED_MODELS):
+            self._run_model(m)
+
+    def _run_model(self, model: str) -> None:
+        import time
+        import urllib.request
+        self._result.appendPlainText(f"Benchmarking {model}…")
+        t0 = time.time()
+        try:
+            req = urllib.request.Request(
+                "http://localhost:11434/api/generate",
+                data=json.dumps({
+                    "model": model,
+                    "prompt": _BENCH_PROMPT,
+                    "stream": False,
+                }).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            resp = json.loads(
+                urllib.request.urlopen(req, timeout=120).read())
+            dt = time.time() - t0
+            toks = resp.get("eval_count") or len(
+                resp.get("response", "").split())
+            self._result.appendPlainText(
+                f"  {model}: {dt:.1f}s, ~{toks} tokens")
+            self._append_row(model, f"{dt:.1f}", str(toks))
+        except Exception as exc:
+            self._result.appendPlainText(f"  {model}: ERROR {exc}")
+
+    def _append_row(self, model: str, dt: str, toks: str) -> None:
+        r = self._table.rowCount()
+        self._table.insertRow(r)
+        self._table.setItem(r, 0, QTableWidgetItem(model))
+        self._table.setItem(r, 1, QTableWidgetItem(dt))
+        self._table.setItem(r, 2, QTableWidgetItem(toks))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -2974,6 +3303,22 @@ class SettingsPage(PageWidget):
         css_row.addWidget(reset_css)
         css_section.layout().addLayout(css_row)  # type: ignore
 
+        # ── Raw .env editor ──────────────────────────────────────────────
+        env_section = self._section(".env editor (raw)")
+        self.env_edit = QPlainTextEdit()
+        self.env_edit.setPlaceholderText("KEY=value per line…")
+        self.env_edit.setMaximumHeight(140)
+        env_path = HERE / ".env"
+        if env_path.exists():
+            self.env_edit.setPlainText(
+                env_path.read_text(encoding="utf-8", errors="replace"))
+        env_section.layout().addWidget(self.env_edit)  # type: ignore
+        env_row = QHBoxLayout()
+        save_env = QPushButton(f"{icon('save')}  Save .env")
+        save_env.clicked.connect(self._save_env)
+        env_row.addWidget(save_env)
+        env_section.layout().addLayout(env_row)  # type: ignore
+
         btn_row = QHBoxLayout()
         save_btn = QPushButton(f"{icon('save')}  Save")
         save_btn.clicked.connect(self._save)
@@ -3007,6 +3352,11 @@ class SettingsPage(PageWidget):
         env_path.write_text("".join(lines))
         self.save_status.setText(f"{icon('ok')} Saved to .env")
         QTimer.singleShot(3000, lambda: self.save_status.setText(""))
+
+    def _save_env(self) -> None:
+        env_path = HERE / ".env"
+        env_path.write_text(self.env_edit.toPlainText())
+        self.save_status.setText(f"{icon('ok')} Raw .env saved")
 
     def _test_connection(self) -> None:
         base = ""

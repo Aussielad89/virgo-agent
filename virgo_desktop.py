@@ -478,10 +478,12 @@ from virgo_desktop_pages import (
     NetworkPage,
     PipelinePage,
     PluginsPage,
+    ProcessMonitorPage,
     ScaffoldPage,
     SessionPage,
     SettingsPage,
     SwarmPage,
+    BenchmarkPage,
 )
 
 # ── Constants ────────────────────────────────────────────────────────
@@ -504,9 +506,11 @@ DESKTOP_ICONS = {
     "sessions": "\U0001F4DC",      # 📜
     "swarm": "\u26A1",             # ⚡
     "logs": "\U0001F4DD",          # 📝
-    "plugins": "\U0001F9E9",       # 🧩
+    "plugins": "\U0001F9E9",      # 🧩
     "settings": "\u2699",          # ⚙
     "about": "\u2139",             # ℹ
+    "procs": "\U0001F4BB",        # 💻
+    "bench": "\u23F1",             # ⏱
 }
 
 SIDEBAR_ITEMS = [
@@ -521,6 +525,8 @@ SIDEBAR_ITEMS = [
     ("swarm", "Swarm", DESKTOP_ICONS["swarm"]),
     ("logs", "Logs", DESKTOP_ICONS["logs"]),
     ("plugins", "Plugins", DESKTOP_ICONS["plugins"]),
+    ("procs", "Procs", DESKTOP_ICONS["procs"]),
+    ("bench", "Bench", DESKTOP_ICONS["bench"]),
     ("settings", "Settings", DESKTOP_ICONS["settings"]),
     ("about", "About", DESKTOP_ICONS["about"]),
 ]
@@ -682,6 +688,8 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(SwarmPage(), "swarm")
         self._register(LogsPage(), "logs")
         self._register(PluginsPage(), "plugins")
+        self._register(ProcessMonitorPage(), "procs")
+        self._register(BenchmarkPage(), "bench")
         self._register(SettingsPage(), "settings")
         self._register(AboutPage(), "about")
 
