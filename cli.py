@@ -34,7 +34,7 @@ try:
 except ImportError:
     pass
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -399,9 +399,9 @@ def cmd_config(args: argparse.Namespace) -> None:
         "LLM_BASE_URL": "http://localhost:11434/v1",
         "LLM_API_KEY": "sk-no-key-required",
         "LLM_TIMEOUT": "300",
-        "MODEL_PLANNER": "qwen2.5-coder:7b",
-        "MODEL_GENERATOR": "qwen2.5-coder:7b",
-        "MODEL_FIXER": "qwen2.5-coder:7b",
+        "MODEL_PLANNER": "ornith:latest",
+        "MODEL_GENERATOR": "ornith:latest",
+        "MODEL_FIXER": "ornith:latest",
         "FALLBACK_MODEL": "",
         "VIRGO_LOG_LEVEL": "WARNING",
         "VIRGO_LOG_FILE": "",
@@ -536,8 +536,8 @@ def cmd_swarm(args: argparse.Namespace) -> None:
                 print(f"[virgo] Invalid agent spec: {a!r} (expected name:goal)")
                 sys.exit(1)
     else:
-        print("[virgo] No agents specified — use --agent name:goal or --agent-file")
-        sys.exit(1)
+        # Auto-generate a single agent from the overarching goal.
+        agents = [("agent", args.goal)]
 
     from environment import AgentEnvironment
     from tools import ToolRegistry
@@ -892,17 +892,138 @@ def _cmd_chat_help() -> None:
     print("""
   Virgo Chat Commands:
     /upload <path>    Upload a file into chat context (supports glob, multiple files)
+    /tools            List the safe tools Virgo can use
+    /read <path>      Read a local file
+    /write <path> <text>   Write text to a local file
+    /web <url>        Fetch a web page
+    /py <code>        Run a line of Python
     /save, /s         Save current chat session
     /history          List saved chat sessions
     /help             Show this help
     /clear            Clear chat history
     exit, quit        Exit chat
 
+  Agentic tool-use:
+    The model can call tools itself by emitting, on its own line:
+      [[virgo.read path="file.py"]]
+      [[virgo.write path="file.py" content="..."]]
+      [[virgo.web url="https://example.com"]]
+      [[virgo.py code="print(1+1)"]]
+    Results are returned to the model so it can act on them.
+
   Examples:
     /upload log.txt
     /upload src/*.py
     /upload config.json README.md
 """)
+
+
+# ── Virgo chat persona + safe tool-use layer ──────────────────────────
+
+VIRGO_SYSTEM_PROMPT = (
+    "You are Virgo, a local multi-agent coding assistant running on the user's "
+    "machine via Ollama. You help with software tasks: writing, reading, and "
+    "explaining code; running Python; and fetching web pages for reference. "
+    "Be concise and practical.\n\n"
+    "When you need to inspect or modify a file, fetch a URL, or run code, emit a "
+    "tool call on its own line in this exact form:\n"
+    '  [[virgo.read path="file.py"]]\n'
+    '  [[virgo.write path="file.py" content="..."]]\n'
+    '  [[virgo.web url="https://example.com"]]\n'
+    '  [[virgo.py code="print(1+1)"]]\n'
+    "Tool results are returned to you so you can act on them. Prefer tool calls "
+    "over guessing file contents. Stay on topic and never attempt destructive or "
+    "unauthorized actions."
+)
+
+# Safe, allowlisted tools the chat may invoke (defensive only).
+_CHAT_TOOLS = ("read", "write", "web", "py")
+
+# Paths that must never be read/written through chat tools.
+_BLOCKED_SUBSTR = (".env", ".git/", "credentials", "id_rsa", "secret", ".sqlite", ".pem")
+
+import re as _re
+
+_TOOL_CALL_RE = _re.compile(r"\[\[virgo\.(\w+)\s+(.*?)\]\]", _re.DOTALL)
+
+
+def _parse_tool_calls(text: str) -> list[tuple[str, dict[str, str]]]:
+    """Parse ``[[virgo.<tool> key=\"val\" ...]]`` calls from model output."""
+    calls: list[tuple[str, dict[str, str]]] = []
+    for m in _TOOL_CALL_RE.finditer(text):
+        name = m.group(1)
+        kwargs: dict[str, str] = {}
+        for kv in _re.finditer(r'(\w+)\s*=\s*("([^"]*)"|(\S+))', m.group(2)):
+            key = kv.group(1)
+            val = kv.group(3) if kv.group(3) is not None else kv.group(4)
+            kwargs[key] = val
+        calls.append((name, kwargs))
+    return calls
+
+
+def _chat_blocked(path: str) -> bool:
+    p = path.lower().replace("\\", "/")
+    return any(b in p for b in _BLOCKED_SUBSTR)
+
+
+def _run_chat_tool(name: str, kwargs: dict[str, str]) -> str:
+    """Execute one allowlisted chat tool and return a short result string."""
+    if name == "read":
+        path = kwargs.get("path", "")
+        if not path:
+            return "[tool read] missing path="
+        if _chat_blocked(path):
+            return f"[tool read] blocked: {path} is restricted"
+        p = Path(path)
+        if not p.exists():
+            return f"[tool read] not found: {path}"
+        try:
+            return p.read_text(encoding="utf-8", errors="replace")
+        except Exception as exc:
+            return f"[tool read] error: {exc}"
+    if name == "write":
+        path = kwargs.get("path", "")
+        content = kwargs.get("content", "")
+        if not path:
+            return "[tool write] missing path="
+        if _chat_blocked(path):
+            return f"[tool write] blocked: {path} is restricted"
+        try:
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+            return f"[tool write] wrote {len(content)} chars to {path}"
+        except Exception as exc:
+            return f"[tool write] error: {exc}"
+    if name == "web":
+        url = kwargs.get("url", "")
+        if not url:
+            return "[tool web] missing url="
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "virgo-chat/0.6"}
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                data = r.read().decode("utf-8", errors="replace")
+            return data[:8000]
+        except Exception as exc:
+            return f"[tool web] error: {exc}"
+    if name == "py":
+        code = kwargs.get("code", "")
+        if not code:
+            return "[tool py] missing code="
+        try:
+            import subprocess
+            proc = subprocess.run(
+                [sys.executable, "-c", code],
+                capture_output=True, text=True, timeout=30,
+            )
+            out = (proc.stdout or "") + (proc.stderr or "")
+            return out[:8000] or f"[tool py] exited {proc.returncode} (no output)"
+        except Exception as exc:
+            return f"[tool py] error: {exc}"
+    return f"[tool {name}] unknown tool"
 
 
 def cmd_chat(args: argparse.Namespace) -> None:
@@ -926,6 +1047,7 @@ def cmd_chat(args: argparse.Namespace) -> None:
         print("  [No LLM detected - running in teach/task mode]\n")
 
     history: list[dict[str, str]] = []
+    system_msg = {"role": "system", "content": VIRGO_SYSTEM_PROMPT}
 
     # Resume from a previous session if --resume was provided
     if args.resume:
@@ -970,18 +1092,55 @@ def cmd_chat(args: argparse.Namespace) -> None:
         if user_input.lower().startswith("/upload "):
             _cmd_chat_upload(history, user_input[len("/upload "):])
             continue
+        if user_input.lower() == "/tools":
+            print("  Virgo chat tools (safe, local):")
+            print("    read  <path>           read a file")
+            print("    write <path> <text>    write a file")
+            print("    web   <url>            fetch a web page")
+            print("    py    <code>           run Python")
+            print("  Or let the model call them via [[virgo.<tool> ...]]\n")
+            continue
+        if user_input.lower().startswith("/read "):
+            print("  " + _run_chat_tool("read", {"path": user_input[len("/read "):].strip()}))
+            continue
+        if user_input.lower().startswith("/write "):
+            parts = user_input[len("/write "):].split(" ", 1)
+            path = parts[0] if parts else ""
+            content = parts[1] if len(parts) > 1 else ""
+            print("  " + _run_chat_tool("write", {"path": path, "content": content}))
+            continue
+        if user_input.lower().startswith("/web "):
+            print("  " + _run_chat_tool("web", {"url": user_input[len("/web "):].strip()}))
+            continue
+        if user_input.lower().startswith("/py "):
+            print("  " + _run_chat_tool("py", {"code": user_input[len("/py "):].strip()}))
+            continue
 
         if client:
             history.append({"role": "user", "content": user_input})
+            messages = [system_msg] + history
             try:
-                result = client.chat(history.copy(), temperature=0.7, max_tokens=2048, role="agent")
+                print("  => ", end="", flush=True)
+                result = client.chat_stream(
+                    messages, temperature=0.7, max_tokens=2048, role="agent"
+                )
+                print()  # newline after the streamed reply
                 if result and result.strip():
-                    print(f"  => {result.strip()}\n")
                     history.append({"role": "assistant", "content": result})
+                    # Agentic tool-use: execute any [[virgo.<tool>]] calls
+                    for tname, tkwargs in _parse_tool_calls(result):
+                        if tname in _CHAT_TOOLS:
+                            out = _run_chat_tool(tname, tkwargs)
+                            print(f"  [tool {tname}] {out[:500]}")
+                            history.append(
+                                {"role": "system", "content": f"[tool {tname}] {out}"}
+                            )
+                        else:
+                            print(f"  [tool {tname}] not allowed")
                 else:
                     print("  [Empty response from LLM]\n")
             except Exception as exc:
-                print(f"  [LLM error: {exc}]\n")
+                print(f"\n  [LLM error: {exc}]\n")
                 print(f"  => (LLM unavailable) You said: {user_input}\n")
         else:
             print(f"  => You said: {user_input}")

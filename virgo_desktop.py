@@ -77,11 +77,11 @@ def _ensure_pyqt6() -> None:
 _ensure_pyqt6()  # re-execs under a PyQt6 Python if needed
 
 from PyQt6.QtCore import Qt, QTimer, qInstallMessageHandler
-from PyQt6.QtGui import QAction, QFont, QIcon, QPalette
+from PyQt6.QtGui import QAction, QFont, QIcon, QPalette, QShortcut, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QDialog, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
-    QStackedWidget, QSystemTrayIcon, QMenu, QVBoxLayout, QWidget,
+    QStackedWidget, QSystemTrayIcon, QMenu, QStatusBar, QVBoxLayout, QWidget,
 )
 
 # ── Import virgo modules ─────────────────────────────────────────────
@@ -96,6 +96,7 @@ from virgo_desktop_pages import (
     LogsPage,
     NetworkPage,
     PipelinePage,
+    PluginsPage,
     ScaffoldPage,
     SessionPage,
     SettingsPage,
@@ -109,18 +110,36 @@ APP_VERSION = "0.2.0"
 WIDTH = 1100
 HEIGHT = 720
 
+# Emoji icons for the desktop GUI. PyQt6 renders these on Windows fine;
+# the terminal-safe ASCII fallbacks in _console.icon() don't apply here.
+DESKTOP_ICONS = {
+    "pipeline": "\U0001F680",      # 🚀
+    "chat": "\U0001F4AC",          # 💬
+    "network": "\U0001F310",       # 🌐
+    "diagnostics": "\U0001F527",   # 🔧
+    "alerts": "\U0001F514",        # 🔔
+    "scaffold": "\U0001F4E6",      # 📦
+    "sessions": "\U0001F4DC",      # 📜
+    "swarm": "\u26A1",             # ⚡
+    "logs": "\U0001F4DD",          # 📝
+    "plugins": "\U0001F9E9",       # 🧩
+    "settings": "\u2699",          # ⚙
+    "about": "\u2139",             # ℹ
+}
+
 SIDEBAR_ITEMS = [
-    ("pipeline", "Pipeline", "run"),
-    ("chat", "Chat", "chat"),
-    ("network", "Network", "network"),
-    ("diagnostics", "Diagnostics", "diagnostics"),
-    ("alerts", "Alerts", "alert"),
-    ("scaffold", "Scaffolds", "scaffold"),
-    ("sessions", "Sessions", "history"),
-    ("swarm", "Swarm", "bolt"),
-    ("logs", "Logs", "log"),
-    ("settings", "Settings", "settings"),
-    ("about", "About", "info"),
+    ("pipeline", "Pipeline", DESKTOP_ICONS["pipeline"]),
+    ("chat", "Chat", DESKTOP_ICONS["chat"]),
+    ("network", "Network", DESKTOP_ICONS["network"]),
+    ("diagnostics", "Diagnostics", DESKTOP_ICONS["diagnostics"]),
+    ("alerts", "Alerts", DESKTOP_ICONS["alerts"]),
+    ("scaffold", "Scaffolds", DESKTOP_ICONS["scaffold"]),
+    ("sessions", "Sessions", DESKTOP_ICONS["sessions"]),
+    ("swarm", "Swarm", DESKTOP_ICONS["swarm"]),
+    ("logs", "Logs", DESKTOP_ICONS["logs"]),
+    ("plugins", "Plugins", DESKTOP_ICONS["plugins"]),
+    ("settings", "Settings", DESKTOP_ICONS["settings"]),
+    ("about", "About", DESKTOP_ICONS["about"]),
 ]
 
 
@@ -159,18 +178,30 @@ class VirgoDesktopWindow(QMainWindow):
         sidebar_layout.setContentsMargins(8, 12, 8, 12)
         sidebar_layout.setSpacing(2)
 
-        title = QLabel(f"{icon('virgo')}  Virgo")
-        title_font = QFont("Segoe UI", 14, QFont.Weight.Bold)
+        # ── Branded header (avatar + title) ───────────────────
+        header = QWidget()
+        header.setObjectName("sidebarHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(4, 4, 4, 4)
+        header_layout.setSpacing(10)
+        avatar = QLabel("\U0001F6F8")  # 🛸
+        avatar.setObjectName("sidebarAvatar")
+        avatar.setFont(QFont("Segoe UI", 18))
+        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.addWidget(avatar)
+        title = QLabel("Virgo")
+        title_font = QFont("Segoe UI", 15, QFont.Weight.Bold)
         title.setFont(title_font)
         title.setObjectName("sidebarTitle")
-        sidebar_layout.addWidget(title)
+        header_layout.addWidget(title)
+        sidebar_layout.addWidget(header)
         sidebar_layout.addSpacing(12)
 
         self.nav_buttons: dict[str, SidebarButton] = {}
         self.current_page = ""
 
-        for page_id, label, ico in SIDEBAR_ITEMS:
-            btn = SidebarButton(label, icon(ico) if icon(ico) != ico else "")
+        for page_id, label, emoji in SIDEBAR_ITEMS:
+            btn = SidebarButton(label, emoji)
             btn.clicked.connect(lambda checked=False, pid=page_id: self._navigate(pid))
             sidebar_layout.addWidget(btn)
             self.nav_buttons[page_id] = btn
@@ -198,19 +229,32 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(SessionPage(), "sessions")
         self._register(SwarmPage(), "swarm")
         self._register(LogsPage(), "logs")
+        self._register(PluginsPage(), "plugins")
         self._register(SettingsPage(), "settings")
         self._register(AboutPage(), "about")
 
         layout.addWidget(self.stack, 1)
 
+        # ── Status bar ───────────────────────────────────────────
+        self.status_bar = QStatusBar()
+        self.status_bar.setObjectName("statusBar")
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage("Virgo Desktop · checking LLM…")
+
         # ── System tray ───────────────────────────────────────────
         self._setup_tray()
+
+        # ── Number-key navigation ─────────────────────────────────
+        self._setup_shortcuts()
 
         # ── Navigate to default ───────────────────────────────────
         self._navigate("pipeline")
 
         # ── Stylesheet ────────────────────────────────────────────
         self._apply_style()
+
+        # ── Restore saved window geometry ────────────────────────
+        self._restore_geom()
 
     # ────────────────────────────────────────────────────────────────
 
@@ -229,10 +273,29 @@ class VirgoDesktopWindow(QMainWindow):
         if hasattr(page, "on_activate"):
             page.on_activate()
 
+    def set_status(self, text: str) -> None:
+        """Update the bottom status bar text."""
+        self.status_bar.showMessage(text)
+
+    def _setup_shortcuts(self) -> None:
+        """Number keys 1-9 / 0 jump to sidebar pages."""
+        for idx, (page_id, _label, _emoji) in enumerate(SIDEBAR_ITEMS):
+            if idx < 9:
+                key = str(idx + 1)
+            elif idx == 9:
+                key = "0"
+            else:
+                continue  # 11th+ page has no number key
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.activated.connect(
+                lambda pid=page_id: self._navigate(pid)
+            )
+
     def _setup_tray(self) -> None:
         """Create system tray icon."""
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
+        self._real_close = False
         self.tray = QSystemTrayIcon(self)
         self.tray.setToolTip(APP_NAME)
         # Create a simple pixmap icon (16x16)
@@ -245,10 +308,65 @@ class VirgoDesktopWindow(QMainWindow):
         menu = QMenu()
         show_action = menu.addAction("Show Window")
         show_action.triggered.connect(self.showNormal)
+        chat_action = menu.addAction("Open Chat")
+        chat_action.triggered.connect(
+            lambda: (self.showNormal(), self._navigate("chat"))
+        )
         quit_action = menu.addAction("Quit")
-        quit_action.triggered.connect(self.close)
+        quit_action.triggered.connect(self._quit)
         self.tray.setContextMenu(menu)
         self.tray.show()
+
+    def _quit(self) -> None:
+        self._real_close = True
+        self.close()
+
+    def notify(self, title: str, message: str) -> None:
+        """Show a system tray notification (falls back to the status bar)."""
+        if getattr(self, "tray", None) and QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray.showMessage(
+                title, message, QSystemTrayIcon.MessageIcon.Information, 4000
+            )
+        else:
+            self.set_status(f"{title}: {message}")
+
+    def closeEvent(self, event) -> None:
+        """Minimize to tray instead of quitting, unless a real quit was asked."""
+        if getattr(self, "tray", None) and not self._real_close:
+            event.ignore()
+            self.hide()
+            self.tray.showMessage(
+                APP_NAME,
+                "Running in the background. Right-click the tray icon to quit.",
+                QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
+        else:
+            self._save_geom()
+            event.accept()
+
+    def _restore_geom(self) -> None:
+        try:
+            import json
+            p = Path(__file__).parent / ".virgo_desktop_geom.json"
+            if p.exists():
+                d = json.loads(p.read_text())
+                self.resize(d.get("w", WIDTH), d.get("h", HEIGHT))
+                if d.get("x") is not None:
+                    self.move(d["x"], d["y"])
+        except Exception:
+            pass
+
+    def _save_geom(self) -> None:
+        try:
+            import json
+            p = Path(__file__).parent / ".virgo_desktop_geom.json"
+            geo = self.geometry()
+            p.write_text(json.dumps({
+                "x": geo.x(), "y": geo.y(), "w": geo.width(), "h": geo.height()
+            }))
+        except Exception:
+            pass
 
     def _apply_style(self) -> None:
         """Apply dark theme stylesheet."""
@@ -265,7 +383,23 @@ class VirgoDesktopWindow(QMainWindow):
             }
             #sidebarTitle {
                 color: #89b4fa;
-                padding: 4px 8px;
+                padding: 0 4px;
+            }
+            #sidebarHeader {
+                background-color: #181825;
+                border-bottom: 1px solid #313244;
+                border-radius: 8px;
+                padding: 6px;
+            }
+            #sidebarAvatar {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #89b4fa, stop:1 #a6e3a1);
+                color: #1e1e2e;
+                border-radius: 10px;
+                min-width: 34px;
+                max-width: 34px;
+                min-height: 34px;
+                max-height: 34px;
             }
             #sidebar QPushButton {
                 background: transparent;
@@ -291,11 +425,31 @@ class VirgoDesktopWindow(QMainWindow):
             #quitBtn:hover {
                 background: #45232e !important;
             }
+            #stopBtn {
+                color: #f38ba8 !important;
+                border-color: #f38ba8;
+            }
+            #stopBtn:hover {
+                background: #45232e !important;
+            }
             #pageArea {
                 background-color: #1e1e2e;
             }
-            QLabel {
+            #pageTitle {
                 color: #cdd6f4;
+                font-size: 20px;
+                padding-bottom: 2px;
+            }
+            #metaLabel {
+                color: #6c7086;
+                font-size: 11px;
+            }
+            #statusBar {
+                background: #181825;
+                color: #a6adc8;
+                border-top: 1px solid #313244;
+                padding: 3px 10px;
+                font-size: 12px;
             }
             QPushButton {
                 background: #313244;
@@ -352,10 +506,11 @@ class VirgoDesktopWindow(QMainWindow):
                 border-radius: 4px;
             }
             QGroupBox {
+                background-color: #181825;
                 border: 1px solid #313244;
-                border-radius: 8px;
-                margin-top: 16px;
-                padding: 16px 12px 12px;
+                border-radius: 10px;
+                margin-top: 18px;
+                padding: 18px 14px 14px;
                 font-weight: bold;
                 color: #89b4fa;
             }
