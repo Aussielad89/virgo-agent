@@ -422,6 +422,14 @@ class ChatPage(PageWidget):
         toolbar.addWidget(self.export_btn)
         toolbar.addWidget(self.copy_btn)
         toolbar.addWidget(self.regen_btn)
+        self.speak_btn = QPushButton(f"{icon('audio')}  Speak")
+        self.speak_btn.setToolTip("Read last reply aloud")
+        self.speak_btn.clicked.connect(self._speak_reply)
+        self.mic_btn = QPushButton(f"{icon('mic')}  Mic")
+        self.mic_btn.setToolTip("Speak into your microphone")
+        self.mic_btn.clicked.connect(self._mic_input)
+        toolbar.addWidget(self.speak_btn)
+        toolbar.addWidget(self.mic_btn)
         toolbar.addStretch()
         self.content.addLayout(toolbar)
 
@@ -847,6 +855,81 @@ class ChatPage(PageWidget):
         }
         path = _chat_session_path()
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _speak_reply(self) -> None:
+        """Read the last assistant reply aloud via edge-tts."""
+        text = getattr(self, "_last_reply", "")
+        if not text:
+            self.chat_log.append("<i>[No reply to speak]</i>")
+            return
+        self.speak_btn.setEnabled(False)
+        threading.Thread(
+            target=self._speak_async, args=(text,), daemon=True
+        ).start()
+
+    def _speak_async(self, text: str) -> None:
+        try:
+            import edge_tts, asyncio, tempfile
+            communicate = edge_tts.Communicate(text, voice="en-US-AriaNeural")
+            tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+            path = tmp.name
+            tmp.close()
+            asyncio.run(communicate.save(path))
+            os.startfile(path)  # Windows default player
+        except Exception as exc:
+            QMetaObject.invokeMethod(
+                self, "_append_log", Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, f"<i>[TTS error: {exc}]</i>"),
+            )
+        finally:
+            QMetaObject.invokeMethod(
+                self, "_enable_btn", Qt.ConnectionType.QueuedConnection,
+            )
+
+    def _mic_input(self) -> None:
+        """Transcribe microphone input and fill the message box."""
+        self.mic_btn.setEnabled(False)
+        threading.Thread(target=self._mic_async, daemon=True).start()
+
+    def _mic_async(self) -> None:
+        try:
+            import speech_recognition as sr
+            r = sr.Recognizer()
+            with sr.Microphone() as source:
+                r.adjust_for_ambient_noise(source, duration=0.3)
+                audio = r.listen(source, timeout=5, phrase_time_limit=15)
+            text = r.recognize_google(audio)
+            err = ""
+        except ImportError:
+            text = ""
+            err = "speech_recognition not installed"
+        except sr.WaitTimeoutError:
+            text = ""
+            err = "No speech detected"
+        except Exception as exc:
+            text = ""
+            err = str(exc)
+        QMetaObject.invokeMethod(
+            self, "_mic_done", Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, text), Q_ARG(str, err),
+        )
+
+    @pyqtSlot(str, str)
+    def _mic_done(self, text: str, err: str) -> None:
+        self.mic_btn.setEnabled(True)
+        if text:
+            self.msg_input.setText(text)
+            self.msg_input.setFocus()
+        elif err:
+            self.chat_log.append(f"<i>[Mic: {err}]</i>")
+
+    @pyqtSlot()
+    def _enable_btn(self) -> None:
+        self.speak_btn.setEnabled(True)
+
+    @pyqtSlot(str)
+    def _append_log(self, html: str) -> None:
+        self.chat_log.append(html)
 
     @staticmethod
     def _help_text() -> str:
