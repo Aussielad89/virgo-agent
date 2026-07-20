@@ -653,8 +653,10 @@ class ChatPage(PageWidget):
         # Persona selector
         model_row.addWidget(QLabel("Persona:"))
         self.persona_combo = QComboBox()
+        from cli import VIRGO_SYSTEM_PROMPT, VIRGO_RESEARCH_PROMPT
         self._personas = {
-            "Default": "You are Virgo, a helpful autonomous coding agent.",
+            "Default": VIRGO_SYSTEM_PROMPT,
+            "Researcher": VIRGO_RESEARCH_PROMPT,
             "Concise": "You are Virgo. Reply in the fewest words possible.",
             "Teacher": "You are Virgo. Explain concepts step by step with examples.",
             "Sarcastic": "You are Virgo. Be witty and sarcastic but still correct.",
@@ -1004,10 +1006,27 @@ class ChatPage(PageWidget):
         # Stream the reply off the GUI thread, then render it.
         threading.Thread(target=self._stream_reply, args=(msg,), daemon=True).start()
 
+    def _build_system(self, user_msg: str) -> str:
+        """Compose the system prompt for one turn, injecting RAG context.
+
+        The persona (self._persona) is the base prompt; if a knowledge-base
+        passage is relevant to the user's message we append it. Falls back to
+        the persona alone when the KB is empty or no match is found.
+        """
+        system = self._persona
+        try:
+            from _rag import kb_context
+            rag = kb_context(user_msg, top_k=3)
+            if rag:
+                system = f"{system}\n\n{rag}"
+        except Exception:
+            pass  # RAG is best-effort; never break chat on its failure
+        return system
+
     def _stream_reply(self, msg: str) -> None:
         from cli import VIRGO_SYSTEM_PROMPT, _parse_tool_calls  # lazy import (safe)
 
-        messages = [{"role": "system", "content": self._persona}] + self._history
+        messages = [{"role": "system", "content": self._build_system(msg)}] + self._history
         # Forward streamed tokens into the chat box live (and keep the full text).
         collector = _GuiStream(self)
         old_stdout = sys.stdout
@@ -1231,7 +1250,8 @@ class ChatPage(PageWidget):
         import main
         try:
             client = main.get_client(model=model)
-            msgs = [{"role": "system", "content": VIRGO_SYSTEM_PROMPT}] + self._history
+            system = self._build_system(msg)
+            msgs = [{"role": "system", "content": system}] + self._history
             reply = client.chat_stream(msgs, temperature=self._temperature, max_tokens=2048)
         except Exception as exc:
             reply = f"(error: {exc})"
