@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1e1e2e" />
+  <title>Virgo Recon</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <span class="logo">✦ VIRGO RECON</span>
+    <span id="conn" class="conn off">●</span>
+  </header>
+
+  <section class="card" id="newscan">
+    <h2>New Scan</h2>
+    <label>Target
+      <input id="target" type="text" placeholder="example.com or 10.0.0.5" autocapitalize="none" autocomplete="off" spellcheck="false" />
+    </label>
+    <label>Profile
+      <select id="profile"></select>
+    </label>
+    <button id="gobtn">▶ Launch</button>
+    <p class="warn">Authorized / in-scope use only. Live recon tools execute on the desktop.</p>
+  </section>
+
+  <section class="card">
+    <h2>Activity <button id="refresh" class="mini">↻</button></h2>
+    <div id="jobs"><p class="muted">No scans yet.</p></div>
+  </section>
+
+  <section class="card" id="detail" hidden>
+    <h2 id="detail-title">Result</h2>
+    <pre id="detail-body"></pre>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

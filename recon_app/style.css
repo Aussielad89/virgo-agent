@@ -1,0 +1,50 @@
+:root {
+  --bg: #11111b; --card: #1e1e2e; --fg: #cdd6f4; --muted: #6c7086;
+  --accent: #89b4fa; --ok: #a6e3a1; --warn: #f9e2af; --err: #f38ba8;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.45 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  padding: env(safe-area-inset-top) 12px calc(12px + env(safe-area-inset-bottom));
+}
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 4px 10px; font-weight: 700; letter-spacing: .5px;
+}
+.logo { color: var(--accent); }
+.conn { font-size: 12px; }
+.conn.on { color: var(--ok); } .conn.off { color: var(--err); }
+.card {
+  background: var(--card); border-radius: 14px; padding: 14px;
+  margin-bottom: 12px; box-shadow: 0 2px 8px #0006;
+}
+h2 { margin: 0 0 10px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+label { display: block; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
+input, select {
+  width: 100%; margin-top: 4px; padding: 11px; border-radius: 10px;
+  border: 1px solid #313244; background: #181825; color: var(--fg); font-size: 15px;
+}
+button {
+  width: 100%; padding: 13px; border: 0; border-radius: 10px;
+  background: var(--accent); color: #11111b; font-weight: 700; font-size: 15px;
+}
+button:active { transform: scale(.98); }
+.mini { width: auto; padding: 4px 10px; font-size: 13px; background: #313244; color: var(--fg); }
+.warn { color: var(--warn); font-size: 12px; margin: 10px 0 0; }
+.muted { color: var(--muted); font-size: 13px; }
+.job {
+  border: 1px solid #313244; border-radius: 10px; padding: 10px; margin-bottom: 8px;
+  cursor: pointer;
+}
+.job .row { display: flex; justify-content: space-between; align-items: center; }
+.job .tgt { font-weight: 600; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 99px; font-weight: 700; }
+.badge.queued { background: #313244; color: var(--muted); }
+.badge.running { background: #45475a; color: var(--warn); }
+.badge.done { background: #20303a; color: var(--ok); }
+.badge.error { background: #3a2030; color: var(--err); }
+pre {
+  white-space: pre-wrap; word-break: break-word; background: #11111b;
+  border-radius: 10px; padding: 12px; max-height: 50vh; overflow: auto; font-size: 12px;
+}
