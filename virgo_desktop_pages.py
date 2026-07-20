@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -13,32 +14,71 @@ import winsound  # Windows-only; safe no-op elsewhere
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import Qt, QTimer, QMetaObject, pyqtSlot, Q_ARG, QUrl, QEvent, QDir, QModelIndex, QSize
-from PyQt6.QtCore import QObject
-from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent, QFont, QShortcut, QKeySequence, QFileSystemModel, QPen, QBrush, QTextDocument
+from PyQt6.QtCore import (
+    Q_ARG,
+    QDir,
+    QEvent,
+    QMetaObject,
+    QModelIndex,
+    QObject,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+    pyqtSlot,
+)
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFileSystemModel,
+    QFont,
+    QKeySequence,
+    QPen,
+    QShortcut,
+    QTextDocument,
+)
 from PyQt6.QtWidgets import (
-    QComboBox, QFormLayout, QFrame, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QPlainTextEdit, QProgressBar,
-    QPushButton, QSizePolicy, QSplitter, QTabWidget,
-    QTextEdit, QVBoxLayout, QWidget, QFileDialog,
-    QSlider, QCompleter, QCheckBox, QDialog,
-    QColorDialog, QGridLayout, QTreeView,
-    QGraphicsScene, QGraphicsView, QGraphicsRectItem,
-    QGraphicsTextItem, QGraphicsEllipseItem,
-    QTableWidget, QTableWidgetItem, QStatusBar,
+    QApplication,
+    QCheckBox,
+    QColorDialog,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QGraphicsRectItem,
+    QGraphicsScene,
+    QGraphicsTextItem,
+    QGraphicsView,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QSlider,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QTextEdit,
+    QTreeView,
+    QVBoxLayout,
+    QWidget,
 )
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from _console import icon
-from _log import log, OUTDIR
-
+from _log import OUTDIR
 
 # ═══════════════════════════════════════════════════════════════════════
 # Helper: page wrapper with title bar
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def _beep(kind: str = "done") -> None:
     """Play a short completion chime (Windows). kind: done|error."""
@@ -100,21 +140,47 @@ class PageWidget(QWidget):
         gl.setSpacing(8)
         gb.setCheckable(True)
         gb.setChecked(True)
-        # Collapse/expand by hiding content when unchecked
-        gb.toggled.connect(lambda checked: gb.setFixedHeight(
-            28 if not checked else gb.sizeHint().height()
-        ))
-        gb.toggled.connect(lambda checked: gb.setStyleSheet(
-            f"QGroupBox::title {{ subcontrol-position: top left; padding: 4px 8px; "
-            f"color: {'#89b4fa' if checked else '#6c7086'}; }}"
-        ))
+        # Collapse/expand by hiding the section's content widgets.
+        # Do NOT use setFixedHeight(sizeHint()) — that locks the box to a
+        # tiny height if the toggle fires before children are added (the box
+        # is setChecked(True) during construction), which smears the rows.
+        gb.toggled.connect(
+            lambda checked: _set_layout_visible(gl, checked)
+        )
+        gb.toggled.connect(
+            lambda checked: gb.setStyleSheet(
+                f"QGroupBox::title {{ subcontrol-position: top left; padding: 4px 8px; "
+                f"color: {'#89b4fa' if checked else '#6c7086'}; }}"
+            )
+        )
         self.content.addWidget(gb)
         return gb
+
+
+def _set_layout_visible(layout: "QLayout", visible: bool) -> None:
+    """Recursively show/hide every widget inside *layout*.
+
+    Used so a collapsible QGroupBox shrinks to its title bar when unchecked
+    and restores naturally when checked, without forcing a fragile fixed
+    height.
+    """
+    for i in range(layout.count()):
+        item = layout.itemAt(i)
+        if item is None:
+            continue
+        w = item.widget()
+        if w is not None:
+            w.setVisible(visible)
+        else:
+            sub = item.layout()
+            if sub is not None:
+                _set_layout_visible(sub, visible)
 
 
 # ═══════════════════════════════════════════════════════════════════════
 # Pipeline page
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class PipelinePage(PageWidget):
     """Run the pipeline and watch real-time output."""
@@ -131,7 +197,9 @@ class PipelinePage(PageWidget):
         goal_group = self._section("Goal")
         goal_row = QHBoxLayout()
         self.goal_input = QLineEdit()
-        self.goal_input.setPlaceholderText("e.g. build a web scraper that fetches Hacker News headlines")
+        self.goal_input.setPlaceholderText(
+            "e.g. build a web scraper that fetches Hacker News headlines"
+        )
         goal_row.addWidget(self.goal_input, 1)
         self.run_btn = QPushButton(f"{icon('run')}  Run")
         self.run_btn.clicked.connect(self._run_pipeline)
@@ -162,7 +230,7 @@ class PipelinePage(PageWidget):
         dag_group = self._section("Pipeline Graph")
         self.status_label = QLabel("Idle")
         self._phases = ["discover", "plan", "generate", "test", "fix"]
-        self._phase_status: dict[str, str] = {p: "idle" for p in self._phases}
+        self._phase_status: dict[str, str] = dict.fromkeys(self._phases, "idle")
         self._dag_scene = QGraphicsScene()
         self._dag_view = QGraphicsView(self._dag_scene)
         self._dag_view.setMinimumHeight(140)
@@ -211,6 +279,7 @@ class PipelinePage(PageWidget):
     def _restore_splitter(self) -> None:
         try:
             import json
+
             p = HERE / ".virgo_pipeline_ui.json"
             if p.exists():
                 d = json.loads(p.read_text())
@@ -223,6 +292,7 @@ class PipelinePage(PageWidget):
     def _save_splitter(self) -> None:
         try:
             import json
+
             p = HERE / ".virgo_pipeline_ui.json"
             d = {}
             if p.exists():
@@ -246,8 +316,10 @@ class PipelinePage(PageWidget):
         y = 30
         x0 = 20
         colors = {
-            "idle": "#45475a", "running": "#f9e2af",
-            "done": "#a6e3a1", "failed": "#f38ba8",
+            "idle": "#45475a",
+            "running": "#f9e2af",
+            "done": "#a6e3a1",
+            "failed": "#f38ba8",
         }
         for i, phase in enumerate(self._phases):
             x = x0 + i * (node_w + gap)
@@ -264,21 +336,19 @@ class PipelinePage(PageWidget):
             if i < n - 1:
                 ax = x + node_w + 4
                 self._dag_scene.addLine(
-                    ax, y + node_h / 2, ax + gap - 8, y + node_h / 2,
-                    QPen(QColor("#6c7086"), 2))
+                    ax, y + node_h / 2, ax + gap - 8, y + node_h / 2, QPen(QColor("#6c7086"), 2)
+                )
                 arrow = QGraphicsTextItem("→")
                 arrow.setPos(ax + gap / 2 - 6, y + node_h / 2 - 14)
         self._dag_scene.setSceneRect(0, 0, total_w + 40, 110)
         self._dag_view.setSceneRect(0, 0, total_w + 40, 110)
-        self._dag_view.fitInView(self._dag_scene.sceneRect(),
-                                  Qt.AspectRatioMode.KeepAspectRatio)
+        self._dag_view.fitInView(self._dag_scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def _update_dag(self, phase: str, status: str) -> None:
         if phase not in self._phase_status:
             return
         self._phase_status[phase] = status
-        colors = {"idle": "#45475a", "running": "#f9e2af",
-                  "done": "#a6e3a1", "failed": "#f38ba8"}
+        colors = {"idle": "#45475a", "running": "#f9e2af", "done": "#a6e3a1", "failed": "#f38ba8"}
         node = self._dag_nodes.get(phase)
         if node:
             node.setBrush(QBrush(QColor(colors.get(status, "#45475a"))))
@@ -303,16 +373,25 @@ class PipelinePage(PageWidget):
         self.output.appendPlainText(f"{icon('run')} Re-running phase: {phase}")
         self._update_dag(phase, "running")
         args = [
-            sys.executable, str(HERE / "cli.py"),
-            "run", "--goal", goal,
-            "--phase", phase,
-            "--max-iterations", self.iter_input.text() or "5",
+            sys.executable,
+            str(HERE / "cli.py"),
+            "run",
+            "--goal",
+            goal,
+            "--phase",
+            phase,
+            "--max-iterations",
+            self.iter_input.text() or "5",
         ]
         if self.use_llm.isChecked():
             args.append("--llm")
         try:
-            subprocess.run(args, capture_output=True, text=True,
-                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+            subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
             self._update_dag(phase, "done")
             self.output.appendPlainText(f"{icon('ok')} Phase {phase} complete")
         except Exception as exc:
@@ -322,15 +401,15 @@ class PipelinePage(PageWidget):
     def _export_dag(self) -> None:
         """Render the pipeline DAG scene to a PNG file."""
         from PyQt6.QtGui import QImage, QPainter
+
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export DAG", str(HERE / "pipeline_graph.png"),
-            "PNG (*.png)")
+            self, "Export DAG", str(HERE / "pipeline_graph.png"), "PNG (*.png)"
+        )
         if not path:
             return
         try:
             scene = self._dag_scene
-            img = QImage(int(scene.width()), int(scene.height()),
-                         QImage.Format.Format_ARGB32)
+            img = QImage(int(scene.width()), int(scene.height()), QImage.Format.Format_ARGB32)
             img.fill(QColor("#1e1e2e"))
             painter = QPainter(img)
             scene.render(painter)
@@ -343,11 +422,19 @@ class PipelinePage(PageWidget):
     def _phase_from_line(self, line: str) -> str | None:
         low = line.lower()
         for kw, phase in (
-            ("discover", "discover"), ("plan", "plan"),
-            ("generat", "generate"), ("test", "test"), ("fix", "fix"),
+            ("discover", "discover"),
+            ("plan", "plan"),
+            ("generat", "generate"),
+            ("test", "test"),
+            ("fix", "fix"),
         ):
-            if kw in low and ("phase" in low or "→" in low or "running" in low
-                              or "starting" in low or kw == low.strip()):
+            if kw in low and (
+                "phase" in low
+                or "→" in low
+                or "running" in low
+                or "starting" in low
+                or kw == low.strip()
+            ):
                 return phase
         return None
 
@@ -362,10 +449,13 @@ class PipelinePage(PageWidget):
             self._update_dag(p, "idle")
 
         args = [
-            sys.executable, str(HERE / "cli.py"),
+            sys.executable,
+            str(HERE / "cli.py"),
             "run",
-            "--goal", goal,
-            "--max-iterations", self.iter_input.text() or "5",
+            "--goal",
+            self.goal_input.text().strip(),
+            "--max-iterations",
+            self.iter_input.text() or "5",
         ]
         if self.use_llm.isChecked():
             args.append("--llm")
@@ -433,10 +523,12 @@ class PipelinePage(PageWidget):
 # Chat page
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def _strip_think(text: str) -> str:
     """Remove  blocks and surrounding whitespace from model output."""
     import re
-    return re.sub(r'\s*<think>.*?</think>\s*', '', text, flags=re.DOTALL)
+
+    return re.sub(r"\s*<think>.*?</think>\s*", "", text, flags=re.DOTALL)
 
 
 _CHAT_HISTORY_DIR = HERE / ".virgo_chat_history"
@@ -451,12 +543,13 @@ def _md_to_html(text: str) -> str:
 
     # Code blocks (```...```) — protect from other rules
     code_blocks: list[tuple[str, str]] = []
+
     def _save_code(m: re.Match) -> str:
         code_blocks.append((m.group(1) or "", m.group(2)))
-        return f"\x00CODEBLOCK{len(code_blocks)-1}\x00"
+        return f"\x00CODEBLOCK{len(code_blocks) - 1}\x00"
 
     text = re.sub(
-        r'```(\w*)[^\S\n]*\n(.*?)```',
+        r"```(\w*)[^\S\n]*\n(.*?)```",
         lambda m: _save_code(m),
         text,
         flags=re.DOTALL,
@@ -464,34 +557,35 @@ def _md_to_html(text: str) -> str:
 
     # Inline code `` `...` `` — protect from other rules
     inline_codes: list[str] = []
+
     def _save_inline(m: re.Match) -> str:
         inline_codes.append(m.group(1))
-        return f"\x00INLINE{len(inline_codes)-1}\x00"
+        return f"\x00INLINE{len(inline_codes) - 1}\x00"
 
-    text = re.sub(r'`([^`\n]+)`', lambda m: _save_inline(m), text)
+    text = re.sub(r"`([^`\n]+)`", lambda m: _save_inline(m), text)
 
     # Headings
-    text = re.sub(r'^### (.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
-    text = re.sub(r'^## (.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
-    text = re.sub(r'^# (.+)$', r'<b>\1</b>', text, flags=re.MULTILINE)
+    text = re.sub(r"^### (.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
+    text = re.sub(r"^## (.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
+    text = re.sub(r"^# (.+)$", r"<b>\1</b>", text, flags=re.MULTILINE)
 
     # Bold **text** or __text__
-    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
-    text = re.sub(r'__(.+?)__', r'<b>\1</b>', text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"__(.+?)__", r"<b>\1</b>", text)
 
     # Italic *text* or _text_ (single, not double)
-    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
-    text = re.sub(r'(?<!_)_(?!_)(.+?)(?<!_)_(?!_)', r'<i>\1</i>', text)
+    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", text)
+    text = re.sub(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)", r"<i>\1</i>", text)
 
     # Links [text](url)
-    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
 
     # Unordered lists
     lines = text.split("\n")
     in_list = False
     result: list[str] = []
     for line in lines:
-        m = re.match(r'^(\s*)[-*+]\s+(.+)$', line)
+        m = re.match(r"^(\s*)[-*+]\s+(.+)$", line)
         if m:
             if not in_list:
                 result.append("<ul>")
@@ -511,7 +605,7 @@ def _md_to_html(text: str) -> str:
     in_list = False
     result = []
     for line in lines:
-        m = re.match(r'^(\s*)\d+\.\s+(.+)$', line)
+        m = re.match(r"^(\s*)\d+\.\s+(.+)$", line)
         if m:
             if not in_list:
                 result.append("<ol>")
@@ -557,6 +651,7 @@ def _md_to_html(text: str) -> str:
 def _chat_session_path(prefix: str = "chat") -> Path:
     """Return a unique path for a new chat history file."""
     from datetime import datetime
+
     _CHAT_HISTORY_DIR.mkdir(exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return _CHAT_HISTORY_DIR / f"{prefix}_{ts}.json"
@@ -653,7 +748,8 @@ class ChatPage(PageWidget):
         # Persona selector
         model_row.addWidget(QLabel("Persona:"))
         self.persona_combo = QComboBox()
-        from cli import VIRGO_SYSTEM_PROMPT, VIRGO_RESEARCH_PROMPT
+        from cli import VIRGO_RESEARCH_PROMPT, VIRGO_SYSTEM_PROMPT
+
         self._personas = {
             "Default": VIRGO_SYSTEM_PROMPT,
             "Researcher": VIRGO_RESEARCH_PROMPT,
@@ -813,12 +909,8 @@ class ChatPage(PageWidget):
 
         # Font zoom
         for seq, delta in (("Ctrl++", 1), ("Ctrl+=", 1), ("Ctrl+-", -1)):
-            QShortcut(QKeySequence(seq), self).activated.connect(
-                lambda d=delta: self._zoom_font(d)
-            )
-        QShortcut(QKeySequence("Ctrl+0"), self).activated.connect(
-            lambda: self._zoom_font(0)
-        )
+            QShortcut(QKeySequence(seq), self).activated.connect(lambda d=delta: self._zoom_font(d))
+        QShortcut(QKeySequence("Ctrl+0"), self).activated.connect(lambda: self._zoom_font(0))
         self._chat_font_size = 13
         # Chat search
         QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self._show_search)
@@ -837,12 +929,8 @@ class ChatPage(PageWidget):
             self._history[:] = msgs
             self._session_id = sid or self._session_id
             if model:
-                self.chat_log.append(
-                    f"<i>[Restored previous chat — {model}]</i>"
-                )
-            self.chat_log.append(
-                f"<i>Type /clear to start fresh, or continue below.</i>"
-            )
+                self.chat_log.append(f"<i>[Restored previous chat — {model}]</i>")
+            self.chat_log.append("<i>Type /clear to start fresh, or continue below.</i>")
             for msg in msgs:
                 role = msg.get("role", "")
                 content = msg.get("content", "")
@@ -864,7 +952,9 @@ class ChatPage(PageWidget):
     def _attach(self) -> None:
         """Open a file picker and attach selected files / photos to the chat."""
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Attach files or photos", "",
+            self,
+            "Attach files or photos",
+            "",
             "All files (*);;"
             "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp *.svg);;"
             "Text (*.txt *.md *.py *.json *.csv *.log *.yaml *.yml *.toml *.ini)",
@@ -878,12 +968,8 @@ class ChatPage(PageWidget):
         ext = p.suffix.lower()
         if ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"):
             url = QUrl.fromLocalFile(str(p)).toString()
-            self.chat_log.append(
-                f"<i>You attached a photo:</i><br><img src='{url}' width='240'>"
-            )
-            self._history.append(
-                {"role": "user", "content": f"[User attached photo: {p.name}]"}
-            )
+            self.chat_log.append(f"<i>You attached a photo:</i><br><img src='{url}' width='240'>")
+            self._history.append({"role": "user", "content": f"[User attached photo: {p.name}]"})
             return
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
@@ -895,10 +981,12 @@ class ChatPage(PageWidget):
             f"<i>You attached <b>{p.name}</b> ({len(text)} chars):</i><br>"
             f"<pre>{self._escape(shown)}</pre>"
         )
-        self._history.append({
-            "role": "user",
-            "content": f"[Attached file {p.name}]\n```\n{shown}\n```",
-        })
+        self._history.append(
+            {
+                "role": "user",
+                "content": f"[Attached file {p.name}]\n```\n{shown}\n```",
+            }
+        )
 
     @staticmethod
     def _escape(s: str) -> str:
@@ -915,6 +1003,7 @@ class ChatPage(PageWidget):
         """Connect to the local LLM (same client the agent runtime uses)."""
         try:
             import main
+
             # Load saved .env so the Settings dropdown models take effect.
             env_path = HERE / ".env"
             if env_path.exists():
@@ -924,17 +1013,13 @@ class ChatPage(PageWidget):
                         os.environ[k.strip()] = v.strip()
             chat_model = os.environ.get("MODEL_GENERATOR", "phi4-mini-reasoning:3.8b")
             self._client = main.get_client(model=chat_model)
-            self.chat_log.append(
-                f"<i>[LLM connected — {chat_model}]</i>"
-            )
+            self.chat_log.append(f"<i>[LLM connected — {chat_model}]</i>")
             win = self.window()
             if hasattr(win, "set_status"):
                 win.set_status(f"Model: {chat_model} · Connected")
         except Exception as exc:
             self._client = None
-            self.chat_log.append(
-                f"<i>[No LLM detected ({exc}) — running in echo mode]</i>"
-            )
+            self.chat_log.append(f"<i>[No LLM detected ({exc}) — running in echo mode]</i>")
             win = self.window()
             if hasattr(win, "set_status"):
                 win.set_status("No LLM detected · echo mode")
@@ -967,15 +1052,15 @@ class ChatPage(PageWidget):
             self._busy = False
             return
         if low.startswith("/read "):
-            self._run_tool("read", {"path": msg[len("/read "):].strip()})
+            self._run_tool("read", {"path": msg[len("/read ") :].strip()})
             self._busy = False
             return
         if low.startswith("/web "):
-            self._run_tool("web", {"url": msg[len("/web "):].strip()})
+            self._run_tool("web", {"url": msg[len("/web ") :].strip()})
             self._busy = False
             return
         if low.startswith("/py "):
-            self._run_tool("py", {"code": msg[len("/py "):].strip()})
+            self._run_tool("py", {"code": msg[len("/py ") :].strip()})
             self._busy = False
             return
 
@@ -987,16 +1072,12 @@ class ChatPage(PageWidget):
         self._history.append({"role": "user", "content": msg})
 
         if self._multi_models and len(self._multi_models) > 1:
-            self.chat_log.append(
-                f"<i>[Sending to {len(self._multi_models)} models...]</i>"
-            )
+            self.chat_log.append(f"<i>[Sending to {len(self._multi_models)} models...]</i>")
             self._cancel = False
             self.stop_btn.setVisible(True)
             self.stop_btn.setEnabled(True)
             for model in self._multi_models:
-                threading.Thread(
-                    target=self._multi_stream, args=(msg, model), daemon=True
-                ).start()
+                threading.Thread(target=self._multi_stream, args=(msg, model), daemon=True).start()
             return
 
         self.chat_log.append("<i>Virgo is thinking...</i>")
@@ -1016,6 +1097,7 @@ class ChatPage(PageWidget):
         system = self._persona
         try:
             from _rag import kb_context
+
             rag = kb_context(user_msg, top_k=3)
             if rag:
                 system = f"{system}\n\n{rag}"
@@ -1024,7 +1106,6 @@ class ChatPage(PageWidget):
         return system
 
     def _stream_reply(self, msg: str) -> None:
-        from cli import VIRGO_SYSTEM_PROMPT, _parse_tool_calls  # lazy import (safe)
 
         messages = [{"role": "system", "content": self._build_system(msg)}] + self._history
         # Forward streamed tokens into the chat box live (and keep the full text).
@@ -1046,9 +1127,7 @@ class ChatPage(PageWidget):
 
         # User hit Stop — discard the partial reply, don't touch history.
         if stopped or self._cancel:
-            QMetaObject.invokeMethod(
-                self, "_finish_stop", Qt.ConnectionType.QueuedConnection
-            )
+            QMetaObject.invokeMethod(self, "_finish_stop", Qt.ConnectionType.QueuedConnection)
             return
 
         # Ensure the final text is the collected reply (in case streaming
@@ -1057,7 +1136,9 @@ class ChatPage(PageWidget):
             reply = collector.text
         # Schedule the final render on the GUI thread (cross-thread safe).
         QMetaObject.invokeMethod(
-            self, "_render_reply", Qt.ConnectionType.QueuedConnection,
+            self,
+            "_render_reply",
+            Qt.ConnectionType.QueuedConnection,
             Q_ARG(str, reply or "(empty response)"),
             Q_ARG(bool, collector._started),
         )
@@ -1098,15 +1179,15 @@ class ChatPage(PageWidget):
             self._slash_popup.setParent(self)
             self._slash_popup.setWindowFlags(Qt.WindowType.Popup)
             self._slash_popup.itemClicked.connect(lambda _: self._slash_accept())
-            t = self.window().themes.get(
-                getattr(self.window(), "_active_theme", "mocha"), {})
+            t = self.window().themes.get(getattr(self.window(), "_active_theme", "mocha"), {})
             bg = t.get("surface", "#181825")
             fg = t.get("text", "#cdd6f4")
             self._slash_popup.setStyleSheet(
                 f"QListWidget{{background:{bg};border:1px solid #45475a;"
                 f"border-radius:6px;color:{fg};padding:4px;}}"
                 f"QListWidget::item{{padding:4px 8px;border-radius:4px;}}"
-                f"QListWidget::item:selected{{background:#45475a;color:#89b4fa;}}")
+                f"QListWidget::item:selected{{background:#45475a;color:#89b4fa;}}"
+            )
         q = prefix[1:].lower()
         self._slash_popup.clear()
         for cmd, desc in self._slash_commands:
@@ -1119,8 +1200,7 @@ class ChatPage(PageWidget):
             return
         self._slash_popup.setCurrentRow(0)
         # Position above the input box
-        pos = self.msg_input.mapToGlobal(
-            self.msg_input.rect().bottomLeft())
+        pos = self.msg_input.mapToGlobal(self.msg_input.rect().bottomLeft())
         self._slash_popup.move(pos.x(), pos.y() + 4)
         self._slash_popup.setMinimumWidth(self.msg_input.width())
         self._slash_popup.setVisible(True)
@@ -1148,6 +1228,7 @@ class ChatPage(PageWidget):
         self._current_model = model
         try:
             import main
+
             self._client = main.get_client(model=model)
             self.chat_log.append(f"<i>[Switched model — {model}]</i>")
             win = self.window()
@@ -1155,9 +1236,7 @@ class ChatPage(PageWidget):
                 win.set_status(f"Model: {model} · Connected")
         except Exception as exc:
             self._client = None
-            self.chat_log.append(
-                f"<i>[Model switch failed ({exc}) — echo mode]</i>"
-            )
+            self.chat_log.append(f"<i>[Model switch failed ({exc}) — echo mode]</i>")
 
     def _ab_compare(self) -> None:
         """Send the current prompt to two models and score both replies."""
@@ -1166,29 +1245,28 @@ class ChatPage(PageWidget):
             self.chat_log.append("<i>[Enter a prompt to A/B test]</i>")
             return
         models = [self._current_model] + [
-            m for m in (self._multi_models or [])
-            if m != self._current_model
+            m for m in (self._multi_models or []) if m != self._current_model
         ][:1]
         if len(models) < 2:
             models = [self._current_model, "ornith:latest"]
-        self.chat_log.append(
-            f"<i>[A/B comparing {models[0]} vs {models[1]}…]</i>")
+        self.chat_log.append(f"<i>[A/B comparing {models[0]} vs {models[1]}…]</i>")
         for model in models:
             try:
                 import main
+
                 cli = main.get_client(model=model)
                 reply = main.complete(cli, prompt, model=model)
             except Exception as exc:
                 reply = f"(error: {exc})"
             score = self._score_reply(prompt, reply)
-            self.chat_log.append(
-                f"<b>[{model}] — score {score:.2f}</b><br>{_md_to_html(reply)}")
+            self.chat_log.append(f"<b>[{model}] — score {score:.2f}</b><br>{_md_to_html(reply)}")
         self._save_chat()
 
     @staticmethod
     def _score_reply(prompt: str, reply: str) -> float:
         """Heuristic quality score: length + overlap with prompt keywords."""
         import re as _re
+
         words = _re.findall(r"\w+", reply.lower())
         if not words:
             return 0.0
@@ -1207,8 +1285,9 @@ class ChatPage(PageWidget):
         lo.addWidget(QLabel("<b style='color:#cdd6f4;'>Select 2+ models:</b>"))
 
         checks: list[tuple[QCheckBox, str]] = []
-        for m in (getattr(self, "_available_models", [])
-                  or [self.model_combo.itemText(i) for i in range(self.model_combo.count())]):
+        for m in getattr(self, "_available_models", []) or [
+            self.model_combo.itemText(i) for i in range(self.model_combo.count())
+        ]:
             if not m:
                 continue
             cb = QCheckBox(m)
@@ -1238,16 +1317,14 @@ class ChatPage(PageWidget):
             self.multi_btn.setChecked(bool(self._multi_models))
             if self._multi_models:
                 self.multi_btn.setText(f"M ({len(self._multi_models)})")
-                self.chat_log.append(
-                    f"<i>[Multi-mode: {', '.join(self._multi_models)}]</i>"
-                )
+                self.chat_log.append(f"<i>[Multi-mode: {', '.join(self._multi_models)}]</i>")
             else:
                 self.multi_btn.setText("M")
 
     def _multi_stream(self, msg: str, model: str) -> None:
         """Send to a single model in multi-mode."""
-        from cli import VIRGO_SYSTEM_PROMPT
         import main
+
         try:
             client = main.get_client(model=model)
             system = self._build_system(msg)
@@ -1258,15 +1335,16 @@ class ChatPage(PageWidget):
 
         # Append model's response to chat log (cross-thread safe).
         QMetaObject.invokeMethod(
-            self, "_append_multi_reply", Qt.ConnectionType.QueuedConnection,
-            Q_ARG(str, model), Q_ARG(str, reply or "(empty)"),
+            self,
+            "_append_multi_reply",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, model),
+            Q_ARG(str, reply or "(empty)"),
         )
 
     @pyqtSlot(str, str)
     def _append_multi_reply(self, model: str, reply: str) -> None:
-        self.chat_log.append(
-            f"<hr><b>{model}</b><br>{reply}"
-        )
+        self.chat_log.append(f"<hr><b>{model}</b><br>{reply}")
         self._history.append({"role": "assistant", "content": f"[{model}] {reply}"})
         if all(f"[{m}]" in str(self._history) for m in self._multi_models):
             self._busy = False
@@ -1288,9 +1366,7 @@ class ChatPage(PageWidget):
     def _stream_chunk(self, chunk: str) -> None:
         """Append one streamed chunk to the live reply line."""
         self.chat_log.insertHtml(self._escape(chunk))
-        self.chat_log.verticalScrollBar().setValue(
-            self.chat_log.verticalScrollBar().maximum()
-        )
+        self.chat_log.verticalScrollBar().setValue(self.chat_log.verticalScrollBar().maximum())
         # Live token-rate estimate
         self._stream_chars += len(chunk)
         elapsed = __import__("time").time() - self._stream_t0
@@ -1325,11 +1401,17 @@ class ChatPage(PageWidget):
 
         # Detect local image paths in the reply and add to gallery.
         import re
-        for m in re.findall(r"(?:!\[[^\]]*\]\(([^)]+)\)|`?([\w./\\-]+\.(?:png|jpe?g|gif|webp|bmp))`?)", reply, re.IGNORECASE):
+
+        for m in re.findall(
+            r"(?:!\[[^\]]*\]\(([^)]+)\)|`?([\w./\\-]+\.(?:png|jpe?g|gif|webp|bmp))`?)",
+            reply,
+            re.IGNORECASE,
+        ):
             cand = m[0] or m[1]
             if cand and not cand.startswith("http"):
                 self._add_to_gallery(cand)
-        from cli import _run_chat_tool, _CHAT_TOOLS, _parse_tool_calls  # lazy import (safe)
+        from cli import _CHAT_TOOLS, _parse_tool_calls, _run_chat_tool  # lazy import (safe)
+
         for tname, tkwargs in _parse_tool_calls(reply):
             if tname in _CHAT_TOOLS:
                 try:
@@ -1337,9 +1419,7 @@ class ChatPage(PageWidget):
                 except Exception as exc:
                     out = f"(tool error: {exc})"
                 self._append_assistant(f"[tool {tname}] {out[:800]}")
-                self._history.append(
-                    {"role": "system", "content": f"[tool {tname}] {out}"}
-                )
+                self._history.append({"role": "system", "content": f"[tool {tname}] {out}"})
             else:
                 self._append_assistant(f"[tool {tname}] not allowed")
 
@@ -1352,8 +1432,7 @@ class ChatPage(PageWidget):
         if getattr(self, "_search_bar", None) is None:
             self._search_bar = QLineEdit()
             self._search_bar.setPlaceholderText("Search chat… (Enter = next, Shift+Enter = prev)")
-            self._search_bar.returnPressed.connect(
-                lambda: self._search_next(False))
+            self._search_bar.returnPressed.connect(lambda: self._search_next(False))
             self._search_bar.setObjectName("searchBar")
             self.content.addWidget(self._search_bar)
         self._search_bar.setVisible(True)
@@ -1366,7 +1445,10 @@ class ChatPage(PageWidget):
         t = event.type()
         # Chat search bar: Shift+Enter = previous match
         if obj is getattr(self, "_search_bar", None) and t == QEvent.Type.KeyPress:
-            if event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            if (
+                event.key() == Qt.Key.Key_Return
+                and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+            ):
                 self._search_next(True)
                 return True
         # Slash popup keyboard nav (typed in msg_input)
@@ -1375,12 +1457,10 @@ class ChatPage(PageWidget):
             if t == QEvent.Type.KeyPress:
                 key = event.key()
                 if key == Qt.Key.Key_Down:
-                    popup.setCurrentRow(
-                        min(popup.currentRow() + 1, popup.count() - 1))
+                    popup.setCurrentRow(min(popup.currentRow() + 1, popup.count() - 1))
                     return True
                 if key == Qt.Key.Key_Up:
-                    popup.setCurrentRow(
-                        max(popup.currentRow() - 1, 0))
+                    popup.setCurrentRow(max(popup.currentRow() - 1, 0))
                     return True
                 if key in (Qt.Key.Key_Tab, Qt.Key.Key_Return):
                     self._slash_accept()
@@ -1406,8 +1486,8 @@ class ChatPage(PageWidget):
             # Wrap around
             new_cur = self.chat_log.textCursor()
             new_cur.movePosition(
-                new_cur.MoveOperation.End if backward
-                else new_cur.MoveOperation.Start)
+                new_cur.MoveOperation.End if backward else new_cur.MoveOperation.Start
+            )
             found = self.chat_log.document().find(needle, new_cur, flags)
         if not found.isNull() and found.selectedText():
             self.chat_log.setTextCursor(found)
@@ -1427,20 +1507,13 @@ class ChatPage(PageWidget):
         if last_user < 0:
             self.chat_log.append("<i>[Nothing to branch from]</i>")
             return
-        branch = self._history[:last_user + 1]
+        branch = self._history[: last_user + 1]
         # Start a fresh branch in a new session id
         self._history[:] = branch
         self._session_id = __import__("uuid").uuid4().hex[:12]
-        self.chat_log.append(
-            f"<hr><i>[Branched — new session {self._session_id}]</i><hr>")
+        self.chat_log.append(f"<hr><i>[Branched — new session {self._session_id}]</i><hr>")
         self._save_chat()
         self.msg_input.setFocus()
-        from cli import _run_chat_tool  # lazy import (safe)
-        try:
-            out = _run_chat_tool(name, kwargs)
-        except Exception as exc:
-            out = f"(tool error: {exc})"
-        self._append_assistant(f"[tool {name}] {out[:800]}")
 
     def _append_assistant(self, text: str) -> None:
         self.chat_log.append(f"<b>Virgo:</b> {_md_to_html(text)}")
@@ -1479,13 +1552,9 @@ class ChatPage(PageWidget):
             self._chat_font_size = 13
         else:
             self._chat_font_size = max(9, min(24, self._chat_font_size + delta))
-        self.chat_log.setStyleSheet(
-            f"QTextEdit {{ font-size: {self._chat_font_size}px; }}"
-        )
+        self.chat_log.setStyleSheet(f"QTextEdit {{ font-size: {self._chat_font_size}px; }}")
         if delta != 0:
-            self.chat_log.append(
-                f"<i>[Font size: {self._chat_font_size}px]</i>"
-            )
+            self.chat_log.append(f"<i>[Font size: {self._chat_font_size}px]</i>")
 
     def _toggle_split(self) -> None:
         """Toggle a side-by-side comparison view (second chat log)."""
@@ -1496,9 +1565,7 @@ class ChatPage(PageWidget):
                 self._split_log.setPlaceholderText(
                     "Comparison pane — paste or compare output here."
                 )
-                self._split_log.setStyleSheet(
-                    f"font-size: {self._chat_font_size}px;"
-                )
+                self._split_log.setStyleSheet(f"font-size: {self._chat_font_size}px;")
                 self.content.addWidget(self._split_log)
             self._split_log.setVisible(True)
             self.chat_log.append("<i>[Split view ON]</i>")
@@ -1524,8 +1591,11 @@ class ChatPage(PageWidget):
     def _export(self) -> None:
         """Save the conversation to Markdown, JSON, or plain text."""
         from datetime import datetime
+
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export chat", "virgo-chat.md",
+            self,
+            "Export chat",
+            "virgo-chat.md",
             "Markdown (*.md);;JSON (*.json);;Text (*.txt)",
         )
         if not path:
@@ -1560,7 +1630,7 @@ class ChatPage(PageWidget):
         dlg = QDialog(self)
         dlg.setWindowTitle("Prompt Library")
         dlg.resize(400, 350)
-        dlg.setStyleSheet(f"QDialog {{ background: #1e1e2e; }}")
+        dlg.setStyleSheet("QDialog { background: #1e1e2e; }")
         layout = QVBoxLayout(dlg)
 
         # ── List existing prompts ──
@@ -1570,8 +1640,7 @@ class ChatPage(PageWidget):
 
         lst = QListWidget()
         lst.setStyleSheet(
-            "background:#181825; border:1px solid #313244; border-radius:6px; "
-            "color:#cdd6f4;"
+            "background:#181825; border:1px solid #313244; border-radius:6px; color:#cdd6f4;"
         )
         layout.addWidget(lst)
 
@@ -1652,13 +1721,15 @@ class ChatPage(PageWidget):
             self.chat_log.append("<i>[No reply to speak]</i>")
             return
         self.speak_btn.setEnabled(False)
-        threading.Thread(
-            target=self._speak_async, args=(text,), daemon=True
-        ).start()
+        threading.Thread(target=self._speak_async, args=(text,), daemon=True).start()
 
     def _speak_async(self, text: str) -> None:
         try:
-            import edge_tts, asyncio, tempfile
+            import asyncio
+            import tempfile
+
+            import edge_tts
+
             communicate = edge_tts.Communicate(text, voice="en-US-AriaNeural")
             tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
             path = tmp.name
@@ -1667,12 +1738,16 @@ class ChatPage(PageWidget):
             os.startfile(path)  # Windows default player
         except Exception as exc:
             QMetaObject.invokeMethod(
-                self, "_append_log", Qt.ConnectionType.QueuedConnection,
+                self,
+                "_append_log",
+                Qt.ConnectionType.QueuedConnection,
                 Q_ARG(str, f"<i>[TTS error: {exc}]</i>"),
             )
         finally:
             QMetaObject.invokeMethod(
-                self, "_enable_btn", Qt.ConnectionType.QueuedConnection,
+                self,
+                "_enable_btn",
+                Qt.ConnectionType.QueuedConnection,
             )
 
     def _mic_input(self) -> None:
@@ -1683,6 +1758,7 @@ class ChatPage(PageWidget):
     def _mic_async(self) -> None:
         try:
             import speech_recognition as sr
+
             r = sr.Recognizer()
             with sr.Microphone() as source:
                 r.adjust_for_ambient_noise(source, duration=0.3)
@@ -1699,8 +1775,11 @@ class ChatPage(PageWidget):
             text = ""
             err = str(exc)
         QMetaObject.invokeMethod(
-            self, "_mic_done", Qt.ConnectionType.QueuedConnection,
-            Q_ARG(str, text), Q_ARG(str, err),
+            self,
+            "_mic_done",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, text),
+            Q_ARG(str, err),
         )
 
     @pyqtSlot(str, str)
@@ -1733,12 +1812,15 @@ class ChatPage(PageWidget):
     def _add_to_gallery(self, path: str) -> None:
         """Add an image thumbnail to the gallery strip (files only)."""
         from PyQt6.QtGui import QIcon, QPixmap
+
         p = Path(path)
         if not p.exists() or not p.is_file():
             return
         try:
             pm = QPixmap(str(p)).scaled(
-                64, 64, Qt.AspectRatioMode.KeepAspectRatio,
+                64,
+                64,
+                Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
             item = QListWidgetItem(QIcon(pm), p.name)
@@ -1752,6 +1834,7 @@ class ChatPage(PageWidget):
         path = item.data(Qt.ItemDataRole.UserRole)
         if path:
             import webbrowser
+
             webbrowser.open(f"file:///{path}")
 
     def _chat_context_menu(self, pos) -> None:
@@ -1767,7 +1850,8 @@ class ChatPage(PageWidget):
         text = self._last_user
         # Strip HTML tags for editing
         import re
-        text = re.sub(r'<[^>]+>', '', text)
+
+        text = re.sub(r"<[^>]+>", "", text)
         self.msg_input.setText(text)
         self.msg_input.setFocus()
 
@@ -1843,6 +1927,7 @@ class PluginsPage(PageWidget):
         self.list.clear()
         try:
             from plugins import discover
+
             files = discover()
         except Exception as exc:
             self.status.setText(f"Error: {exc}")
@@ -1861,6 +1946,7 @@ class PluginsPage(PageWidget):
         try:
             from plugins import discover, load_path
             from tools import ToolRegistry
+
             reg = ToolRegistry()
             loaded = 0
             for f in discover():
@@ -1881,6 +1967,7 @@ class PluginsPage(PageWidget):
             self.status.setText("Select a plugin first.")
             return
         from virgo_desktop import _open_file
+
         _open_file(p)
 
     def _toggle(self) -> None:
@@ -1922,8 +2009,8 @@ class PluginsPage(PageWidget):
             "    from tools import Tool\n"
             "    def run(query: str) -> str:\n"
             '        return f"echo: {query}"\n'
-            "    registry.register(Tool(name=\"my tool\", fn=run,\n"
-            "                             description=\"Example plugin tool\"))\n"
+            '    registry.register(Tool(name="my tool", fn=run,\n'
+            '                             description="Example plugin tool"))\n'
         )
         layout.addWidget(code_edit, 1)
         btns = QHBoxLayout()
@@ -1940,6 +2027,7 @@ class PluginsPage(PageWidget):
                 name += ".py"
             try:
                 from plugins import create_plugin
+
                 create_plugin(name, code_edit.toPlainText())
                 self.status.setText(f"Created {name}")
                 dlg.accept()
@@ -1963,9 +2051,11 @@ class McpPage(PageWidget):
 
         # ── Expose Virgo (server mode) ──
         srv = self._section("Expose Virgo (act as MCP server)")
-        srv.layout().addWidget(QLabel(  # type: ignore
-            "Register this in your MCP host (Claude Desktop, Cursor, etc.):"
-        ))
+        srv.layout().addWidget(
+            QLabel(  # type: ignore
+                "Register this in your MCP host (Claude Desktop, Cursor, etc.):"
+            )
+        )
         self.config_view = QPlainTextEdit()
         self.config_view.setReadOnly(True)
         self.config_view.setMaximumHeight(150)
@@ -1979,26 +2069,29 @@ class McpPage(PageWidget):
                 }
             }
             self.config_view.setPlainText(json.dumps(cfg, indent=2))
-            from mcp_server import _build_registry, PROTOCOL_VERSION, SERVER_INFO
+            from mcp_server import PROTOCOL_VERSION, SERVER_INFO, _build_registry
+
             reg = _build_registry()
-            info = (f"Protocol {PROTOCOL_VERSION} · {SERVER_INFO['name']} "
-                    f"v{SERVER_INFO['version']} · {len(reg.list())} tool(s) exposed")
+            info = (
+                f"Protocol {PROTOCOL_VERSION} · {SERVER_INFO['name']} "
+                f"v{SERVER_INFO['version']} · {len(reg.list())} tool(s) exposed"
+            )
         except Exception as exc:
             info = f"Could not build registry: {exc}"
         srv.layout().addWidget(self.config_view)  # type: ignore
         copy_row = QHBoxLayout()
-        copy_row.addWidget(
-            QPushButton(f"{icon('file')}  Copy config", clicked=self._copy_config)
-        )
+        copy_row.addWidget(QPushButton(f"{icon('file')}  Copy config", clicked=self._copy_config))
         copy_row.addStretch()
         srv.layout().addLayout(copy_row)  # type: ignore
         srv.layout().addWidget(QLabel(info))  # type: ignore
 
         # ── Connect to MCP servers (client mode) ──
         cli = self._section("Connect to MCP servers")
-        cli.layout().addWidget(QLabel(  # type: ignore
-            "Discovered from .mcp.json / claude_desktop_config.json / ~/.gemini"
-        ))
+        cli.layout().addWidget(
+            QLabel(  # type: ignore
+                "Discovered from .mcp.json / claude_desktop_config.json / ~/.gemini"
+            )
+        )
         self.server_list = QListWidget()
         self.server_list.setMinimumHeight(120)
         self.server_list.currentItemChanged.connect(self._on_select_server)
@@ -2014,12 +2107,8 @@ class McpPage(PageWidget):
         ctrl_row.addWidget(
             QPushButton(f"{icon('refresh')}  Refresh", clicked=self._refresh_servers)
         )
-        ctrl_row.addWidget(
-            QPushButton(f"{icon('file')}  Add server", clicked=self._add_server)
-        )
-        ctrl_row.addWidget(
-            QPushButton(f"{icon('run')}  Test selected", clicked=self._test_server)
-        )
+        ctrl_row.addWidget(QPushButton(f"{icon('file')}  Add server", clicked=self._add_server))
+        ctrl_row.addWidget(QPushButton(f"{icon('run')}  Test selected", clicked=self._test_server))
         ctrl_row.addStretch()
         cli.layout().addLayout(ctrl_row)  # type: ignore
 
@@ -2037,6 +2126,7 @@ class McpPage(PageWidget):
         self._servers = {}
         try:
             from mcp_bridge import discover_mcp_servers
+
             specs = discover_mcp_servers()
         except Exception as exc:
             self.server_status.setText(f"Error: {exc}")
@@ -2110,13 +2200,12 @@ class McpPage(PageWidget):
         self.server_status.setText(f"Testing {name}...")
         try:
             from mcp_bridge import McpServer
+
             srv = McpServer(name, cmd)
             if srv.start(timeout=15):
                 tools = srv.list_tool_specs()
                 self.tools_view.setPlainText(
-                    "\n".join(
-                        f"- {t.get('name')}: {t.get('description', '')}" for t in tools
-                    )
+                    "\n".join(f"- {t.get('name')}: {t.get('description', '')}" for t in tools)
                 )
                 self.server_status.setText(f"{name}: {len(tools)} tool(s) reachable")
                 srv.stop()
@@ -2130,7 +2219,7 @@ class _GuiStream:
     """A sys.stdout replacement that streams tokens into the chat box live,
     filtering out  blocks (including partial tags across chunks)."""
 
-    def __init__(self, page: "ChatPage") -> None:
+    def __init__(self, page: ChatPage) -> None:
         self._page = page
         self.text = ""
         self._started = False
@@ -2161,6 +2250,7 @@ class _GuiStream:
     def _filter_think(self, chunk: str) -> str:
         """Strip  content, handling partial tags across chunks."""
         import re
+
         # Re-join buffer with current chunk
         combined = self._buf + chunk
         self._buf = ""
@@ -2177,12 +2267,12 @@ class _GuiStream:
         # Also check for partial opening <th at the very end
         for partial in ("<th", "<thi", "<thin", "<think"):
             if combined.endswith(partial) and partial != "<think>":
-                self._buf = combined[-len(partial):] + self._buf
-                combined = combined[:-len(partial)]
+                self._buf = combined[-len(partial) :] + self._buf
+                combined = combined[: -len(partial)]
                 break
 
         # Strip fully closed think blocks (preserve surrounding whitespace)
-        result = re.sub(r'\s*<think>.*?</think>\s*', '', combined, flags=re.DOTALL)
+        result = re.sub(r"\s*<think>.*?</think>\s*", "", combined, flags=re.DOTALL)
         return result
 
     def flush(self) -> None:
@@ -2192,6 +2282,7 @@ class _GuiStream:
 # ═══════════════════════════════════════════════════════════════════════
 # Network Scanner page
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class NetworkPage(PageWidget):
     """Network discovery and device scanning."""
@@ -2262,12 +2353,15 @@ class NetworkPage(PageWidget):
             text = ""
             try:
                 from virgo_network_scanner import scan_subnet
+
                 devices = scan_subnet(self.subnet_input.text())
                 text = "\n".join(str(d) for d in (devices or []))
             except Exception as exc:
                 text = f"Error: {exc}"
             QMetaObject.invokeMethod(
-                self, "_show_results", Qt.ConnectionType.QueuedConnection,
+                self,
+                "_show_results",
+                Qt.ConnectionType.QueuedConnection,
                 Q_ARG(str, text),
             )
 
@@ -2299,6 +2393,7 @@ class NetworkPage(PageWidget):
 
         def _run() -> None:
             import socket
+
             open_ports: list[int] = []
             for port in ports:
                 try:
@@ -2309,8 +2404,11 @@ class NetworkPage(PageWidget):
                 except Exception:
                     pass
             QMetaObject.invokeMethod(
-                self, "_show_ports", Qt.ConnectionType.QueuedConnection,
-                Q_ARG(list, open_ports), Q_ARG(list, ports),
+                self,
+                "_show_ports",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(list, open_ports),
+                Q_ARG(list, ports),
             )
 
         threading.Thread(target=_run, daemon=True).start()
@@ -2343,6 +2441,7 @@ class NetworkPage(PageWidget):
 # ═══════════════════════════════════════════════════════════════════════
 # Diagnostics page
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class DiagnosticsPage(PageWidget):
     """System health diagnostics."""
@@ -2383,8 +2482,10 @@ class DiagnosticsPage(PageWidget):
 
         def _run() -> None:
             import io
+
             try:
                 from virgo_diagnostics import run_full_diagnostics
+
                 buf = io.StringIO()
                 old = sys.stdout
                 sys.stdout = buf
@@ -2396,7 +2497,9 @@ class DiagnosticsPage(PageWidget):
             except Exception as exc:
                 text = f"Error: {exc}"
             QMetaObject.invokeMethod(
-                self, "_append_diag", Qt.ConnectionType.QueuedConnection,
+                self,
+                "_append_diag",
+                Qt.ConnectionType.QueuedConnection,
                 Q_ARG(str, text),
             )
 
@@ -2412,6 +2515,7 @@ class DiagnosticsPage(PageWidget):
         if not path:
             return
         import re as _re
+
         # Best-effort: store the raw log; attempt to parse key/value lines.
         try:
             data = dict(_re.findall(r"^([\w\s]+):\s*(.+)$", text, _re.MULTILINE))
@@ -2427,6 +2531,7 @@ class DiagnosticsPage(PageWidget):
 # ═══════════════════════════════════════════════════════════════════════
 # Alerts page
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class AlertsPage(PageWidget):
     """Alert evaluation and history."""
@@ -2467,6 +2572,7 @@ class AlertsPage(PageWidget):
         self.status.setText("Running fixer...")
         try:
             from virgo_fixer import fix_all
+
             fix_all()
             self.status.setText(f"{icon('ok')} Fixer finished")
         except Exception as exc:
@@ -2480,6 +2586,7 @@ class AlertsPage(PageWidget):
         def _run() -> None:
             try:
                 from virgo_alerts import check_thresholds
+
                 check_thresholds()
             except Exception as exc:
                 lines = [f"Error: {exc}"]
@@ -2491,7 +2598,9 @@ class AlertsPage(PageWidget):
                 if not lines:
                     lines = ["System clear — no alerts triggered."]
             QMetaObject.invokeMethod(
-                self, "_show_alerts", Qt.ConnectionType.QueuedConnection,
+                self,
+                "_show_alerts",
+                Qt.ConnectionType.QueuedConnection,
                 Q_ARG(str, "\n".join(lines)),
             )
 
@@ -2517,6 +2626,7 @@ class AlertsPage(PageWidget):
 # ═══════════════════════════════════════════════════════════════════════
 # Scaffold page
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class ScaffoldPage(PageWidget):
     """Project scaffold generator."""
@@ -2562,10 +2672,13 @@ class ScaffoldPage(PageWidget):
     def _populate_scaffolds(self) -> None:
         try:
             from virgo_scaffold import list_scaffolds
+
             for s in list_scaffolds():
                 self.scaffold_combo.addItem(s.get("name", "?"), s.get("id", ""))
         except Exception:
-            self.scaffold_combo.addItems(["fastapi-crud", "cli-app", "flask-app", "python-lib", "agent-tool"])
+            self.scaffold_combo.addItems(
+                ["fastapi-crud", "cli-app", "flask-app", "python-lib", "agent-tool"]
+            )
 
     def _generate(self) -> None:
         scaffold = self.scaffold_combo.currentText()
@@ -2578,6 +2691,7 @@ class ScaffoldPage(PageWidget):
         def _run() -> None:
             try:
                 from virgo_scaffold import generate_scaffold
+
                 result = generate_scaffold(scaffold, out_dir, project_name=name)
                 self.output.appendPlainText(json.dumps(result, indent=2))
                 base = Path(out_dir)
@@ -2594,6 +2708,7 @@ class ScaffoldPage(PageWidget):
 # ═══════════════════════════════════════════════════════════════════════
 # Sessions / Replay page
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class SessionPage(PageWidget):
     """Browse and replay saved pipeline sessions."""
@@ -2670,6 +2785,7 @@ class SessionPage(PageWidget):
         path = self._current.get("path", "")
         try:
             import shutil
+
             if path and Path(path).exists():
                 Path(path).unlink()
             mem_dir = HERE / ".virgo_memory"
@@ -2694,6 +2810,7 @@ class SessionPage(PageWidget):
         self._current = None
         try:
             from memory import list_sessions
+
             sessions = list_sessions()
         except Exception as exc:
             self.status.setText(f"Error: {exc}")
@@ -2724,8 +2841,13 @@ class SessionPage(PageWidget):
                     sid = data.get("session_id", "")[:8]
                     model = data.get("model", "?")
                     label = f"{fp.stem}  [{model}]  ({len(msgs)} msgs)"
-                    entry = {"name": fp.stem, "path": str(fp), "session_id": sid,
-                             "model": model, "messages": len(msgs)}
+                    entry = {
+                        "name": fp.stem,
+                        "path": str(fp),
+                        "session_id": sid,
+                        "model": model,
+                        "messages": len(msgs),
+                    }
                     item = QListWidgetItem(label)
                     item.setData(256, entry)
                     self.chat_list.addItem(item)
@@ -2750,8 +2872,13 @@ class SessionPage(PageWidget):
                     entry = json.loads(line)
                 except Exception:
                     entry = {"raw": line[:200]}
-                label = entry.get("goal") or entry.get("task") or \
-                    entry.get("prompt") or entry.get("raw") or f"entry {i}"
+                label = (
+                    entry.get("goal")
+                    or entry.get("task")
+                    or entry.get("prompt")
+                    or entry.get("raw")
+                    or f"entry {i}"
+                )
                 if isinstance(label, str):
                     label = label[:70]
                 item = QListWidgetItem(f"#{i}  {label}")
@@ -2799,7 +2926,7 @@ class SessionPage(PageWidget):
         ]
         # Preview first few messages
         try:
-            data = json.loads(Path(c['path']).read_text())
+            data = json.loads(Path(c["path"]).read_text())
             for m in data.get("messages", [])[:4]:
                 role = m.get("role", "?")
                 content = m.get("content", "")[:80]
@@ -2854,6 +2981,7 @@ class SessionPage(PageWidget):
         if self.tabs.currentIndex() == 1:
             if self._current_chat:
                 from virgo_desktop import _open_file
+
                 _open_file(self._current_chat.get("path", ""))
                 self.status.setText(f"Opened {self._current_chat.get('path', '')}")
             return
@@ -2863,6 +2991,7 @@ class SessionPage(PageWidget):
         path = self._current.get("path", "")
         if path and Path(path).exists():
             from virgo_desktop import _open_file
+
             _open_file(path)
             self.status.setText(f"Opened {path}")
         else:
@@ -2872,6 +3001,7 @@ class SessionPage(PageWidget):
 # ═══════════════════════════════════════════════════════════════════════
 # Swarm / delegation page
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class SwarmPage(PageWidget):
     """Launch a multi-agent delegation (swarm) run."""
@@ -2936,9 +3066,11 @@ class SwarmPage(PageWidget):
         self._running = True
 
         args = [
-            sys.executable, str(HERE / "cli.py"),
+            sys.executable,
+            str(HERE / "cli.py"),
             "swarm",
-            "--goal", goal,
+            "--goal",
+            goal,
             "--llm",
         ]
 
@@ -2956,30 +3088,35 @@ class SwarmPage(PageWidget):
                 if not line:
                     break
                 QMetaObject.invokeMethod(
-                    self, "_append_output", Qt.ConnectionType.QueuedConnection,
+                    self,
+                    "_append_output",
+                    Qt.ConnectionType.QueuedConnection,
                     Q_ARG(str, line.rstrip()),
                 )
             self._proc.wait()
         except Exception as exc:
             QMetaObject.invokeMethod(
-                self, "_append_output", Qt.ConnectionType.QueuedConnection,
+                self,
+                "_append_output",
+                Qt.ConnectionType.QueuedConnection,
                 Q_ARG(str, f"(error: {exc})"),
             )
         finally:
             QMetaObject.invokeMethod(
-                self, "_set_done", Qt.ConnectionType.QueuedConnection,
+                self,
+                "_set_done",
+                Qt.ConnectionType.QueuedConnection,
             )
 
     @pyqtSlot(str)
     def _append_output(self, line: str) -> None:
         self.output.appendPlainText(line)
-        self.output.verticalScrollBar().setValue(
-            self.output.verticalScrollBar().maximum()
-        )
+        self.output.verticalScrollBar().setValue(self.output.verticalScrollBar().maximum())
 
     @pyqtSlot()
     def _set_done(self) -> None:
         from cli import icon as _icon
+
         self.output.appendPlainText(f"\n{_icon('done')}  Swarm finished.")
         self._running = False
         w = self.window()
@@ -2990,6 +3127,7 @@ class SwarmPage(PageWidget):
 # ═══════════════════════════════════════════════════════════════════════
 # Logs page
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class LogsPage(PageWidget):
     """Virgo application logs."""
@@ -3064,14 +3202,14 @@ class LogsPage(PageWidget):
 # Process monitor page
 # ═══════════════════════════════════════════════════════════════════════
 
+
 class ProcessMonitorPage(PageWidget):
     """Show running python/ollama processes with a kill button."""
 
     def __init__(self) -> None:
         super().__init__("Procs", "Running python / ollama processes")
         self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(
-            ["PID", "Name", "CPU %", "Kill"])
+        self._table.setHorizontalHeaderLabels(["PID", "Name", "CPU %", "Kill"])
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.setColumnWidth(0, 80)
         self._table.setColumnWidth(1, 260)
@@ -3103,24 +3241,28 @@ class ProcessMonitorPage(PageWidget):
         procs: list[tuple[int, str, str]] = []
         try:
             import psutil
+
             for p in psutil.process_iter(["pid", "name", "cpu_percent"]):
                 name = (p.info.get("name") or "").lower()
                 if "python" in name or "ollama" in name:
-                    procs.append((
-                        p.info["pid"],
-                        p.info.get("name") or "?",
-                        f"{p.info.get('cpu_percent') or 0:.1f}",
-                    ))
+                    procs.append(
+                        (
+                            p.info["pid"],
+                            p.info.get("name") or "?",
+                            f"{p.info.get('cpu_percent') or 0:.1f}",
+                        )
+                    )
         except Exception:
             # Fallback: tasklist (Windows)
             try:
                 out = subprocess.run(
-                    ["tasklist", "/FO", "CSV"], capture_output=True,
-                    text=True, timeout=15).stdout
+                    ["tasklist", "/FO", "CSV"], capture_output=True, text=True, timeout=15
+                ).stdout
                 for line in out.splitlines()[1:]:
                     parts = line.strip('"').split('","')
-                    if len(parts) >= 2 and ("python" in parts[0].lower()
-                                            or "ollama" in parts[0].lower()):
+                    if len(parts) >= 2 and (
+                        "python" in parts[0].lower() or "ollama" in parts[0].lower()
+                    ):
                         procs.append((int(parts[1]), parts[0], "—"))
             except Exception:
                 pass
@@ -3134,18 +3276,16 @@ class ProcessMonitorPage(PageWidget):
             self._table.setItem(r, 1, QTableWidgetItem(name))
             self._table.setItem(r, 2, QTableWidgetItem(cpu))
             btn = QPushButton("Kill")
-            btn.clicked.connect(
-                lambda _checked, p=pid: self._kill(p))
+            btn.clicked.connect(lambda _checked, p=pid: self._kill(p))
             self._table.setCellWidget(r, 3, btn)
 
     def _kill(self, pid: int) -> None:
         try:
             import psutil
+
             psutil.Process(pid).terminate()
         except Exception:
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/F"],
-                capture_output=True, text=True)
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True)
         self._refresh()
 
 
@@ -3154,6 +3294,7 @@ class ProcessMonitorPage(PageWidget):
 # ═══════════════════════════════════════════════════════════════════════
 
 _BENCH_PROMPT = "Write a Python function that returns the nth Fibonacci number using memoization."
+
 
 class BenchmarkPage(PageWidget):
     """Time local models on a standard prompt and show a latency table."""
@@ -3169,8 +3310,7 @@ class BenchmarkPage(PageWidget):
             QPushButton(f"{icon('run')}  Run all", clicked=self._bench_all),
         )
         self._table = QTableWidget(0, 3)
-        self._table.setHorizontalHeaderLabels(
-            ["Model", "Time (s)", "Tokens"])
+        self._table.setHorizontalHeaderLabels(["Model", "Time (s)", "Tokens"])
         self._table.horizontalHeader().setStretchLastSection(True)
         self._add(self._table)
         self._result = QPlainTextEdit()
@@ -3183,33 +3323,35 @@ class BenchmarkPage(PageWidget):
         self._run_model(model)
 
     def _bench_all(self) -> None:
-        for m in (self.model_combo.model().stringList()
-                  if hasattr(self.model_combo.model(), "stringList")
-                  else PREFERRED_MODELS):
+        for m in (
+            self.model_combo.model().stringList()
+            if hasattr(self.model_combo.model(), "stringList")
+            else PREFERRED_MODELS
+        ):
             self._run_model(m)
 
     def _run_model(self, model: str) -> None:
         import time
         import urllib.request
+
         self._result.appendPlainText(f"Benchmarking {model}…")
         t0 = time.time()
         try:
             req = urllib.request.Request(
                 "http://localhost:11434/api/generate",
-                data=json.dumps({
-                    "model": model,
-                    "prompt": _BENCH_PROMPT,
-                    "stream": False,
-                }).encode(),
+                data=json.dumps(
+                    {
+                        "model": model,
+                        "prompt": _BENCH_PROMPT,
+                        "stream": False,
+                    }
+                ).encode(),
                 headers={"Content-Type": "application/json"},
             )
-            resp = json.loads(
-                urllib.request.urlopen(req, timeout=120).read())
+            resp = json.loads(urllib.request.urlopen(req, timeout=120).read())
             dt = time.time() - t0
-            toks = resp.get("eval_count") or len(
-                resp.get("response", "").split())
-            self._result.appendPlainText(
-                f"  {model}: {dt:.1f}s, ~{toks} tokens")
+            toks = resp.get("eval_count") or len(resp.get("response", "").split())
+            self._result.appendPlainText(f"  {model}: {dt:.1f}s, ~{toks} tokens")
             self._append_row(model, f"{dt:.1f}", str(toks))
         except Exception as exc:
             self._result.appendPlainText(f"  {model}: ERROR {exc}")
@@ -3241,10 +3383,9 @@ PREFERRED_MODELS: list[str] = [
 def _live_ollama_models() -> list[str]:
     """Best-effort fetch of models currently pulled into Ollama."""
     import urllib.request
+
     try:
-        raw = urllib.request.urlopen(
-            "http://localhost:11434/api/tags", timeout=3
-        ).read()
+        raw = urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3).read()
         data = json.loads(raw)
         return sorted(m["name"] for m in data.get("models", []))
     except Exception:
@@ -3392,8 +3533,7 @@ class SettingsPage(PageWidget):
         self.env_edit.setMaximumHeight(140)
         env_path = HERE / ".env"
         if env_path.exists():
-            self.env_edit.setPlainText(
-                env_path.read_text(encoding="utf-8", errors="replace"))
+            self.env_edit.setPlainText(env_path.read_text(encoding="utf-8", errors="replace"))
         env_section.layout().addWidget(self.env_edit)  # type: ignore
         env_row = QHBoxLayout()
         save_env = QPushButton(f"{icon('save')}  Save .env")
@@ -3452,6 +3592,7 @@ class SettingsPage(PageWidget):
         try:
             import json as _json
             import urllib.request
+
             url = base.rstrip("/") + "/api/tags"
             raw = urllib.request.urlopen(url, timeout=5).read()
             data = _json.loads(raw)
@@ -3529,6 +3670,7 @@ class SettingsPage(PageWidget):
 
     def _pick_color(self, key: str) -> None:
         from PyQt6.QtGui import QColor
+
         cur = self._editor_colors.get(key, "#000000")
         dlg = QColorDialog(self)
         dlg.setCurrentColor(QColor(cur))
@@ -3570,6 +3712,7 @@ class SettingsPage(PageWidget):
 # ═══════════════════════════════════════════════════════════════════════
 # About page
 # ═══════════════════════════════════════════════════════════════════════
+
 
 class AboutPage(PageWidget):
     """About Virgo Desktop."""
@@ -3619,9 +3762,7 @@ class FilesPage(PageWidget):
         self._model = QFileSystemModel()
         root = str(HERE)
         self._model.setRootPath(root)
-        self._model.setFilter(
-            QDir.Filter.AllDirs | QDir.Filter.Files | QDir.Filter.NoDotAndDotDot
-        )
+        self._model.setFilter(QDir.Filter.AllDirs | QDir.Filter.Files | QDir.Filter.NoDotAndDotDot)
 
         self.tree = QTreeView()
         self.tree.setModel(self._model)
@@ -3665,8 +3806,8 @@ class FilesPage(PageWidget):
     def _git_run(self, args: list[str]) -> str:
         try:
             res = subprocess.run(
-                ["git"] + args, cwd=str(HERE), capture_output=True,
-                text=True, timeout=30)
+                ["git"] + args, cwd=str(HERE), capture_output=True, text=True, timeout=30
+            )
             return (res.stdout + res.stderr).strip() or "(no output)"
         except Exception as exc:
             return f"git error: {exc}"
@@ -3676,8 +3817,8 @@ class FilesPage(PageWidget):
 
     def _git_commit(self) -> None:
         from PyQt6.QtWidgets import QInputDialog
-        text, ok = QInputDialog.getText(
-            self, "Git Commit", "Commit message:")
+
+        text, ok = QInputDialog.getText(self, "Git Commit", "Commit message:")
         if ok and text.strip():
             out = self._git_run(["add", "-A"])
             out += "\n" + self._git_run(["commit", "-m", text.strip()])
@@ -3696,8 +3837,6 @@ class FilesPage(PageWidget):
             text = path.read_text(encoding="utf-8", errors="replace")
             self.preview.setPlainText(text[:5000])
             if len(text) > 5000:
-                self.preview.append(
-                    f"\n\n[... truncated — file is {path.stat().st_size:,} bytes]"
-                )
+                self.preview.append(f"\n\n[... truncated — file is {path.stat().st_size:,} bytes]")
         except Exception as e:
             self.preview.setPlainText(f"Error reading {path.name}: {e}")

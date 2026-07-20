@@ -8,8 +8,9 @@ Usage:
 
 from __future__ import annotations
 
-import os
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -18,44 +19,79 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from _console import icon
-from _log import log, OUTDIR
 
 # ── Theme system ────────────────────────────────────────────────────
 THEMES: dict[str, dict[str, str]] = {
     "mocha": {
         "name": "Catppuccin Mocha",
-        "bg": "#1e1e2e", "surface": "#181825", "crust": "#11111b",
-        "border": "#313244", "border2": "#45475a",
-        "text": "#cdd6f4", "subtext": "#a6adc8", "disabled": "#6c7086",
-        "accent": "#89b4fa", "accent2": "#a6e3a1",
-        "red": "#f38ba8", "yellow": "#f9e2af", "green": "#a6e3a1",
+        "base": "#1e1e2e",
+        "bg": "#1e1e2e",
+        "surface": "#181825",
+        "crust": "#11111b",
+        "border": "#313244",
+        "border2": "#45475a",
+        "text": "#cdd6f4",
+        "subtext": "#a6adc8",
+        "disabled": "#6c7086",
+        "accent": "#89b4fa",
+        "accent2": "#a6e3a1",
+        "red": "#f38ba8",
+        "yellow": "#f9e2af",
+        "green": "#a6e3a1",
         "sidebar_active": "#45475a",
     },
     "latte": {
         "name": "Catppuccin Latte",
-        "bg": "#eff1f5", "surface": "#e6e9ef", "crust": "#dce0e8",
-        "border": "#ccd0da", "border2": "#bcc0cc",
-        "text": "#4c4f69", "subtext": "#5c5f77", "disabled": "#9ca0b0",
-        "accent": "#1e66f5", "accent2": "#40a02b",
-        "red": "#d20f39", "yellow": "#df8e1d", "green": "#40a02b",
+        "base": "#ffffff",
+        "bg": "#eff1f5",
+        "surface": "#e6e9ef",
+        "crust": "#dce0e8",
+        "border": "#ccd0da",
+        "border2": "#bcc0cc",
+        "text": "#4c4f69",
+        "subtext": "#5c5f77",
+        "disabled": "#9ca0b0",
+        "accent": "#1e66f5",
+        "accent2": "#40a02b",
+        "red": "#d20f39",
+        "yellow": "#df8e1d",
+        "green": "#40a02b",
         "sidebar_active": "#ccd0da",
     },
     "nord": {
         "name": "Nord",
-        "bg": "#2e3440", "surface": "#3b4252", "crust": "#434c5e",
-        "border": "#4c566a", "border2": "#5e6a83",
-        "text": "#eceff4", "subtext": "#d8dee9", "disabled": "#6c7086",
-        "accent": "#88c0d0", "accent2": "#a3be8c",
-        "red": "#bf616a", "yellow": "#ebcb8b", "green": "#a3be8c",
+        "base": "#eceff4",
+        "bg": "#2e3440",
+        "surface": "#3b4252",
+        "crust": "#434c5e",
+        "border": "#4c566a",
+        "border2": "#5e6a83",
+        "text": "#eceff4",
+        "subtext": "#d8dee9",
+        "disabled": "#6c7086",
+        "accent": "#88c0d0",
+        "accent2": "#a3be8c",
+        "red": "#bf616a",
+        "yellow": "#ebcb8b",
+        "green": "#a3be8c",
         "sidebar_active": "#4c566a",
     },
     "gruvbox": {
         "name": "Gruvbox Dark",
-        "bg": "#282828", "surface": "#3c3836", "crust": "#504945",
-        "border": "#665c54", "border2": "#7c6f64",
-        "text": "#ebdbb2", "subtext": "#a89984", "disabled": "#6c7086",
-        "accent": "#d79921", "accent2": "#689d6a",
-        "red": "#cc241d", "yellow": "#d79921", "green": "#98971a",
+        "base": "#fbf1c7",
+        "bg": "#282828",
+        "surface": "#3c3836",
+        "crust": "#504945",
+        "border": "#665c54",
+        "border2": "#7c6f64",
+        "text": "#ebdbb2",
+        "subtext": "#a89984",
+        "disabled": "#6c7086",
+        "accent": "#d79921",
+        "accent2": "#689d6a",
+        "red": "#cc241d",
+        "yellow": "#d79921",
+        "green": "#98971a",
         "sidebar_active": "#665c54",
     },
 }
@@ -67,11 +103,20 @@ USER_THEMES_PATH = HERE / ".virgo_themes.json"
 
 # Colour keys exposed in the in-app theme editor.
 EDITABLE_THEME_KEYS = [
-    ("bg", "Background"), ("surface", "Surface"), ("crust", "Crust"),
-    ("border", "Border"), ("border2", "Border 2"), ("text", "Text"),
-    ("subtext", "Subtext"), ("disabled", "Disabled"), ("accent", "Accent"),
-    ("accent2", "Accent 2"), ("red", "Red"), ("yellow", "Yellow"),
-    ("green", "Green"), ("sidebar_active", "Sidebar active"),
+    ("bg", "Background"),
+    ("surface", "Surface"),
+    ("crust", "Crust"),
+    ("border", "Border"),
+    ("border2", "Border 2"),
+    ("text", "Text"),
+    ("subtext", "Subtext"),
+    ("disabled", "Disabled"),
+    ("accent", "Accent"),
+    ("accent2", "Accent 2"),
+    ("red", "Red"),
+    ("yellow", "Yellow"),
+    ("green", "Green"),
+    ("sidebar_active", "Sidebar active"),
 ]
 
 
@@ -105,6 +150,7 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     Placeholders like ``@bg@`` are substituted with the theme's colour.
     """
     import textwrap
+
     raw = textwrap.dedent("""\
     QMainWindow, QWidget {
         background-color: @bg@;
@@ -391,6 +437,10 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     """)
     for key, val in t.items():
         raw = raw.replace(f"@{key}@", val)
+    # Drop any placeholder whose key was missing from the theme dict so a
+    # user-saved/incomplete theme can never emit a literal '@x@' that makes
+    # Qt reject the entire stylesheet ("Could not parse stylesheet").
+    raw = re.sub(r"@\w+@", "", raw)
     return raw
 
 
@@ -399,7 +449,9 @@ def _has_pyqt6(python: str) -> bool:
     try:
         r = subprocess.run(
             [python, "-c", "import PyQt6"],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True,
+            text=True,
+            timeout=20,
         )
         return r.returncode == 0
     except Exception:
@@ -425,18 +477,24 @@ def _find_pyqt6_python() -> str | None:
         ]
     else:
         candidates += [
-            "python3.14", "python3.13", "python3.12", "python3.11",
-            "/usr/bin/python3", "/usr/local/bin/python3",
+            "python3.14",
+            "python3.13",
+            "python3.12",
+            "python3.11",
+            "/usr/bin/python3",
+            "/usr/local/bin/python3",
         ]
     for c in candidates:
         if c and c != sys.executable and os.path.isfile(c) and _has_pyqt6(c):
             return c
     return None
 
+
 def _ensure_pyqt6() -> None:
     """If the current interpreter lacks PyQt6, re-exec under one that has it."""
     try:
         import PyQt6  # noqa: F401
+
         return
     except Exception:
         pass
@@ -455,22 +513,33 @@ def _ensure_pyqt6() -> None:
 # ── Ensure a PyQt6-capable interpreter, then import GUI deps ───────
 _ensure_pyqt6()  # re-execs under a PyQt6 Python if needed
 
-from PyQt6.QtCore import Qt, QTimer, qInstallMessageHandler, pyqtSignal, QSize
-from PyQt6.QtGui import QAction, QFont, QIcon, QPalette, QShortcut, QKeySequence
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal, qInstallMessageHandler
+from PyQt6.QtGui import QFont, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QApplication, QDialog, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
-    QStackedWidget, QSystemTrayIcon, QMenu, QStatusBar, QVBoxLayout,
-    QWidget, QSplitter, QLineEdit,
+    QApplication,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMenu,
+    QPushButton,
+    QSplitter,
+    QStackedWidget,
+    QStatusBar,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
 )
 
 # ── Import virgo modules ─────────────────────────────────────────────
-from _console import icon
-from _log import log
-
 from virgo_desktop_pages import (
     AboutPage,
     AlertsPage,
+    BenchmarkPage,
     ChatPage,
     DiagnosticsPage,
     FilesPage,
@@ -483,7 +552,6 @@ from virgo_desktop_pages import (
     SessionPage,
     SettingsPage,
     SwarmPage,
-    BenchmarkPage,
 )
 
 # ── Constants ────────────────────────────────────────────────────────
@@ -496,21 +564,21 @@ HEIGHT = 720
 # Emoji icons for the desktop GUI. PyQt6 renders these on Windows fine;
 # the terminal-safe ASCII fallbacks in _console.icon() don't apply here.
 DESKTOP_ICONS = {
-    "pipeline": "\U0001F680",      # 🚀
-    "chat": "\U0001F4AC",          # 💬
-    "files": "\U0001F4C1",         # 📁
-    "network": "\U0001F310",       # 🌐
-    "diagnostics": "\U0001F527",   # 🔧
-    "alerts": "\U0001F514",        # 🔔
-    "scaffold": "\U0001F4E6",      # 📦
-    "sessions": "\U0001F4DC",      # 📜
-    "swarm": "\u26A1",             # ⚡
-    "logs": "\U0001F4DD",          # 📝
-    "plugins": "\U0001F9E9",      # 🧩
-    "settings": "\u2699",          # ⚙
-    "about": "\u2139",             # ℹ
-    "procs": "\U0001F4BB",        # 💻
-    "bench": "\u23F1",             # ⏱
+    "pipeline": "\U0001f680",  # 🚀
+    "chat": "\U0001f4ac",  # 💬
+    "files": "\U0001f4c1",  # 📁
+    "network": "\U0001f310",  # 🌐
+    "diagnostics": "\U0001f527",  # 🔧
+    "alerts": "\U0001f514",  # 🔔
+    "scaffold": "\U0001f4e6",  # 📦
+    "sessions": "\U0001f4dc",  # 📜
+    "swarm": "\u26a1",  # ⚡
+    "logs": "\U0001f4dd",  # 📝
+    "plugins": "\U0001f9e9",  # 🧩
+    "settings": "\u2699",  # ⚙
+    "about": "\u2139",  # ℹ
+    "procs": "\U0001f4bb",  # 💻
+    "bench": "\u23f1",  # ⏱
 }
 
 SIDEBAR_ITEMS = [
@@ -574,7 +642,9 @@ class VirgoDesktopWindow(QMainWindow):
 
         # Branded window icon (falls back silently if the asset is missing)
         import os
+
         from PyQt6.QtGui import QIcon
+
         _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.ico")
         if getattr(sys, "frozen", False):
             _icon_path = os.path.join(getattr(sys, "_MEIPASS", ""), "logo.ico")
@@ -610,7 +680,7 @@ class VirgoDesktopWindow(QMainWindow):
             if p not in self.nav_order:
                 self.nav_order.append(p)
         self._nav_items: dict[str, QListWidgetItem] = {}
-        self._popped: dict[str, "PopOutWindow"] = {}
+        self._popped: dict[str, PopOutWindow] = {}
         self.current_page = ""
 
         # ── Central widget + resizable splitter ──────────────────
@@ -636,7 +706,7 @@ class VirgoDesktopWindow(QMainWindow):
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(4, 4, 4, 4)
         header_layout.setSpacing(10)
-        avatar = QLabel("\U0001F6F8")  # 🛸
+        avatar = QLabel("\U0001f6f8")  # 🛸
         avatar.setObjectName("sidebarAvatar")
         avatar.setFont(QFont("Segoe UI", 18))
         avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -655,9 +725,7 @@ class VirgoDesktopWindow(QMainWindow):
 
         self.nav_list = NavList()
         self.nav_list.setObjectName("navList")
-        self.nav_list.currentItemChanged.connect(
-            lambda cur, _prev: self._on_nav_selected(cur)
-        )
+        self.nav_list.currentItemChanged.connect(lambda cur, _prev: self._on_nav_selected(cur))
         self.nav_list.reordered.connect(self._on_nav_reordered)
         self.nav_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.nav_list.customContextMenuRequested.connect(self._nav_context_menu)
@@ -769,7 +837,7 @@ class VirgoDesktopWindow(QMainWindow):
             return
         pid = item.data(Qt.ItemDataRole.UserRole)
         menu = QMenu(self)
-        pop = menu.addAction("\U0001F5D7  Open in new window")
+        pop = menu.addAction("\U0001f5d7  Open in new window")
         if pop is not None:
             pop.triggered.connect(lambda checked=False, p=pid: self._pop_out(p))
         menu.exec(self.nav_list.mapToGlobal(pos))
@@ -812,14 +880,10 @@ class VirgoDesktopWindow(QMainWindow):
             widths = [w, max(240, self.width() - w)]
         self.splitter.setSizes(widths)
         for pid, item in self._nav_items.items():
-            label, emoji = next(
-                ((l, e) for p, l, e in SIDEBAR_ITEMS if p == pid), (pid, "•")
-            )
+            label, emoji = next(((l, e) for p, l, e in SIDEBAR_ITEMS if p == pid), (pid, "•"))
             item.setText(emoji if self._sidebar_collapsed else f"{emoji}  {label}")
         self.sidebar_title.setVisible(not self._sidebar_collapsed)
-        self.quit_btn.setText(
-            "\U0001F6F8" if self._sidebar_collapsed else f"{icon('exit')}  Quit"
-        )
+        self.quit_btn.setText("\U0001f6f8" if self._sidebar_collapsed else f"{icon('exit')}  Quit")
 
     def _on_splitter_moved(self, *_args) -> None:
         if self._sidebar_collapsed:
@@ -870,13 +934,15 @@ class VirgoDesktopWindow(QMainWindow):
         self.tray.setToolTip(APP_NAME)
         # Use the branded mark when available, otherwise a solid fallback
         import os
+
         _tray_icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.ico")
         if getattr(sys, "frozen", False) and not os.path.exists(_tray_icon):
             _tray_icon = os.path.join(getattr(sys, "_MEIPASS", ""), "logo.ico")
         if os.path.exists(_tray_icon):
             self.tray.setIcon(QIcon(_tray_icon))
         else:
-            from PyQt6.QtGui import QPixmap, QColor
+            from PyQt6.QtGui import QColor, QPixmap
+
             pm = QPixmap(16, 16)
             pm.fill(QColor("#00b4d8"))
             self.tray.setIcon(QIcon(pm))
@@ -885,17 +951,11 @@ class VirgoDesktopWindow(QMainWindow):
         show_action = menu.addAction("Show Window")
         show_action.triggered.connect(self.showNormal)
         chat_action = menu.addAction("Open Chat")
-        chat_action.triggered.connect(
-            lambda: (self.showNormal(), self._navigate("chat"))
-        )
+        chat_action.triggered.connect(lambda: (self.showNormal(), self._navigate("chat")))
         pipeline_action = menu.addAction("Run Pipeline")
-        pipeline_action.triggered.connect(
-            lambda: (self.showNormal(), self._navigate("pipeline"))
-        )
+        pipeline_action.triggered.connect(lambda: (self.showNormal(), self._navigate("pipeline")))
         swarm_action = menu.addAction("Launch Swarm")
-        swarm_action.triggered.connect(
-            lambda: (self.showNormal(), self._navigate("swarm"))
-        )
+        swarm_action.triggered.connect(lambda: (self.showNormal(), self._navigate("swarm")))
         menu.addSeparator()
         quit_action = menu.addAction("Quit")
         quit_action.triggered.connect(self._quit)
@@ -909,9 +969,7 @@ class VirgoDesktopWindow(QMainWindow):
     def notify(self, title: str, message: str) -> None:
         """Show a system tray notification (falls back to the status bar)."""
         if getattr(self, "tray", None) and QSystemTrayIcon.isSystemTrayAvailable():
-            self.tray.showMessage(
-                title, message, QSystemTrayIcon.MessageIcon.Information, 4000
-            )
+            self.tray.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 4000)
         else:
             self.set_status(f"{title}: {message}")
         self._toast(title, message)
@@ -920,6 +978,7 @@ class VirgoDesktopWindow(QMainWindow):
         """Show a transient in-app toast in the top-right corner."""
         try:
             from PyQt6.QtWidgets import QLabel as _QLabel
+
             toast = QFrame(self)
             toast.setObjectName("toast")
             toast.setFrameShape(QFrame.Shape.StyledPanel)
@@ -935,7 +994,8 @@ class VirgoDesktopWindow(QMainWindow):
             t_layout.addWidget(t_msg)
             toast.setStyleSheet(
                 "QFrame#toast { background: #313244; border: 1px solid #45475a; "
-                "border-radius: 8px; }")
+                "border-radius: 8px; }"
+            )
             toast.adjustSize()
             toast.setFixedWidth(min(320, toast.width() + 24))
             x = self.width() - toast.width() - 16
@@ -973,8 +1033,7 @@ class VirgoDesktopWindow(QMainWindow):
 
     def _show_quick_switcher(self) -> None:
         """Ctrl+P dialog: fuzzy-search sidebar pages, jump or pop out on Enter."""
-        t = self.themes.get(getattr(self, "_active_theme", self._theme_name),
-                            self.themes["mocha"])
+        t = self.themes.get(getattr(self, "_active_theme", self._theme_name), self.themes["mocha"])
         dlg = QDialog(self)
         dlg.setWindowTitle("Jump to Page")
         dlg.resize(340, 380)
@@ -1047,7 +1106,7 @@ class VirgoDesktopWindow(QMainWindow):
         go_btn = QPushButton(f"{icon('open')}  Open")
         go_btn.setDefault(True)
         go_btn.clicked.connect(_go)
-        pop_btn = QPushButton("\U0001F5D7  Pop out window")
+        pop_btn = QPushButton("\U0001f5d7  Pop out window")
         pop_btn.clicked.connect(_pop)
         btn_row.addWidget(go_btn)
         btn_row.addWidget(pop_btn)
@@ -1057,28 +1116,35 @@ class VirgoDesktopWindow(QMainWindow):
 
     def _command_palette(self) -> None:
         """Ctrl+Shift+P — searchable action palette (pages + commands)."""
-        t = self.themes.get(getattr(self, "_active_theme", self._theme_name),
-                            self.themes["mocha"])
+        t = self.themes.get(getattr(self, "_active_theme", self._theme_name), self.themes["mocha"])
 
         # Build action list: (label, kind, callback)
         actions: list[tuple[str, str, callable]] = []
         for pid, label, emoji in SIDEBAR_ITEMS:
-            actions.append((f"{emoji}  Go to {label}", "page",
-                            lambda p=pid: self._navigate(p)))
+            actions.append((f"{emoji}  Go to {label}", "page", lambda p=pid: self._navigate(p)))
         # Global commands
         actions += [
-            ("\u26A1  Toggle Theme", "cmd", lambda: self._cycle_theme()),
-            ("\U0001F4BE  Export Chat", "cmd",
-             lambda: self._route_to_page_action("chat", "_export")),
-            ("\U0001F4C4  Files: refresh", "cmd",
-             lambda: self._route_to_page_action("files", "on_activate")),
-            ("\U0001F680  Run Pipeline", "cmd",
-             lambda: self._route_to_page_action("pipeline", "_run_pipeline")),
-            ("\U0001F504  Reload UI", "cmd", lambda: self._apply_style()),
+            ("\u26a1  Toggle Theme", "cmd", lambda: self._cycle_theme()),
+            (
+                "\U0001f4be  Export Chat",
+                "cmd",
+                lambda: self._route_to_page_action("chat", "_export"),
+            ),
+            (
+                "\U0001f4c4  Files: refresh",
+                "cmd",
+                lambda: self._route_to_page_action("files", "on_activate"),
+            ),
+            (
+                "\U0001f680  Run Pipeline",
+                "cmd",
+                lambda: self._route_to_page_action("pipeline", "_run_pipeline"),
+            ),
+            ("\U0001f504  Reload UI", "cmd", lambda: self._apply_style()),
             ("\u2699  Open Settings", "cmd", lambda: self._navigate("settings")),
             ("\u2139  About", "cmd", lambda: self._navigate("about")),
-            ("\U0001F514  Toggle sidebar", "cmd", lambda: self._toggle_sidebar()),
-            ("\u274C  Quit", "cmd", lambda: self.close()),
+            ("\U0001f514  Toggle sidebar", "cmd", lambda: self._toggle_sidebar()),
+            ("\u274c  Quit", "cmd", lambda: self.close()),
         ]
 
         dlg = QDialog(self)
@@ -1154,8 +1220,7 @@ class VirgoDesktopWindow(QMainWindow):
 
     def _show_shortcuts_overlay(self) -> None:
         """Show a dialog listing all keyboard shortcuts."""
-        t = self.themes.get(getattr(self, "_active_theme", self._theme_name),
-                            self.themes["mocha"])
+        t = self.themes.get(getattr(self, "_active_theme", self._theme_name), self.themes["mocha"])
         lines = [
             ("Key", "Action"),
             ("", ""),
@@ -1172,8 +1237,11 @@ class VirgoDesktopWindow(QMainWindow):
         html = "<table style='width:100%; border-collapse:collapse;'>"
         for key, action in lines:
             if key == "":
-                html += ("<tr><td colspan='2' style='border-bottom:1px solid "
-                         + t["border"] + "'></td></tr>")
+                html += (
+                    "<tr><td colspan='2' style='border-bottom:1px solid "
+                    + t["border"]
+                    + "'></td></tr>"
+                )
             else:
                 html += (
                     f"<tr><td style='padding:4px 12px; color:{t['accent']}; "
@@ -1237,6 +1305,7 @@ class VirgoDesktopWindow(QMainWindow):
     def _restore_geom(self) -> None:
         try:
             import json
+
             p = Path(__file__).parent / ".virgo_desktop_geom.json"
             if p.exists():
                 d = json.loads(p.read_text())
@@ -1249,11 +1318,12 @@ class VirgoDesktopWindow(QMainWindow):
     def _save_geom(self) -> None:
         try:
             import json
+
             p = Path(__file__).parent / ".virgo_desktop_geom.json"
             geo = self.geometry()
-            p.write_text(json.dumps({
-                "x": geo.x(), "y": geo.y(), "w": geo.width(), "h": geo.height()
-            }))
+            p.write_text(
+                json.dumps({"x": geo.x(), "y": geo.y(), "w": geo.width(), "h": geo.height()})
+            )
         except Exception:
             pass
 
@@ -1299,9 +1369,7 @@ class VirgoDesktopWindow(QMainWindow):
         if mode == "system":
             try:
                 scheme = QApplication.styleHints().colorScheme()
-                self._active_theme = (
-                    "latte" if scheme == Qt.ColorScheme.Light else "mocha"
-                )
+                self._active_theme = "latte" if scheme == Qt.ColorScheme.Light else "mocha"
             except Exception:
                 self._active_theme = "mocha"
         elif mode == "light":
@@ -1373,7 +1441,7 @@ class VirgoDesktopWindow(QMainWindow):
 class PopOutWindow(QMainWindow):
     """A detached window that hosts one of the main pages."""
 
-    def __init__(self, page_id: str, page: QWidget, parent: "VirgoDesktopWindow") -> None:
+    def __init__(self, page_id: str, page: QWidget, parent: VirgoDesktopWindow) -> None:
         super().__init__(parent)
         self.page_id = page_id
         self.page = page
@@ -1381,7 +1449,9 @@ class PopOutWindow(QMainWindow):
         label = next((l for pid, l, _e in SIDEBAR_ITEMS if pid == page_id), page_id)
         self.setWindowTitle(f"Virgo · {label}")
         import os
+
         from PyQt6.QtGui import QIcon
+
         _icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.ico")
         if os.path.exists(_icon_path):
             self.setWindowIcon(QIcon(_icon_path))
@@ -1409,6 +1479,7 @@ class PopOutWindow(QMainWindow):
 def _open_file(path: str) -> None:
     """Open a file with the OS default handler (cross-platform)."""
     import subprocess
+
     p = str(path)
     try:
         if sys.platform == "win32":
