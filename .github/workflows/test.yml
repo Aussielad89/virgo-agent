@@ -46,7 +46,15 @@ jobs:
 
       - name: Test with pytest
         run: |
-          python -m pytest tests/ -v --cov=. --cov-report=term-missing
+          python -m pytest tests/ --ignore=tests/test_server.py -v --cov=. --cov-report=term-missing
+
+      - name: Server tests (optional deps)
+        run: |
+          if python -c "import fastapi; import pydantic_core" 2>/dev/null; then
+            python -m pytest tests/test_server.py -v
+          else
+            echo "Server deps not available, skipping server tests"
+          fi
 
       - name: Smoke-test TUI imports
         run: |
