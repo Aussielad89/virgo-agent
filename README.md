@@ -33,6 +33,33 @@ real observations instead of hallucinated ones.
 Flags: `--llm`, `--steps N`, `--retries N`, `--no-mcp`, `--mcp 'name=cmd args'`,
 `--no-experience`, `--stream`/`--no-stream`.
 
+## RAG (Retrieval-Augmented Generation)
+
+Virgo includes a built-in RAG layer that grounds chat responses in your own data.
+Drop `.md`, `.txt`, or `.json` files into `kb/` (or `kb/private/`, which is
+gitignored) and the chat will retrieve relevant passages automatically.
+
+```bash
+# Default: TF-IDF keyword retrieval (zero deps, always works)
+virgo chat
+
+# Semantic embeddings via Ollama (local, CPU-only)
+VIRGO_RAG_BACKEND=ollama virgo chat
+
+# Force TF-IDF even when Ollama is available
+VIRGO_RAG_BACKEND=tfidf virgo chat
+
+# Check which backend is active
+python -c "from _rag import active_backend; print(active_backend())"
+```
+
+| Backend | Env value | Dependencies | Notes |
+|---------|-----------|--------------|-------|
+| TF-IDF | `tfidf` | none | Keyword matching, sub-ms on CPU |
+| Ollama | `ollama` | Ollama + `nomic-embed-text` | Semantic, vectors cached in-memory |
+| cognee | `cognee` | `cognee` package | Graph-backed store (optional) |
+| Auto | `auto` (default) | — | Tries Ollama, falls back to TF-IDF |
+
 ## Quick Start
 
 ```bash
