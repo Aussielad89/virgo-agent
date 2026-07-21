@@ -44,6 +44,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QFrame,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsTextItem,
@@ -58,6 +59,8 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSlider,
     QSplitter,
     QTableWidget,
@@ -98,26 +101,34 @@ class PageWidget(QWidget):
         super().__init__()
         self.page_title = title
         self.page_subtitle = subtitle
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(12)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 20, 24, 20)
+        outer.setSpacing(12)
 
         if title:
             title_label = QLabel(title)
             title_label.setObjectName("pageTitle")
             title_font = QFont("Segoe UI", 18, QFont.Weight.Bold)
             title_label.setFont(title_font)
-            layout.addWidget(title_label)
+            outer.addWidget(title_label)
 
         if subtitle:
             sub = QLabel(subtitle)
             sub.setStyleSheet("color: #a6adc8; font-size: 13px;")
             sub.setWordWrap(True)
-            layout.addWidget(sub)
+            outer.addWidget(sub)
 
-        self.content = QVBoxLayout()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        inner = QWidget()
+        inner.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.content = QVBoxLayout(inner)
         self.content.setSpacing(12)
-        layout.addLayout(self.content, 1)
+        self.content.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(inner)
+        outer.addWidget(scroll, 1)
 
     def on_activate(self) -> None:
         """Called when the page becomes visible."""
@@ -3556,6 +3567,7 @@ class SettingsPage(PageWidget):
 
         self.save_status = QLabel("")
         self._add(self.save_status)
+        self.content.addStretch(1)
 
     def _save(self) -> None:
         values: dict[str, str] = {}
