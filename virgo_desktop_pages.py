@@ -3571,13 +3571,13 @@ class SettingsPage(PageWidget):
         lines = [f"# Virgo Desktop — saved {__import__('datetime').datetime.now()}\n"]
         for key, value in values.items():
             lines.append(f"{key}={value}\n")
-        env_path.write_text("".join(lines))
+        env_path.write_text("".join(lines), encoding="utf-8")
         self.save_status.setText(f"{icon('ok')} Saved to .env")
         QTimer.singleShot(3000, lambda: self.save_status.setText(""))
 
     def _save_env(self) -> None:
         env_path = HERE / ".env"
-        env_path.write_text(self.env_edit.toPlainText())
+        env_path.write_text(self.env_edit.toPlainText(), encoding="utf-8")
         self.save_status.setText(f"{icon('ok')} Raw .env saved")
 
     def _test_connection(self) -> None:

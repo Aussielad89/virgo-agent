@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,9 @@ def run_cli(*args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
     return subprocess.run(
         [sys.executable, CLI, *args],
-        capture_output=True, text=True, encoding="utf-8",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
         timeout=30,
         cwd=str(HERE),
         env=env,
@@ -46,6 +47,7 @@ class TestVersion:
         assert r.returncode == 0
         # Match vX.Y.Z
         import re
+
         assert re.search(r"v\d+\.\d+\.\d+", r.stdout)
 
 
@@ -106,7 +108,10 @@ class TestConfig:
         env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         r = subprocess.run(
             [sys.executable, CLI, "config", "--set", "TEST_VIRGO_VAR=new"],
-            capture_output=True, text=True, encoding="utf-8", timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
             cwd=str(tmp_path),
             env=env,
         )
@@ -116,7 +121,10 @@ class TestConfig:
         # Run config --unset
         r = subprocess.run(
             [sys.executable, CLI, "config", "--unset", "TEST_VIRGO_VAR"],
-            capture_output=True, text=True, encoding="utf-8", timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
             cwd=str(tmp_path),
             env=env,
         )
@@ -126,6 +134,7 @@ class TestConfig:
 # ── chat ─────────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.skipif("CI" in os.environ, reason="no LLM reachable in CI")
 class TestChat:
     def test_chat_exit_immediately(self) -> None:
         """Sending 'exit' immediately should exit cleanly."""
@@ -133,7 +142,10 @@ class TestChat:
         r = subprocess.run(
             [sys.executable, CLI, "chat"],
             input="exit\n",
-            capture_output=True, text=True, encoding="utf-8", timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
             cwd=str(HERE),
             env=env,
         )
@@ -145,7 +157,10 @@ class TestChat:
         r = subprocess.run(
             [sys.executable, CLI, "chat"],
             input="quit\n",
-            capture_output=True, text=True, encoding="utf-8", timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
             cwd=str(HERE),
             env=env,
         )
@@ -157,7 +172,10 @@ class TestChat:
         r = subprocess.run(
             [sys.executable, CLI, "chat"],
             input="hello\n/quit\n",
-            capture_output=True, text=True, encoding="utf-8", timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
             cwd=str(HERE),
             env=env,
         )
@@ -171,7 +189,10 @@ class TestChat:
         r = subprocess.run(
             [sys.executable, CLI, "chat"],
             input="hello\n/save\nexit\n",
-            capture_output=True, text=True, encoding="utf-8", timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
             cwd=str(HERE),
             env=env,
         )
@@ -201,7 +222,10 @@ class TestBareCommand:
         r = subprocess.run(
             [sys.executable, CLI],
             input="X\n",
-            capture_output=True, text=True, encoding="utf-8", timeout=30,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
             cwd=str(HERE),
             env=env,
         )
