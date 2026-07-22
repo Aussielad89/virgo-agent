@@ -4,24 +4,27 @@ Tests for orchestrator — 4-phase state machine.
 
 from __future__ import annotations
 
+# Modules under test import via sys.path.insert, so we add the project root
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
-# Modules under test import via sys.path.insert, so we add the project root
-import sys
 HERE = Path(__file__).parent.parent
 sys.path.insert(0, str(HERE))
 
+from _console import _supports_emoji
+from environment import AgentEnvironment
 from orchestrator import (
-    Orchestrator, WorkspaceState, DiscoveredFile, GeneratedFile, TestLog,
+    DiscoveredFile,
+    GeneratedFile,
+    Orchestrator,
+    TestLog,
+    WorkspaceState,
     _step,
 )
-from _console import _supports_emoji
 from tools import ToolRegistry
-from environment import AgentEnvironment
-
 
 # ===========================================================================
 # Helper fixtures
@@ -94,8 +97,9 @@ class TestDiscoveredFile:
         assert f.sample is None
 
     def test_with_sample(self) -> None:
-        f = DiscoveredFile(path="data.csv", extension=".csv", size=200,
-                           sample={"columns": ["a", "b"]})
+        f = DiscoveredFile(
+            path="data.csv", extension=".csv", size=200, sample={"columns": ["a", "b"]}
+        )
         assert f.sample == {"columns": ["a", "b"]}
 
 
@@ -125,13 +129,11 @@ class TestGeneratedFile:
 
 class TestTestLog:
     def test_passed_property(self) -> None:
-        log = TestLog(file="test.py", iteration=1, returncode=0,
-                       stdout="ok", stderr="")
+        log = TestLog(file="test.py", iteration=1, returncode=0, stdout="ok", stderr="")
         assert log.passed is True
 
     def test_failed_property(self) -> None:
-        log = TestLog(file="test.py", iteration=1, returncode=1,
-                       stdout="", stderr="error")
+        log = TestLog(file="test.py", iteration=1, returncode=1, stdout="", stderr="error")
         assert log.passed is False
 
 
@@ -173,7 +175,9 @@ class TestOrchestratorConstruction:
         orch = Orchestrator(env, registry, workspace_includes=["*.py"])
         assert orch.includes == ["*.py"]
 
-    def test_base_path_resolved(self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path) -> None:
+    def test_base_path_resolved(
+        self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path
+    ) -> None:
         orch = Orchestrator(env, registry, base_path=str(tmp_workspace))
         assert orch.base_path == tmp_workspace.resolve()
 
@@ -194,7 +198,9 @@ class TestIsExcluded:
         assert not orch._is_excluded(Path("test.py"))
         assert not orch._is_excluded(Path("data.csv"))
 
-    def test_excluded_directory(self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path) -> None:
+    def test_excluded_directory(
+        self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path
+    ) -> None:
         (tmp_workspace / ".git").mkdir()
         orch = Orchestrator(env, registry, base_path=str(tmp_workspace))
         assert orch._is_excluded(tmp_workspace / ".git")
@@ -206,7 +212,9 @@ class TestIsExcluded:
 
 
 class TestDiscover:
-    def test_discover_finds_files(self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path) -> None:
+    def test_discover_finds_files(
+        self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path
+    ) -> None:
         (tmp_workspace / "test.py").write_text("print('x')")
         (tmp_workspace / "data.csv").write_text("a,b\n1,2\n")
         (tmp_workspace / "agent_env").mkdir()  # should be excluded
@@ -220,13 +228,17 @@ class TestDiscover:
         assert "data.csv" in found
         assert not any("agent_env" in f for f in found)
 
-    def test_discover_empty_workspace(self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path) -> None:
+    def test_discover_empty_workspace(
+        self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path
+    ) -> None:
         orch = Orchestrator(env, registry, base_path=str(tmp_workspace))
         state = WorkspaceState(goal="test", base_path=str(tmp_workspace))
         orch._discover(state)
         assert state.discovered_files == []
 
-    def test_discover_file_metadata(self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path) -> None:
+    def test_discover_file_metadata(
+        self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path
+    ) -> None:
         (tmp_workspace / "data.json").write_text('{"x": 1}')
         orch = Orchestrator(env, registry, base_path=str(tmp_workspace))
         state = WorkspaceState(goal="test", base_path=str(tmp_workspace))
@@ -243,7 +255,9 @@ class TestDiscover:
 
 
 class TestRun:
-    def test_run_without_policies_no_crash(self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path) -> None:
+    def test_run_without_policies_no_crash(
+        self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path
+    ) -> None:
         """Calling .run() without policies should not crash.
         It will discover files, enter plan loop, but won't generate anything."""
         (tmp_workspace / "dummy.txt").write_text("hello")
@@ -257,7 +271,9 @@ class TestRun:
         assert state is not None
         assert state.goal == "test"
 
-    def test_run_with_plan_only(self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path) -> None:
+    def test_run_with_plan_only(
+        self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path
+    ) -> None:
         """Providing only a planner should generate a plan."""
         (tmp_workspace / "dummy.txt").write_text("hello")
 
@@ -269,7 +285,9 @@ class TestRun:
         assert "Plan:" in state.plan
         assert "1 files" in state.plan
 
-    def test_run_with_critic_flag(self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path) -> None:
+    def test_run_with_critic_flag(
+        self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path
+    ) -> None:
         """Setting run_critic=True should not crash even with generated files."""
         (tmp_workspace / "mod.py").write_text("x = 1")
 
@@ -277,10 +295,14 @@ class TestRun:
             return [("out.py", "x = 1")]
 
         orch = Orchestrator(env, registry, base_path=str(tmp_workspace))
-        state = orch.run(goal="test", code_gen=my_gen, auto_approve=True, max_iterations=1, run_critic=True)
+        state = orch.run(
+            goal="test", code_gen=my_gen, auto_approve=True, max_iterations=1, run_critic=True
+        )
         assert state.phase in ("complete", "testing")
 
-    def test_run_auto_approve_works(self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path) -> None:
+    def test_run_auto_approve_works(
+        self, env: AgentEnvironment, registry: ToolRegistry, tmp_workspace: Path
+    ) -> None:
         """With auto_approve=True, the pipeline should not prompt."""
         orch = Orchestrator(env, registry, base_path=str(tmp_workspace))
         state = orch.run(goal="test", auto_approve=True, max_iterations=1)

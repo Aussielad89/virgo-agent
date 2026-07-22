@@ -11,33 +11,32 @@ from __future__ import annotations
 import shutil
 import sys
 import time
-from typing import Optional
 
 # ===========================================================================
 # Pipeline graph definition
 # ===========================================================================
 
 PHASES = [
-    ("discover",  "Discover",   "🔍"),
-    ("plan",      "Plan",       "🧠"),
-    ("approve",   "Approve",    "👤"),
-    ("generate",  "Generate",   "💻"),
-    ("critic",    "Critic",     "🔬"),
-    ("deps",      "Deps",       "📦"),
-    ("test",      "WTF Loop",   "🔄"),
-    ("complete",  "Complete",   "✅"),
+    ("discover", "Discover", "🔍"),
+    ("plan", "Plan", "🧠"),
+    ("approve", "Approve", "👤"),
+    ("generate", "Generate", "💻"),
+    ("critic", "Critic", "🔬"),
+    ("deps", "Deps", "📦"),
+    ("test", "WTF Loop", "🔄"),
+    ("complete", "Complete", "✅"),
 ]
 
 # ASCII fallback when emoji aren't supported
 PHASES_ASCII = [
-    ("discover",  "Discover",   "[*]"),
-    ("plan",      "Plan",       "[P]"),
-    ("approve",   "Approve",    "[U]"),
-    ("generate",  "Generate",   "[G]"),
-    ("critic",    "Critic",     "[C]"),
-    ("deps",      "Deps",       "[D]"),
-    ("test",      "WTF Loop",   "[T]"),
-    ("complete",  "Complete",   "[X]"),
+    ("discover", "Discover", "[*]"),
+    ("plan", "Plan", "[P]"),
+    ("approve", "Approve", "[U]"),
+    ("generate", "Generate", "[G]"),
+    ("critic", "Critic", "[C]"),
+    ("deps", "Deps", "[D]"),
+    ("test", "WTF Loop", "[T]"),
+    ("complete", "Complete", "[X]"),
 ]
 
 
@@ -50,7 +49,8 @@ def _supports_emoji() -> bool:
 # Pipeline graph
 # ===========================================================================
 
-def render_graph(current_phase: str, passed: Optional[bool] = None) -> str:
+
+def render_graph(current_phase: str, passed: bool | None = None) -> str:
     """Render a multi-line ASCII pipeline graph."""
     phases = PHASES if _supports_emoji() else PHASES_ASCII
     lines: list[str] = []
@@ -73,7 +73,7 @@ def render_graph(current_phase: str, passed: Optional[bool] = None) -> str:
     return "\n".join(lines)
 
 
-def _phase_status(key: str, current: str, passed: Optional[bool]) -> str:
+def _phase_status(key: str, current: str, passed: bool | None) -> str:
     """Return status text for a phase."""
     order = [p[0] for p in PHASES]
     try:
@@ -105,8 +105,12 @@ def _phase_status(key: str, current: str, passed: Optional[bool]) -> str:
 
 
 def _progress_bar(
-    idx: int, total: int, key: str, current: str,
-    passed: Optional[bool], width: int,
+    idx: int,
+    total: int,
+    key: str,
+    current: str,
+    passed: bool | None,
+    width: int,
 ) -> str:
     """Render a small ASCII progress bar for the phase."""
     order = [p[0] for p in PHASES]
@@ -144,6 +148,7 @@ def _progress_bar(
 # Progress bar for WTF loop
 # ===========================================================================
 
+
 class ProgressBar:
     """Simple inline progress bar for the WTF loop."""
 
@@ -177,8 +182,6 @@ class ProgressBar:
         elapsed = time.time() - self.start
         bar = self._full * self._width
         sys.stdout.write(
-            f"\r  {self.prefix}: [{bar}] 100%  "
-            f"{passed} pass, {failed} fail  "
-            f"{elapsed:.1f}s total\n"
+            f"\r  {self.prefix}: [{bar}] 100%  {passed} pass, {failed} fail  {elapsed:.1f}s total\n"
         )
         sys.stdout.flush()

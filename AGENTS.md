@@ -150,7 +150,7 @@ python virgo_watchdog.py          # Run diagnostics→alerts→fixer on a config
 python cli.py demo --goal "parse mock_logs.txt"
 
 # Testing:
-python -m pytest tests/ -v                      # Run all 162 tests
+python -m pytest tests/ -v                      # Run all 363 tests
 python -m pytest tests/test_environment.py -v   # Environment tests only
 python -m pytest tests/ --cov=. --cov-report=term-missing  # With coverage
 
@@ -328,7 +328,7 @@ to parse this file specifically.
 
 ## Testing
 
-### pytest suite (162 tests)
+### pytest suite (363 tests)
 
 ```bash
 python -m pytest tests/ -v

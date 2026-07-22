@@ -11,9 +11,18 @@ import importlib
 def test_pages_module_imports():
     mod = importlib.import_module("virgo_desktop_pages")
     for name in (
-        "ChatPage", "PipelinePage", "NetworkPage", "DiagnosticsPage",
-        "AlertsPage", "ScaffoldPage", "SessionPage", "SwarmPage",
-        "LogsPage", "SettingsPage", "AboutPage", "_StopStream",
+        "ChatPage",
+        "PipelinePage",
+        "NetworkPage",
+        "DiagnosticsPage",
+        "AlertsPage",
+        "ScaffoldPage",
+        "SessionPage",
+        "SwarmPage",
+        "LogsPage",
+        "SettingsPage",
+        "AboutPage",
+        "_StopStream",
     ):
         assert hasattr(mod, name), f"missing {name}"
 

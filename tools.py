@@ -25,8 +25,9 @@ import subprocess
 import textwrap
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from environment import AgentEnvironment
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 # ===========================================================================
 # Generic tool infrastructure
 # ===========================================================================
+
 
 class Tool:
     """A named, callable tool with metadata."""
@@ -57,13 +59,13 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
 
-    def register(self, tool: Tool, name: Optional[str] = None) -> Tool:
+    def register(self, tool: Tool, name: str | None = None) -> Tool:
         """Register *tool* under *name* (defaults to ``tool.name``)."""
         key = name or tool.name
         self._tools[key] = tool
         return tool
 
-    def get(self, name: str) -> Optional[Tool]:
+    def get(self, name: str) -> Tool | None:
         """Look up a tool by name."""
         return self._tools.get(name)
 
@@ -78,7 +80,7 @@ class ToolRegistry:
         """Return metadata for all registered tools."""
         return [t.to_dict() for t in self._tools.values()]
 
-    def register_defaults(self, env: Optional[AgentEnvironment] = None) -> None:
+    def register_defaults(self, env: AgentEnvironment | None = None) -> None:
         """Register the built-in file-sampler and code-patcher tools.
 
         If *env* is provided the code-patcher tool will use it for
@@ -156,13 +158,12 @@ class ToolRegistry:
         )
 
     @staticmethod
-    def _make_code_patcher(env: Optional[AgentEnvironment] = None) -> Tool:
+    def _make_code_patcher(env: AgentEnvironment | None = None) -> Tool:
         if env is not None:
             # Filter out env from kwargs so callers can still pass it
             def _make_fn(**kw: Any) -> Any:
-                return _code_patcher(
-                    **{k: v for k, v in kw.items() if k != "env"}, env=env
-                )
+                return _code_patcher(**{k: v for k, v in kw.items() if k != "env"}, env=env)
+
             fn: Callable[..., Any] = _make_fn
         else:
             fn = _code_patcher
@@ -193,6 +194,7 @@ class ToolRegistry:
 # ===========================================================================
 # file_sampler — safe file extraction
 # ===========================================================================
+
 
 def _infer_type(values: list[str]) -> str:
     """Guess the data type of a column from a sample of string values."""
@@ -238,7 +240,7 @@ def _is_float(v: str) -> bool:
 
 def _sample_csv(path: Path, sample_bytes: int, encoding: str) -> dict[str, Any]:
     """Sample a CSV file, returning column schema and row preview."""
-    with open(path, "r", encoding=encoding, newline="") as fh:
+    with open(path, encoding=encoding, newline="") as fh:
         reader = csv.reader(fh)
         try:
             header = [c.strip() for c in next(reader)]
@@ -273,14 +275,14 @@ def _sample_csv(path: Path, sample_bytes: int, encoding: str) -> dict[str, Any]:
 def _sample_json(path: Path, sample_bytes: int, encoding: str) -> dict[str, Any]:
     """Sample a JSON file (object or array)."""
     file_size = path.stat().st_size
-    with open(path, "r", encoding=encoding) as fh:
+    with open(path, encoding=encoding) as fh:
         chunk = fh.read(sample_bytes)
 
     try:
         data = json.loads(chunk)
     except json.JSONDecodeError:
         # chunk may be truncated; re-read entire file
-        with open(path, "r", encoding=encoding) as fh:
+        with open(path, encoding=encoding) as fh:
             data = json.load(fh)
 
     if isinstance(data, dict):
@@ -299,10 +301,7 @@ def _sample_json(path: Path, sample_bytes: int, encoding: str) -> dict[str, Any]
         sample = data[:25]
         schema: list[dict[str, Any]] = []
         if sample and isinstance(sample[0], dict):
-            schema = [
-                {"name": k, "type": type(v).__name__}
-                for k, v in sample[0].items()
-            ]
+            schema = [{"name": k, "type": type(v).__name__} for k, v in sample[0].items()]
         return {
             "format": "json",
             "file": str(path),
@@ -328,7 +327,7 @@ def _sample_jsonl(path: Path, sample_bytes: int, encoding: str) -> dict[str, Any
     """Sample a JSONL / NDJSON file."""
     records: list[dict[str, Any]] = []
     bytes_read = 0
-    with open(path, "r", encoding=encoding) as fh:
+    with open(path, encoding=encoding) as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -368,7 +367,7 @@ def _sample_python(path: Path, sample_bytes: int, encoding: str) -> dict[str, An
     lines: list[str] = []
     imports: list[str] = []
     bytes_read = 0
-    with open(path, "r", encoding=encoding) as fh:
+    with open(path, encoding=encoding) as fh:
         for line in fh:
             lines.append(line.rstrip("\n\r"))
             bytes_read += len(line.encode(encoding))
@@ -394,7 +393,7 @@ def _sample_text(path: Path, sample_bytes: int, encoding: str) -> dict[str, Any]
     """Sample a plain-text file (first N bytes)."""
     lines: list[str] = []
     bytes_read = 0
-    with open(path, "r", encoding=encoding) as fh:
+    with open(path, encoding=encoding) as fh:
         for line in fh:
             lines.append(line.rstrip("\n\r"))
             bytes_read += len(line.encode(encoding))
@@ -471,7 +470,7 @@ def _code_patcher(
     mode: str = "write",
     old_string: str = "",
     create_backup: bool = True,
-    env: Optional[AgentEnvironment] = None,
+    env: AgentEnvironment | None = None,
 ) -> dict[str, Any]:
     """Write or patch a file in the workspace.
 
@@ -519,8 +518,7 @@ def _code_patcher(
         current = path.read_text(encoding="utf-8")
         if old_string not in current:
             raise ValueError(
-                f"old_string not found in {file_path}. "
-                "Use mode='write' to create a new file."
+                f"old_string not found in {file_path}. Use mode='write' to create a new file."
             )
         content = _strip_fences(content)
         updated = current.replace(old_string, content, 1)
@@ -580,10 +578,11 @@ def _check_local_port(
 # python_runner — execute scripts via agent_env
 # ===========================================================================
 
+
 def _python_runner(
     env: AgentEnvironment,
     script: str,
-    cwd: Optional[str] = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     """Run *script* using the isolated ``agent_env`` interpreter."""
     proc = env.run(script, cwd=cwd)
@@ -665,7 +664,9 @@ def _db_sampler(file_path: str, max_rows: int = 5) -> dict[str, Any]:
         cursor = conn.cursor()
 
         # Get all tables and views
-        cursor.execute("SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY name")
+        cursor.execute(
+            "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY name"
+        )
         objects = cursor.fetchall()
 
         tables = []
@@ -687,13 +688,15 @@ def _db_sampler(file_path: str, max_rows: int = 5) -> dict[str, Any]:
                 cursor.execute(f'SELECT * FROM "{name}" LIMIT {max_rows}')
                 samples = [list(row) for row in cursor.fetchall()]
 
-            tables.append({
-                "name": name,
-                "type": obj_type,
-                "columns": columns,
-                "row_count": row_count,
-                "sample_rows": samples,
-            })
+            tables.append(
+                {
+                    "name": name,
+                    "type": obj_type,
+                    "columns": columns,
+                    "row_count": row_count,
+                    "sample_rows": samples,
+                }
+            )
 
         conn.close()
         return {"file": str(path), "tables": tables}

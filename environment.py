@@ -10,14 +10,12 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import stat
+import subprocess
 import sys
 import venv
-import shutil
-import subprocess
 from pathlib import Path
-from typing import Optional
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -35,6 +33,7 @@ def _bin_subdir() -> str:
 # Environment manager
 # ===========================================================================
 
+
 class AgentEnvironment:
     """Manage an isolated ``agent_env`` virtual environment.
 
@@ -46,10 +45,10 @@ class AgentEnvironment:
         print(proc.stdout)
     """
 
-    def __init__(self, base_path: Optional[str] = None) -> None:
+    def __init__(self, base_path: str | None = None) -> None:
         self.base_path = Path(base_path or os.getcwd()).resolve()
         self.env_dir = self.base_path / ENV_DIR_NAME
-        self._python: Optional[Path] = None
+        self._python: Path | None = None
         self._ready = False
 
     # ------------------------------------------------------------------
@@ -88,14 +87,13 @@ class AgentEnvironment:
         venv.create(str(self.env_dir), with_pip=True, clear=False)
         self._ready = self.is_ready
         if not self._ready:
-            raise RuntimeError(
-                f"Failed to create virtual environment at {self.env_dir}"
-            )
+            raise RuntimeError(f"Failed to create virtual environment at {self.env_dir}")
         return self
 
     def teardown(self) -> None:
         """Remove the virtual environment and all installed packages."""
         if self.env_dir.exists():
+
             def _onerror(func, path, exc_info):
                 # Windows permission errors on __pycache__ — retry after chmod
                 try:
@@ -103,6 +101,7 @@ class AgentEnvironment:
                     func(path)
                 except Exception:
                     pass
+
             shutil.rmtree(self.env_dir, onerror=_onerror)
         self._python = None
         self._ready = False
@@ -148,7 +147,7 @@ class AgentEnvironment:
     def run(
         self,
         script: str,
-        cwd: Optional[str] = None,
+        cwd: str | None = None,
         **kwargs: object,
     ) -> subprocess.CompletedProcess:
         """Execute *script* (a string) with the isolated interpreter."""
@@ -164,7 +163,7 @@ class AgentEnvironment:
     def run_file(
         self,
         file_path: str,
-        cwd: Optional[str] = None,
+        cwd: str | None = None,
         **kwargs: object,
     ) -> subprocess.CompletedProcess:
         """Execute *file_path* with the isolated interpreter."""
@@ -203,7 +202,4 @@ class AgentEnvironment:
         return (proc.stdout + proc.stderr).strip()
 
     def __repr__(self) -> str:
-        return (
-            f"<AgentEnvironment ready={self._ready} "
-            f"path={self.env_dir}>"
-        )
+        return f"<AgentEnvironment ready={self._ready} path={self.env_dir}>"

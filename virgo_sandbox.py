@@ -29,11 +29,37 @@ from _console import icon
 # allowed. Add entries via config or by modifying this set at runtime.
 
 ALLOWED_COMMANDS: set[str] = {
-    "python", "pip", "git", "ls", "cat", "echo", "pwd",
-    "head", "tail", "wc", "sort", "grep", "find", "mkdir",
-    "cp", "mv", "which", "ipconfig", "systeminfo", "netstat",
-    "tasklist", "ping", "hostname", "date", "time", "whoami",
-    "dir", "type", "more", "help", "powershell",
+    "python",
+    "pip",
+    "git",
+    "ls",
+    "cat",
+    "echo",
+    "pwd",
+    "head",
+    "tail",
+    "wc",
+    "sort",
+    "grep",
+    "find",
+    "mkdir",
+    "cp",
+    "mv",
+    "which",
+    "ipconfig",
+    "systeminfo",
+    "netstat",
+    "tasklist",
+    "ping",
+    "hostname",
+    "date",
+    "time",
+    "whoami",
+    "dir",
+    "type",
+    "more",
+    "help",
+    "powershell",
 }
 
 # Safe argument prefixes for commands that accept them
@@ -46,8 +72,21 @@ ALLOWED_FLAGS: dict[str, list[str]] = {
     "ipconfig": ["/all", "/release", "/renew", "/flushdns", "/displaydns"],
     "python": ["-c", "-m", "-V", "--version", "-u", "-B"],
     "pip": ["install", "list", "freeze", "show", "uninstall", "--version"],
-    "git": ["status", "log", "diff", "branch", "add", "commit", "push",
-            "pull", "clone", "init", "checkout", "merge", "stash"],
+    "git": [
+        "status",
+        "log",
+        "diff",
+        "branch",
+        "add",
+        "commit",
+        "push",
+        "pull",
+        "clone",
+        "init",
+        "checkout",
+        "merge",
+        "stash",
+    ],
     "powershell": ["-Command", "-File", "-NoProfile", "-ExecutionPolicy"],
 }
 
@@ -56,6 +95,7 @@ def _load_from_config() -> None:
     """Merge allowlist entries from ``virgo.toml`` if available."""
     try:
         from config import load as _load_cfg
+
         cfg = _load_cfg()  # walks up to find virgo.toml
         sandbox_cfg = cfg.get("sandbox", {})
         if sandbox_cfg.get("mode") == "allowlist":

@@ -7,16 +7,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 HERE = Path(__file__).parent.parent
 sys.path.insert(0, str(HERE))
 
 from autodepend import (
-    extract_imports, classify_import,
-    auto_install, _STDLIB_MODULES, _KNOWN_THIRD_PARTY,
+    _KNOWN_THIRD_PARTY,
+    _STDLIB_MODULES,
+    auto_install,
+    classify_import,
+    extract_imports,
 )
-
 
 # ===========================================================================
 # extract_imports

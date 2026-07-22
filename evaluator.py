@@ -38,17 +38,54 @@ class Evaluation:
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
+
 def _salient_keywords(goal: str) -> list[str]:
     """Return lowercase tokens of length >= 4 from the goal.
 
     Stopword filtering keeps the keyword set focused on meaningful terms.
     """
     stopwords = {
-        "the", "and", "that", "this", "with", "from", "your", "have", "will",
-        "they", "their", "what", "when", "where", "which", "while", "about",
-        "would", "could", "should", "into", "than", "then", "them", "there",
-        "here", "been", "being", "were", "does", "done", "make", "made",
-        "some", "such", "only", "also", "after", "before", "over", "under",
+        "the",
+        "and",
+        "that",
+        "this",
+        "with",
+        "from",
+        "your",
+        "have",
+        "will",
+        "they",
+        "their",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "about",
+        "would",
+        "could",
+        "should",
+        "into",
+        "than",
+        "then",
+        "them",
+        "there",
+        "here",
+        "been",
+        "being",
+        "were",
+        "does",
+        "done",
+        "make",
+        "made",
+        "some",
+        "such",
+        "only",
+        "also",
+        "after",
+        "before",
+        "over",
+        "under",
     }
     tokens = re.findall(r"[a-zA-Z0-9_]+", goal.lower())
     out: list[str] = []
@@ -84,8 +121,7 @@ def _deterministic_checks(goal: str, transcript: str) -> tuple[list[str], list[s
 
     has_action = _has_tool_call(transcript)
     checks.append(
-        "has_action: transcript shows at least one tool call"
-        + ("" if has_action else " — FAILED")
+        "has_action: transcript shows at least one tool call" + ("" if has_action else " — FAILED")
     )
 
     keywords = _salient_keywords(goal)
@@ -101,14 +137,9 @@ def _deterministic_checks(goal: str, transcript: str) -> tuple[list[str], list[s
     )
 
     not_empty = len(transcript) > 50
-    checks.append(
-        "not_empty: transcript length > 50"
-        + ("" if not_empty else " — FAILED")
-    )
+    checks.append("not_empty: transcript length > 50" + ("" if not_empty else " — FAILED"))
 
-    failed = [
-        c for c in checks if c.endswith("— FAILED")
-    ]
+    failed = [c for c in checks if c.endswith("— FAILED")]
     return checks, failed
 
 
@@ -118,9 +149,7 @@ def _deterministic_evaluation(goal: str, transcript: str, reason: str = "") -> E
     passed = len(failed) == 0
     score = 0.0 if not checks else (len(checks) - len(failed)) / len(checks)
     if failed:
-        rationale = (
-            f"Deterministic checks failed: {', '.join(c.split(' — ')[0] for c in failed)}."
-        )
+        rationale = f"Deterministic checks failed: {', '.join(c.split(' — ')[0] for c in failed)}."
     else:
         rationale = "All deterministic checks passed."
     if reason:
@@ -129,6 +158,7 @@ def _deterministic_evaluation(goal: str, transcript: str, reason: str = "") -> E
 
 
 # ── LLM mode ─────────────────────────────────────────────────────────────────
+
 
 def _build_rubric_messages(goal: str, transcript: str, rubric: str) -> list[dict[str, str]]:
     """Construct the messages sent to the LLM evaluator."""
@@ -142,12 +172,7 @@ def _build_rubric_messages(goal: str, transcript: str, rubric: str) -> list[dict
         '"rationale": "<short explanation>"}\n'
         "Do not include any text outside the JSON object."
     )
-    user = (
-        f"GOAL:\n{goal}\n\n"
-        f"TRANSCRIPT:\n{transcript}\n"
-        f"{rubric_block}"
-        "Return the JSON verdict now."
-    )
+    user = f"GOAL:\n{goal}\n\nTRANSCRIPT:\n{transcript}\n{rubric_block}Return the JSON verdict now."
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -166,9 +191,7 @@ def _extract_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def _llm_evaluation(
-    goal: str, transcript: str, client: object, rubric: str
-) -> Evaluation:
+def _llm_evaluation(goal: str, transcript: str, client: object, rubric: str) -> Evaluation:
     """Attempt an LLM-based evaluation, falling back to deterministic."""
     messages = _build_rubric_messages(goal, transcript, rubric)
     try:
@@ -197,6 +220,7 @@ def _llm_evaluation(
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 
 def evaluate(
     goal: str,

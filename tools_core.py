@@ -26,14 +26,15 @@ from __future__ import annotations
 import json
 import re
 import sys
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Optional
 
 try:  # pragma: no cover - logging is optional in some environments
     from _log import log
 except Exception:  # pragma: no cover
+
     class _NullLog:
         def info(self, *a, **k):
             pass
@@ -59,11 +60,11 @@ except Exception:  # pragma: no cover
 
 # Risk levels for tools
 RISK_UNKNOWN = 0
-RISK_SAFE = 1       # read-only, no side effects
-RISK_LOW = 2        # writes files but sandboxed
-RISK_MEDIUM = 3     # executes code/subprocess
-RISK_HIGH = 4       # destructive operations (rm, format, shutdown)
-RISK_CRITICAL = 5   # full system access
+RISK_SAFE = 1  # read-only, no side effects
+RISK_LOW = 2  # writes files but sandboxed
+RISK_MEDIUM = 3  # executes code/subprocess
+RISK_HIGH = 4  # destructive operations (rm, format, shutdown)
+RISK_CRITICAL = 5  # full system access
 
 _TOOL_RISK: dict[str, int] = {
     "think": RISK_SAFE,
@@ -77,16 +78,18 @@ _TOOL_RISK: dict[str, int] = {
 
 class PermissionDenied(Exception):
     """Raised when a tool call is denied by the permission gate."""
+
     pass
 
 
 @dataclass
 class AuditEntry:
     """A single audit log entry for a tool call."""
+
     ts: str
     tool: str
     args: str
-    decision: str          # "allowed" | "denied" | "blocked"
+    decision: str  # "allowed" | "denied" | "blocked"
     reason: str = ""
 
 
@@ -99,8 +102,8 @@ class PermissionGate:
     def __init__(self, max_risk: int = RISK_HIGH) -> None:
         self.max_risk = max_risk
         self.audit_log: list[AuditEntry] = []
-        self._allowlist: set[str] = set()     # always allowed tools
-        self._blocklist: set[str] = set()     # always blocked tools
+        self._allowlist: set[str] = set()  # always allowed tools
+        self._blocklist: set[str] = set()  # always blocked tools
 
     def allow(self, *tools: str) -> None:
         """Always allow these tools, bypassing risk checks."""
@@ -116,39 +119,59 @@ class PermissionGate:
 
     def check(self, tool: str, args: str = "") -> None:
         """Check if *tool* is allowed. Raises PermissionDenied if blocked."""
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        now = datetime.now(UTC).isoformat(timespec="seconds")
 
         if tool in self._blocklist:
-            self.audit_log.append(AuditEntry(
-                ts=now, tool=tool, args=args,
-                decision="denied", reason="tool is blocklisted",
-            ))
+            self.audit_log.append(
+                AuditEntry(
+                    ts=now,
+                    tool=tool,
+                    args=args,
+                    decision="denied",
+                    reason="tool is blocklisted",
+                )
+            )
             raise PermissionDenied(f"Tool '{tool}' is blocklisted")
 
         if tool in self._allowlist:
-            self.audit_log.append(AuditEntry(
-                ts=now, tool=tool, args=args,
-                decision="allowed", reason="allowlisted",
-            ))
+            self.audit_log.append(
+                AuditEntry(
+                    ts=now,
+                    tool=tool,
+                    args=args,
+                    decision="allowed",
+                    reason="allowlisted",
+                )
+            )
             return
 
         risk = self.risk_of(tool)
         if risk > self.max_risk:
-            reason = (f"risk level {risk} exceeds max {self.max_risk}"
-                      if risk > RISK_UNKNOWN else "unknown tool")
-            self.audit_log.append(AuditEntry(
-                ts=now, tool=tool, args=args,
-                decision="denied", reason=reason,
-            ))
-            raise PermissionDenied(
-                f"Tool '{tool}' blocked: {reason} "
-                f"(max_risk={self.max_risk})"
+            reason = (
+                f"risk level {risk} exceeds max {self.max_risk}"
+                if risk > RISK_UNKNOWN
+                else "unknown tool"
             )
+            self.audit_log.append(
+                AuditEntry(
+                    ts=now,
+                    tool=tool,
+                    args=args,
+                    decision="denied",
+                    reason=reason,
+                )
+            )
+            raise PermissionDenied(f"Tool '{tool}' blocked: {reason} (max_risk={self.max_risk})")
 
-        self.audit_log.append(AuditEntry(
-            ts=now, tool=tool, args=args,
-            decision="allowed", reason=f"risk={risk} <= max={self.max_risk}",
-        ))
+        self.audit_log.append(
+            AuditEntry(
+                ts=now,
+                tool=tool,
+                args=args,
+                decision="allowed",
+                reason=f"risk={risk} <= max={self.max_risk}",
+            )
+        )
 
     def summary(self) -> str:
         """Return a text summary of recent audit entries."""
@@ -160,7 +183,7 @@ class PermissionGate:
 
 
 # Default process-wide gate
-_GATE: Optional[PermissionGate] = None
+_GATE: PermissionGate | None = None
 
 
 def get_gate() -> PermissionGate:
@@ -180,6 +203,7 @@ def set_gate(gate: PermissionGate) -> None:
 # ===========================================================================
 # Generic tool infrastructure
 # ===========================================================================
+
 
 @dataclass
 class Tool:
@@ -216,7 +240,7 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         return tool
 
-    def get(self, name: str) -> Optional[Tool]:
+    def get(self, name: str) -> Tool | None:
         """Look up a tool by name, or ``None`` if not registered."""
         return self._tools.get(name)
 
@@ -284,10 +308,11 @@ def _is_dangerous_command(command: str) -> bool:
     return any(token in lowered for token in _FALLBACK_BLOCKLIST)
 
 
-def _get_sandbox_runner() -> Optional[Callable[[list[str]], str]]:
+def _get_sandbox_runner() -> Callable[[list[str]], str] | None:
     """Return ``virgo_sandbox.run_sandboxed`` if importable, else ``None``."""
     try:
         from virgo_sandbox import run_sandboxed  # type: ignore
+
         return run_sandboxed
     except Exception:
         return None
@@ -312,7 +337,7 @@ def _shell(args: str) -> str:
         except subprocess.CalledProcessError as exc:
             out = exc.stdout or ""
             if exc.stderr:
-                out += (("\n" + exc.stderr) if out else exc.stderr)
+                out += ("\n" + exc.stderr) if out else exc.stderr
             out += f"\n[exit code {exc.returncode}]"
             return out
         except ValueError as exc:  # blocked by sandbox
@@ -336,7 +361,7 @@ def _shell(args: str) -> str:
         )
         out = proc.stdout or ""
         if proc.stderr:
-            out += (("\n" + proc.stderr) if out else proc.stderr)
+            out += ("\n" + proc.stderr) if out else proc.stderr
         if proc.returncode != 0:
             out += f"\n[exit code {proc.returncode}]"
         return out
@@ -402,7 +427,7 @@ def _file_write(args: str) -> str:
     return f"OK: wrote {path} ({len(content)} chars)"
 
 
-def _parse_kv_file_write(args: str) -> Optional[tuple[str, str]]:
+def _parse_kv_file_write(args: str) -> tuple[str, str] | None:
     """Parse ``PATH=... CONTENT="..."`` style file_write args.
 
     Returns ``(path, content)`` or ``None`` if the format doesn't match.
@@ -415,14 +440,20 @@ def _parse_kv_file_write(args: str) -> Optional[tuple[str, str]]:
     # Unwrap a surrounding quote pair and decode common escapes.
     if len(content) >= 2 and content[0] in "\"'" and content[-1] == content[0]:
         content = content[1:-1]
-        content = content.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\\'", "'")
+        content = (
+            content.replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace('\\"', '"')
+            .replace("\\'", "'")
+        )
     return path_str, content
 
 
-def _get_python_runner() -> Optional[Callable[..., object]]:
+def _get_python_runner() -> Callable[..., object] | None:
     """Return ``tools.python_runner`` if importable, else ``None``."""
     try:
         from tools import python_runner  # type: ignore
+
         return python_runner
     except Exception:
         return None
@@ -444,7 +475,11 @@ def _strip_code_fences(code: str) -> str:
     if m and m.group(1).strip():
         return m.group(1).rstrip()
     # Fallback: drop bare fence lines.
-    lines = [line for line in code.splitlines() if line.strip() != "```" and not line.lstrip().startswith("```")]
+    lines = [
+        line
+        for line in code.splitlines()
+        if line.strip() != "```" and not line.lstrip().startswith("```")
+    ]
     cleaned = "\n".join(lines)
     return cleaned if cleaned.strip() else code
 
@@ -465,7 +500,7 @@ def _python_run(args: str) -> str:
                 err = res.get("stderr", "") or ""
                 combined = out
                 if err:
-                    combined += (("\n" + err) if combined else err)
+                    combined += ("\n" + err) if combined else err
                 if res.get("returncode", 0):
                     combined += f"\n[exit code {res.get('returncode')}]"
                 return combined or "ERROR: no output"
@@ -486,7 +521,7 @@ def _python_run(args: str) -> str:
         )
         out = proc.stdout or ""
         if proc.stderr:
-            out += (("\n" + proc.stderr) if out else proc.stderr)
+            out += ("\n" + proc.stderr) if out else proc.stderr
         if proc.returncode != 0:
             out += f"\n[exit code {proc.returncode}]"
         return out or "ERROR: no output"
@@ -494,14 +529,16 @@ def _python_run(args: str) -> str:
         return f"ERROR: {exc}"
 
 
-def _get_web_fetcher() -> Optional[Callable[[str], object]]:
+def _get_web_fetcher() -> Callable[[str], object] | None:
     """Return a ``tools`` web fetcher if importable, else ``None``."""
     try:
         from tools import web_fetch  # type: ignore
+
         return web_fetch
     except Exception:
         try:
             from tools import _web_fetch  # type: ignore
+
             return _web_fetch
         except Exception:
             return None
@@ -552,45 +589,58 @@ def _think(args: str) -> str:
 # Built-in registry factory
 # ===========================================================================
 
+
 def make_builtin_registry() -> ToolRegistry:
     """Create a ``ToolRegistry`` pre-populated with the built-in tools."""
     reg = ToolRegistry()
-    reg.register(Tool(
-        name="shell",
-        description="Execute a shell command via the sandbox and return stdout/stderr.",
-        run=_shell,
-        schema="<command string>",
-    ))
-    reg.register(Tool(
-        name="file_read",
-        description="Read up to the first 8000 characters of a file.",
-        run=_file_read,
-        schema="PATH",
-    ))
-    reg.register(Tool(
-        name="file_write",
-        description="Write CONTENT to PATH (overwrites).",
-        run=_file_write,
-        schema="PATH\\n---\\nCONTENT",
-    ))
-    reg.register(Tool(
-        name="python_run",
-        description="Execute Python code and return stdout/stderr.",
-        run=_python_run,
-        schema="<python code>",
-    ))
-    reg.register(Tool(
-        name="web_fetch",
-        description="Fetch a URL and return its text body (truncated to 8000 chars).",
-        run=_web_fetch,
-        schema="URL",
-    ))
-    reg.register(Tool(
-        name="think",
-        description="Echo reasoning text back to the model (in-band thinking).",
-        run=_think,
-        schema="<free text>",
-    ))
+    reg.register(
+        Tool(
+            name="shell",
+            description="Execute a shell command via the sandbox and return stdout/stderr.",
+            run=_shell,
+            schema="<command string>",
+        )
+    )
+    reg.register(
+        Tool(
+            name="file_read",
+            description="Read up to the first 8000 characters of a file.",
+            run=_file_read,
+            schema="PATH",
+        )
+    )
+    reg.register(
+        Tool(
+            name="file_write",
+            description="Write CONTENT to PATH (overwrites).",
+            run=_file_write,
+            schema="PATH\\n---\\nCONTENT",
+        )
+    )
+    reg.register(
+        Tool(
+            name="python_run",
+            description="Execute Python code and return stdout/stderr.",
+            run=_python_run,
+            schema="<python code>",
+        )
+    )
+    reg.register(
+        Tool(
+            name="web_fetch",
+            description="Fetch a URL and return its text body (truncated to 8000 chars).",
+            run=_web_fetch,
+            schema="URL",
+        )
+    )
+    reg.register(
+        Tool(
+            name="think",
+            description="Echo reasoning text back to the model (in-band thinking).",
+            run=_think,
+            schema="<free text>",
+        )
+    )
     return reg
 
 
@@ -633,7 +683,7 @@ def parse_tool_calls(text: str) -> list[tuple[str, str]]:
     return _parse_fenced(text)
 
 
-def _parse_json_array(text: str) -> Optional[list[tuple[str, str]]]:
+def _parse_json_array(text: str) -> list[tuple[str, str]] | None:
     """Return parsed tool calls if *text* contains a JSON array, else None."""
     start = text.find("[")
     if start == -1:

@@ -23,13 +23,14 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 # Load .env if python-dotenv is available
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -39,11 +40,14 @@ VERSION = "0.6.0"
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
+from datetime import UTC
+
 from logo import print_logo
 
 try:
     from _console import icon
 except Exception:  # pragma: no cover
+
     def icon(name: str) -> str:  # type: ignore
         return ""
 
@@ -56,6 +60,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     if args.config:
         try:
             from config import load
+
             cfg = load(args.config)
             # Merge CLI overrides
             for key, val in vars(args).items():
@@ -81,8 +86,8 @@ def cmd_run(args: argparse.Namespace) -> None:
         excludes = None
 
     from environment import AgentEnvironment
-    from tools import ToolRegistry
     from orchestrator import Orchestrator
+    from tools import ToolRegistry
 
     env = AgentEnvironment(base_path=str(HERE))
     if env.is_ready:
@@ -98,11 +103,15 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     # Auto-load plugins
     from plugins import load_all
+
     load_all(registry)
 
     orch = Orchestrator(
-        env, registry, base_path=str(HERE),
-        workspace_excludes=excludes or [
+        env,
+        registry,
+        base_path=str(HERE),
+        workspace_excludes=excludes
+        or [
             "agent_env",
             ".crush",
             ".git",
@@ -134,6 +143,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     if use_llm:
         try:
             import main
+
             # Router config — file overrides env
             if hasattr(args, "router") and args.router:
                 main.ROUTER_CONFIG = main.router_from_file(args.router)
@@ -144,13 +154,11 @@ def cmd_run(args: argparse.Namespace) -> None:
             # Default: stream output when attached to a TTY (instant feedback).
             if getattr(args, "no_stream", False):
                 main.STREAM_OUTPUT = False
-            elif getattr(args, "stream", False):
-                main.STREAM_OUTPUT = True
-            elif sys.__stdout__.isatty():
+            elif getattr(args, "stream", False) or sys.__stdout__.isatty():
                 main.STREAM_OUTPUT = True
             if getattr(args, "fast", False):
                 main.FAST_MODE = True
-            if hasattr(args, 'fallback_model') and args.fallback_model:
+            if hasattr(args, "fallback_model") and args.fallback_model:
                 main.FALLBACK_MODEL = args.fallback_model
             planner = main.my_planner
             # Select generator based on --lang
@@ -158,10 +166,12 @@ def cmd_run(args: argparse.Namespace) -> None:
                 code_gen = main.my_generator
             else:
                 from generators import get_generator
+
                 gen = get_generator(args.lang)
 
                 def code_gen(plan, state, registry, env):
                     return gen.generate(plan)
+
             fixer = main.my_fixer
         except ImportError as exc:
             print(f"[virgo] Could not load LLM policies: {exc}")
@@ -174,12 +184,13 @@ def cmd_run(args: argparse.Namespace) -> None:
         max_iterations=max_iterations,
         run_critic=run_critic,
         auto_depend=auto_depend,
-        auto_approve=args.yes if hasattr(args, 'yes') else False,
+        auto_approve=args.yes if hasattr(args, "yes") else False,
     )
 
     # Save state
     try:
         from memory import save_state
+
         path = save_state(state, name=name)
         print(f"\n  [virgo] Session saved: {path}")
     except Exception as exc:
@@ -188,8 +199,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     # Show result
     print(f"\n  {'=' * 60}")
     print(f"  Result:  {'PASS' if state.loop_passed else 'FAIL'}")
-    print(f"  Files:   {len(state.generated_files)}  |  "
-          f"Iterations: {state.iteration}")
+    print(f"  Files:   {len(state.generated_files)}  |  Iterations: {state.iteration}")
     if state.generated_files:
         for gf in state.generated_files:
             mark = "PASS" if gf.passed else "FAIL"
@@ -200,7 +210,8 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     # -- Git integration ---------------------------------------------------
     if state.loop_passed and (args.git or args.git_push or args.git_branch):
-        from virgo_git import git_commit, git_branch as _git_branch
+        from virgo_git import git_branch as _git_branch
+        from virgo_git import git_commit
 
         push = args.git_push
         branch = args.git_branch
@@ -217,20 +228,24 @@ def cmd_run(args: argparse.Namespace) -> None:
 def cmd_serve(args: argparse.Namespace) -> None:
     """Launch the web dashboard."""
     from server import serve
+
     serve(host=args.host, port=args.port)
 
 
 def cmd_list(args: argparse.Namespace) -> None:
     """List saved sessions."""
     from memory import list_sessions
+
     sessions = list_sessions()
     if not sessions:
         print("[virgo] No saved sessions.")
         return
     print(f"\n  {'Name':30s}  {'Goal':45s}  {'Status':10s}  {'Files':6s}")
-    print(f"  {'-'*30}  {'-'*45}  {'-'*10}  {'-'*6}")
+    print(f"  {'-' * 30}  {'-' * 45}  {'-' * 10}  {'-' * 6}")
     for s in sessions:
-        status = "PASS" if s.get("loop_passed") else ("FAIL" if s.get("loop_passed") is False else "---")
+        status = (
+            "PASS" if s.get("loop_passed") else ("FAIL" if s.get("loop_passed") is False else "---")
+        )
         goal = s.get("goal", "")[:44]
         print(f"  {s['name']:30s}  {goal:45s}  {status:10s}  {s.get('generated', 0):6d}")
     print()
@@ -239,9 +254,10 @@ def cmd_list(args: argparse.Namespace) -> None:
 def cmd_replay(args: argparse.Namespace) -> None:
     """Replay a saved session."""
     from environment import AgentEnvironment
-    from tools import ToolRegistry
+    from memory import load_state
+    from memory import replay as replay_fn
     from orchestrator import Orchestrator
-    from memory import replay as replay_fn, load_state
+    from tools import ToolRegistry
 
     # Quick check the session exists
     load_state(args.session)
@@ -255,7 +271,9 @@ def cmd_replay(args: argparse.Namespace) -> None:
     registry.register_defaults(env)
 
     orch = Orchestrator(
-        env, registry, base_path=str(HERE),
+        env,
+        registry,
+        base_path=str(HERE),
         workspace_excludes=["agent_env", ".crush", ".git", "__pycache__", ".mypy_cache"],
     )
 
@@ -265,14 +283,18 @@ def cmd_replay(args: argparse.Namespace) -> None:
     code_gen = fixer = None
     if args.llm:
         try:
-            from main import my_generator, my_fixer
+            from main import my_fixer, my_generator
+
             code_gen = my_generator
             fixer = my_fixer
         except ImportError:
             pass
 
     state = replay_fn(
-        args.session, orch, env, registry,
+        args.session,
+        orch,
+        env,
+        registry,
         code_gen=code_gen,
         fixer=fixer,
         max_iterations=args.iterations,
@@ -286,6 +308,7 @@ def cmd_replay(args: argparse.Namespace) -> None:
 def cmd_demo(args: argparse.Namespace) -> None:
     """Run the deterministic demo pipeline (no LLM required)."""
     from run import main as run_main
+
     run_main(goal=getattr(args, "goal", None))
 
 
@@ -299,6 +322,7 @@ def cmd_version(_args: argparse.Namespace) -> None:
 def cmd_menu(_args: argparse.Namespace) -> None:
     """Launch the TUI master dashboard."""
     from virgo_menu import master_dashboard
+
     master_dashboard()
 
 
@@ -324,9 +348,10 @@ def cmd_update(_args: argparse.Namespace) -> None:
 
 def cmd_doctor(_args: argparse.Namespace) -> None:
     """Run environment health checks."""
+    import json as _json
     import shutil
     import urllib.request as _ur
-    import json as _json
+
     here = Path(__file__).resolve().parent
 
     ok_count = 0
@@ -361,20 +386,24 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
                 return "models" in data or "data" in data
         except Exception:
             return False
+
     check("LLM reachable (Ollama)", check_llm)
 
     # ── Git status ──
     def check_git_clean() -> bool:
-        r = subprocess.run(["git", "status", "--porcelain"],
-                           cwd=here, capture_output=True, text=True, timeout=10)
+        r = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=here, capture_output=True, text=True, timeout=10
+        )
         return r.returncode == 0 and r.stdout.strip() == ""
+
     check("Git working tree clean", check_git_clean)
 
     # ── Disk space ──
     def check_disk() -> bool:
         usage = shutil.disk_usage(here)
-        free_gb = usage.free / (1024 ** 3)
+        free_gb = usage.free / (1024**3)
         return free_gb > 1.0
+
     check("Disk space (>1 GB free)", check_disk)
 
     # ── Dependencies ──
@@ -382,11 +411,14 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
         required = {"pytest", "requests", "fastapi", "uvicorn", "jinja2", "pyyaml"}
         r = subprocess.run(
             [sys.executable, "-m", "pip", "list", "--format=freeze"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         installed = {line.split("==")[0].lower() for line in r.stdout.splitlines() if "==" in line}
         missing = required - installed
         return len(missing) <= 2  # allow a few optional deps missing
+
     check("Core dependencies installed", check_deps)
 
     print(f"\n  {ok_count}/{total} checks passed  |  virgo-agent v{VERSION}")
@@ -450,8 +482,12 @@ def cmd_config(args: argparse.Namespace) -> None:
         key = args.unset.upper()
         os.environ.pop(key, None)
         if dotenv_path.exists():
-            lines = [line for line in dotenv_path.read_text(encoding="utf-8").splitlines()
-                     if not line.strip().startswith(f"{key}=") and not line.strip().startswith(f"export {key}=")]
+            lines = [
+                line
+                for line in dotenv_path.read_text(encoding="utf-8").splitlines()
+                if not line.strip().startswith(f"{key}=")
+                and not line.strip().startswith(f"export {key}=")
+            ]
             dotenv_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"[virgo] {key} removed")
         return
@@ -471,6 +507,7 @@ def cmd_config(args: argparse.Namespace) -> None:
 def cmd_self_install(_args: argparse.Namespace) -> None:
     """Add virgo to the system PATH for access from any terminal."""
     import subprocess as _subprocess
+
     here = Path(__file__).resolve().parent
     bat = here / "virgo.bat"
 
@@ -489,7 +526,8 @@ def cmd_self_install(_args: argparse.Namespace) -> None:
         try:
             result = _subprocess.run(
                 ["setx", "PATH", f"{here};%PATH%"],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0:
                 print(f"[virgo] Added {here} to user PATH.")
@@ -514,6 +552,7 @@ def cmd_self_install(_args: argparse.Namespace) -> None:
 def cmd_diff(args: argparse.Namespace) -> None:
     """Compare two saved sessions."""
     from virgo_diff import cmd_diff as _diff
+
     _diff(args)
 
 
@@ -523,6 +562,7 @@ def cmd_swarm(args: argparse.Namespace) -> None:
     agents: list[tuple[str, str]] = []
     if args.agent_file:
         import json
+
         with open(args.agent_file) as f:
             entries = json.load(f)
         for entry in entries:
@@ -540,8 +580,8 @@ def cmd_swarm(args: argparse.Namespace) -> None:
         agents = [("agent", args.goal)]
 
     from environment import AgentEnvironment
-    from tools import ToolRegistry
     from orchestrator import Orchestrator
+    from tools import ToolRegistry
 
     HERE = Path(__file__).resolve().parent
     env = AgentEnvironment(base_path=str(HERE))
@@ -552,6 +592,7 @@ def cmd_swarm(args: argparse.Namespace) -> None:
     registry.register_defaults(env)
 
     from plugins import load_all
+
     load_all(registry)
 
     orch = Orchestrator(env, registry, base_path=str(HERE))
@@ -560,20 +601,21 @@ def cmd_swarm(args: argparse.Namespace) -> None:
         agents=agents,
         max_iterations=args.iterations,
         use_llm=args.llm,
-        share=getattr(args, 'share', False),
-        ordered=getattr(args, 'ordered', False),
+        share=getattr(args, "share", False),
+        ordered=getattr(args, "ordered", False),
     )
 
     # Save results
     try:
         from memory import save_state
         from orchestrator import WorkspaceState
+
         state = WorkspaceState(
             goal=f"swarm: {args.goal}",
             base_path=str(HERE),
         )
         state.context["swarm_results"] = results
-        path = save_state(state, name=args.name if hasattr(args, 'name') else None)
+        path = save_state(state, name=args.name if hasattr(args, "name") else None)
         if path:
             print(f"\n[virgo] Swarm saved: {path}")
     except Exception as exc:
@@ -586,14 +628,22 @@ def cmd_swarm(args: argparse.Namespace) -> None:
 
 def cmd_watch(args: argparse.Namespace) -> None:
     """Watch a directory and re-run the pipeline on change events."""
+    from datetime import datetime
+
     from virgo_watcher import FileWatcher, run_pipeline
-    from datetime import datetime, timezone
 
     watch_dir = Path(args.dir or ".").resolve()
 
-    exclude = ["__pycache__", ".git", ".venv",
-               "agent_env", ".virgo_memory", ".coverage",
-               "dist", "virgo_agent.egg-info"]
+    exclude = [
+        "__pycache__",
+        ".git",
+        ".venv",
+        "agent_env",
+        ".virgo_memory",
+        ".coverage",
+        "dist",
+        "virgo_agent.egg-info",
+    ]
     exclude.extend(args.exclude or [])
 
     watcher = FileWatcher(
@@ -604,7 +654,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
     )
 
     def on_change(changed: list[str]) -> None:
-        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        ts = datetime.now(UTC).strftime("%H:%M:%S")
         print(f"\n  [{ts}] Change detected — {len(changed)} file(s)")
         for path in changed[:10]:
             print(f"    📄 {path}")
@@ -632,6 +682,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
 def cmd_feedback(args: argparse.Namespace) -> None:
     """Show feedback memory contents."""
     from memory import FeedbackMemory
+
     fb = FeedbackMemory()
     if len(fb) == 0:
         print("[virgo] Feedback memory is empty.")
@@ -645,7 +696,7 @@ def cmd_feedback(args: argparse.Namespace) -> None:
 
 def cmd_templates(args: argparse.Namespace) -> None:
     """List and generate from built-in templates."""
-    from templates import list_templates, generate
+    from templates import generate, list_templates
 
     if args.generate:
         generate(
@@ -663,18 +714,20 @@ def cmd_templates(args: argparse.Namespace) -> None:
     print("\n  Available templates:\n")
     for t in templates:
         print(f"    {t['key']:20s}  {t['name']:15s}  {t['description']}")
-    print("\n  Use: virgo templates --generate <key> [--output file] [--name Name] [--description '...']\n")
+    print(
+        "\n  Use: virgo templates --generate <key> [--output file] [--name Name] [--description '...']\n"
+    )
 
 
 def cmd_export(args: argparse.Namespace) -> None:
     """Export a saved session as HTML or Markdown."""
-    from memory import load_state
     from exporter import export_html, export_markdown
+    from memory import load_state
 
     data = load_state(args.session)
 
     # Reconstruct a minimal state-like object for the exporter
-    from orchestrator import WorkspaceState, DiscoveredFile, GeneratedFile, TestLog
+    from orchestrator import DiscoveredFile, GeneratedFile, TestLog, WorkspaceState
 
     state = WorkspaceState(
         goal=data.get("goal", ""),
@@ -702,7 +755,7 @@ def cmd_export(args: argparse.Namespace) -> None:
 
 def cmd_plugins(args: argparse.Namespace) -> None:
     """List and load plugins."""
-    from plugins import discover, load_all, PLUGIN_DIRS
+    from plugins import PLUGIN_DIRS, discover, load_all
     from tools import ToolRegistry
 
     if args.load:
@@ -745,8 +798,8 @@ def cmd_completion(args: argparse.Namespace) -> None:
 
 def cmd_testgen(args: argparse.Namespace) -> None:
     """Generate pytest test stubs from Python source files."""
-    from virgo_testgen import generate_tests
     from _console import icon
+    from virgo_testgen import generate_tests
 
     source = args.path or args.dir
     print(f"\n{icon('test')}  Generating tests from: {source}")
@@ -768,18 +821,27 @@ def cmd_testgen(args: argparse.Namespace) -> None:
 def cmd_commit(args: argparse.Namespace) -> None:
     """Stage all changes and commit."""
     from virgo_git import cmd_commit as _cmd_commit
+
     _cmd_commit(args)
 
 
 def cmd_doc(args: argparse.Namespace) -> None:
     """Generate API documentation from docstrings."""
     from virgo_docgen import main as docgen_main
-    docgen_main([
-        "--path", args.path,
-        "--output", args.output,
-        "--format", args.format,
-        "--name", args.name,
-    ] + (["--recursive"] if args.recursive else []))
+
+    docgen_main(
+        [
+            "--path",
+            args.path,
+            "--output",
+            args.output,
+            "--format",
+            args.format,
+            "--name",
+            args.name,
+        ]
+        + (["--recursive"] if args.recursive else [])
+    )
 
 
 def cmd_agent(args: argparse.Namespace) -> None:
@@ -827,6 +889,7 @@ def cmd_agent(args: argparse.Namespace) -> None:
     # Persist the run transcript for replay/inspection.
     try:
         from memory import save_state  # reuse session persistence if present
+
         _ = save_state
     except Exception:
         pass
@@ -873,14 +936,32 @@ def _cmd_chat_upload(history: list[dict[str, str]], arg: str) -> None:
         try:
             content = fp.read_text(encoding="utf-8", errors="replace")
             ext = fp.suffix.lower()
-            lang = {"py": "python", "rs": "rust", "ts": "typescript", "js": "javascript",
-                    "json": "json", "yaml": "yaml", "yml": "yaml", "md": "markdown",
-                    "toml": "toml", "sh": "bash", "bat": "batch", "ps1": "powershell",
-                    "html": "html", "css": "css", "sql": "sql", "txt": "text",
-                    "csv": "csv", "xml": "xml"}.get(ext.lstrip("."), "")
+            lang = {
+                "py": "python",
+                "rs": "rust",
+                "ts": "typescript",
+                "js": "javascript",
+                "json": "json",
+                "yaml": "yaml",
+                "yml": "yaml",
+                "md": "markdown",
+                "toml": "toml",
+                "sh": "bash",
+                "bat": "batch",
+                "ps1": "powershell",
+                "html": "html",
+                "css": "css",
+                "sql": "sql",
+                "txt": "text",
+                "csv": "csv",
+                "xml": "xml",
+            }.get(ext.lstrip("."), "")
             header = f"File: {fp.name} ({len(content)} chars)"
             if len(content) > 50000:
-                content = content[:50000] + f"\n... [truncated at 50000 chars, full file is {len(content)} chars]"
+                content = (
+                    content[:50000]
+                    + f"\n... [truncated at 50000 chars, full file is {len(content)} chars]"
+                )
             payload = f"{header}\n```{lang}\n{content}\n```"
             history.append({"role": "user", "content": payload})
             print(f"  [Uploaded: {fp.name} ({len(content)} chars)]\n")
@@ -1033,9 +1114,8 @@ def _run_chat_tool(name: str, kwargs: dict[str, str]) -> str:
             return "[tool web] missing url="
         try:
             import urllib.request
-            req = urllib.request.Request(
-                url, headers={"User-Agent": "virgo-chat/0.6"}
-            )
+
+            req = urllib.request.Request(url, headers={"User-Agent": "virgo-chat/0.6"})
             with urllib.request.urlopen(req, timeout=30) as r:
                 data = r.read().decode("utf-8", errors="replace")
             return data[:8000]
@@ -1047,9 +1127,12 @@ def _run_chat_tool(name: str, kwargs: dict[str, str]) -> str:
             return "[tool py] missing code="
         try:
             import subprocess
+
             proc = subprocess.run(
                 [sys.executable, "-c", code],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             out = (proc.stdout or "") + (proc.stderr or "")
             return out[:8000] or f"[tool py] exited {proc.returncode} (no output)"
@@ -1061,7 +1144,7 @@ def _run_chat_tool(name: str, kwargs: dict[str, str]) -> str:
 def cmd_chat(args: argparse.Namespace) -> None:
     """Interactive chat with virgo (backed by LLM if available)."""
     import json as _json
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     chats_dir = HERE / ".virgo_memory" / "chats"
     chats_dir.mkdir(parents=True, exist_ok=True)
@@ -1073,19 +1156,20 @@ def cmd_chat(args: argparse.Namespace) -> None:
     client = None
     try:
         import main
+
         client = main.get_client_for("agent")
         print("  [LLM connected - responses from local model]\n")
     except Exception:
         print("  [No LLM detected - running in teach/task mode]\n")
 
     history: list[dict[str, str]] = []
-    system_msg = {"role": "system", "content": VIRGO_SYSTEM_PROMPT}
 
     def _build_system(user_msg: str) -> str:
         """Inject RAG context into the system prompt when relevant."""
         sys_prompt = VIRGO_SYSTEM_PROMPT
         try:
             from _rag import kb_context
+
             rag = kb_context(user_msg, top_k=3)
             if rag:
                 sys_prompt = f"{sys_prompt}\n\n{rag}"
@@ -1108,7 +1192,7 @@ def cmd_chat(args: argparse.Namespace) -> None:
         else:
             print(f"  [No saved chat found: {args.resume}]\n")
 
-    session_id = datetime.now(timezone.utc).strftime("chat_%Y%m%d_%H%M%S")
+    session_id = datetime.now(UTC).strftime("chat_%Y%m%d_%H%M%S")
 
     while True:
         try:
@@ -1134,7 +1218,7 @@ def cmd_chat(args: argparse.Namespace) -> None:
             print("  [Chat history cleared]\n")
             continue
         if user_input.lower().startswith("/upload "):
-            _cmd_chat_upload(history, user_input[len("/upload "):])
+            _cmd_chat_upload(history, user_input[len("/upload ") :])
             continue
         if user_input.lower() == "/tools":
             print("  Virgo chat tools (safe, local):")
@@ -1145,19 +1229,19 @@ def cmd_chat(args: argparse.Namespace) -> None:
             print("  Or let the model call them via [[virgo.<tool> ...]]\n")
             continue
         if user_input.lower().startswith("/read "):
-            print("  " + _run_chat_tool("read", {"path": user_input[len("/read "):].strip()}))
+            print("  " + _run_chat_tool("read", {"path": user_input[len("/read ") :].strip()}))
             continue
         if user_input.lower().startswith("/write "):
-            parts = user_input[len("/write "):].split(" ", 1)
+            parts = user_input[len("/write ") :].split(" ", 1)
             path = parts[0] if parts else ""
             content = parts[1] if len(parts) > 1 else ""
             print("  " + _run_chat_tool("write", {"path": path, "content": content}))
             continue
         if user_input.lower().startswith("/web "):
-            print("  " + _run_chat_tool("web", {"url": user_input[len("/web "):].strip()}))
+            print("  " + _run_chat_tool("web", {"url": user_input[len("/web ") :].strip()}))
             continue
         if user_input.lower().startswith("/py "):
-            print("  " + _run_chat_tool("py", {"code": user_input[len("/py "):].strip()}))
+            print("  " + _run_chat_tool("py", {"code": user_input[len("/py ") :].strip()}))
             continue
 
         if client:
@@ -1176,9 +1260,7 @@ def cmd_chat(args: argparse.Namespace) -> None:
                         if tname in _CHAT_TOOLS:
                             out = _run_chat_tool(tname, tkwargs)
                             print(f"  [tool {tname}] {out[:500]}")
-                            history.append(
-                                {"role": "system", "content": f"[tool {tname}] {out}"}
-                            )
+                            history.append({"role": "system", "content": f"[tool {tname}] {out}"})
                         else:
                             print(f"  [tool {tname}] not allowed")
                 else:
@@ -1188,21 +1270,24 @@ def cmd_chat(args: argparse.Namespace) -> None:
                 print(f"  => (LLM unavailable) You said: {user_input}\n")
         else:
             print(f"  => You said: {user_input}")
-            print("  (Run `virgo run --goal \"...\"` or `virgo doctor` to get started)\n")
+            print('  (Run `virgo run --goal "..."` or `virgo doctor` to get started)\n')
 
     # Auto-save on exit
     if history:
         _save_chat(chats_dir, session_id, history, auto=True)
 
 
-def _save_chat(chats_dir: Path, session_id: str, history: list[dict[str, str]], auto: bool = False) -> None:
+def _save_chat(
+    chats_dir: Path, session_id: str, history: list[dict[str, str]], auto: bool = False
+) -> None:
     """Save a chat session to disk."""
     import json as _json
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     path = chats_dir / f"{session_id}.json"
     data = {
         "session": session_id,
-        "saved": datetime.now(timezone.utc).isoformat(),
+        "saved": datetime.now(UTC).isoformat(),
         "messages": len(history),
         "history": history,
     }
@@ -1214,6 +1299,7 @@ def _save_chat(chats_dir: Path, session_id: str, history: list[dict[str, str]], 
 def _list_chats(chats_dir: Path) -> None:
     """List saved chat sessions."""
     import json as _json
+
     files = sorted(chats_dir.glob("*.json"), reverse=True)
     if not files:
         print("  [No saved chats]\n")
@@ -1232,7 +1318,13 @@ def _list_chats(chats_dir: Path) -> None:
 
 def cmd_scaffold(args: argparse.Namespace) -> None:
     """Generate a project from a scaffold, or list available scaffolds."""
-    from virgo_scaffold import list_scaffolds, load_scaffold, generate, install_scaffold, uninstall_scaffold
+    from virgo_scaffold import (
+        generate,
+        install_scaffold,
+        list_scaffolds,
+        load_scaffold,
+        uninstall_scaffold,
+    )
 
     if args.install and args.name:
         install_scaffold(args.name)
@@ -1295,6 +1387,7 @@ def cmd_scaffold(args: argparse.Namespace) -> None:
 def cmd_init(args: argparse.Namespace) -> None:
     """Interactive project initialization wizard."""
     from virgo_init import run_wizard
+
     run_wizard(args)
 
 
@@ -1302,56 +1395,75 @@ def cmd_init(args: argparse.Namespace) -> None:
 # Argument parser
 # ===========================================================================
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="virgo",
         description="multi-agent state machine",
         epilog="see 'virgo <command> --help' for details",
     )
-    parser.add_argument("--version", "-V", action="store_true",
-                        help="Show version and exit")
+    parser.add_argument("--version", "-V", action="store_true", help="Show version and exit")
     sub = parser.add_subparsers(dest="command", required=False)
 
     # run
     p_run = sub.add_parser("run", help="Run the pipeline")
-    p_run.add_argument("--goal", "-g", default="Scan and parse mock_logs.txt",
-                       help="Goal string for the pipeline")
-    p_run.add_argument("--iterations", "-i", type=int, default=3,
-                       help="Max WTF iterations")
-    p_run.add_argument("--name", "-n", default=None,
-                       help="Session name for persistence")
-    p_run.add_argument("--llm", action="store_true",
-                       help="Use LLM-backed policies (requires Ollama)")
-    p_run.add_argument("--critic", action="store_true",
-                       help="Run static code analysis on generated files")
-    p_run.add_argument("--auto-depend", action="store_true",
-                       help="Auto-install third-party imports in agent_env")
-    p_run.add_argument("--config", "-c", default=None,
-                       help="Pipeline config file (.json or .yaml)")
-    p_run.add_argument("--yes", "-y", action="store_true",
-                       help="Auto-approve plans (non-interactive)")
-    p_run.add_argument("--router", "-r", default=None,
-                       help="Path to JSON router config "
-                            "(overrides ROUTER_* env vars & --crush)")
-    p_run.add_argument("--crush", action="store_true",
-                       help="Use Crush CLI backend for all roles")
-    p_run.add_argument("--stream", action="store_true",
-                       help="Stream LLM output token-by-token")
-    p_run.add_argument("--no-stream", action="store_true",
-                       help="Disable streaming (default: on when interactive)")
-    p_run.add_argument("--fast", action="store_true",
-                       help="Faster generation: skip chain-of-thought, lower token cap")
-    p_run.add_argument("--fallback-model", default=None,
-                       help="Fallback model to use when primary LLM fails for all roles")
-    p_run.add_argument("--lang", "-l", default="py",
-                       choices=["py", "js", "ts", "rs", "go"],
-                       help="Target language: py (default), js, ts, rs, go")
-    p_run.add_argument("--git", action="store_true",
-                       help="Auto-commit changes after a successful pipeline run")
-    p_run.add_argument("--git-push", action="store_true",
-                       help="Push after auto-commit (implies --git)")
-    p_run.add_argument("--git-branch", default=None,
-                       help="Create and switch to a branch before running (implies --git)")
+    p_run.add_argument(
+        "--goal", "-g", default="Scan and parse mock_logs.txt", help="Goal string for the pipeline"
+    )
+    p_run.add_argument("--iterations", "-i", type=int, default=3, help="Max WTF iterations")
+    p_run.add_argument("--name", "-n", default=None, help="Session name for persistence")
+    p_run.add_argument(
+        "--llm", action="store_true", help="Use LLM-backed policies (requires Ollama)"
+    )
+    p_run.add_argument(
+        "--critic", action="store_true", help="Run static code analysis on generated files"
+    )
+    p_run.add_argument(
+        "--auto-depend", action="store_true", help="Auto-install third-party imports in agent_env"
+    )
+    p_run.add_argument("--config", "-c", default=None, help="Pipeline config file (.json or .yaml)")
+    p_run.add_argument(
+        "--yes", "-y", action="store_true", help="Auto-approve plans (non-interactive)"
+    )
+    p_run.add_argument(
+        "--router",
+        "-r",
+        default=None,
+        help="Path to JSON router config (overrides ROUTER_* env vars & --crush)",
+    )
+    p_run.add_argument("--crush", action="store_true", help="Use Crush CLI backend for all roles")
+    p_run.add_argument("--stream", action="store_true", help="Stream LLM output token-by-token")
+    p_run.add_argument(
+        "--no-stream", action="store_true", help="Disable streaming (default: on when interactive)"
+    )
+    p_run.add_argument(
+        "--fast",
+        action="store_true",
+        help="Faster generation: skip chain-of-thought, lower token cap",
+    )
+    p_run.add_argument(
+        "--fallback-model",
+        default=None,
+        help="Fallback model to use when primary LLM fails for all roles",
+    )
+    p_run.add_argument(
+        "--lang",
+        "-l",
+        default="py",
+        choices=["py", "js", "ts", "rs", "go"],
+        help="Target language: py (default), js, ts, rs, go",
+    )
+    p_run.add_argument(
+        "--git", action="store_true", help="Auto-commit changes after a successful pipeline run"
+    )
+    p_run.add_argument(
+        "--git-push", action="store_true", help="Push after auto-commit (implies --git)"
+    )
+    p_run.add_argument(
+        "--git-branch",
+        default=None,
+        help="Create and switch to a branch before running (implies --git)",
+    )
     p_run.set_defaults(func=cmd_run)
 
     # serve
@@ -1369,55 +1481,70 @@ def main() -> None:
     p_replay.add_argument("session", help="Session name or path")
     p_replay.add_argument("--iterations", "-i", type=int, default=3)
     p_replay.add_argument("--llm", action="store_true")
-    p_replay.add_argument("--fast", action="store_true",
-                          help="Faster generation: skip chain-of-thought, lower token cap")
+    p_replay.add_argument(
+        "--fast",
+        action="store_true",
+        help="Faster generation: skip chain-of-thought, lower token cap",
+    )
     p_replay.set_defaults(func=cmd_replay)
 
     # swarm
     p_swarm = sub.add_parser("swarm", help="Multi-agent delegation")
-    p_swarm.add_argument("--goal", "-g", required=True,
-                         help="Overarching goal for the swarm")
-    p_swarm.add_argument("--agent", "-a", action="append",
-                         help="Sub-agent definition: name:goal (repeatable)")
-    p_swarm.add_argument("--agent-file", "-f", default=None,
-                         help="JSON file with list of {name, goal} objects")
+    p_swarm.add_argument("--goal", "-g", required=True, help="Overarching goal for the swarm")
+    p_swarm.add_argument(
+        "--agent", "-a", action="append", help="Sub-agent definition: name:goal (repeatable)"
+    )
+    p_swarm.add_argument(
+        "--agent-file", "-f", default=None, help="JSON file with list of {name, goal} objects"
+    )
     p_swarm.add_argument("--iterations", "-i", type=int, default=3)
-    p_swarm.add_argument("--llm", action="store_true",
-                         help="Use LLM-backed policies for each agent")
-    p_swarm.add_argument("--share", action="store_true",
-                         help="Enable shared blackboard between agents")
-    p_swarm.add_argument("--ordered", action="store_true",
-                         help="Run agents sequentially (each sees prior results)")
-    p_swarm.add_argument("--name", "-n", default=None,
-                         help="Session name for persistence")
+    p_swarm.add_argument(
+        "--llm", action="store_true", help="Use LLM-backed policies for each agent"
+    )
+    p_swarm.add_argument(
+        "--share", action="store_true", help="Enable shared blackboard between agents"
+    )
+    p_swarm.add_argument(
+        "--ordered", action="store_true", help="Run agents sequentially (each sees prior results)"
+    )
+    p_swarm.add_argument("--name", "-n", default=None, help="Session name for persistence")
     p_swarm.set_defaults(func=cmd_swarm)
 
     # watch
     p_watch = sub.add_parser("watch", help="Watch a directory and re-run pipeline on changes")
-    p_watch.add_argument("--dir", "-d", default=".",
-                         help="Directory to watch (default: .)")
-    p_watch.add_argument("--goal", "-g", default="auto-fix broken code",
-                         help="Pipeline goal (default: auto-fix broken code)")
-    p_watch.add_argument("--interval", "-i", type=float, default=2.0,
-                         help="Poll interval in seconds (default: 2.0)")
-    p_watch.add_argument("--debounce", type=float, default=1.0,
-                         help="Quiet period s after last change")
-    p_watch.add_argument("--exclude", "-x", action="append", default=[],
-                         help="Additional exclude pattern (repeatable)")
-    p_watch.add_argument("--iterations", type=int, default=3,
-                         help="Max WTF iterations")
-    p_watch.add_argument("--llm", action="store_true",
-                         help="Use LLM-backed policies")
-    p_watch.add_argument("--crush", action="store_true",
-                         help="Use Crush CLI backend")
-    p_watch.add_argument("--router", default=None,
-                         help="Path to router JSON config")
-    p_watch.add_argument("--stream", action="store_true",
-                         help="Stream LLM output")
-    p_watch.add_argument("--no-stream", action="store_true",
-                         help="Disable streaming (default: on when interactive)")
-    p_watch.add_argument("--fast", action="store_true",
-                         help="Faster generation: skip chain-of-thought, lower token cap")
+    p_watch.add_argument("--dir", "-d", default=".", help="Directory to watch (default: .)")
+    p_watch.add_argument(
+        "--goal",
+        "-g",
+        default="auto-fix broken code",
+        help="Pipeline goal (default: auto-fix broken code)",
+    )
+    p_watch.add_argument(
+        "--interval", "-i", type=float, default=2.0, help="Poll interval in seconds (default: 2.0)"
+    )
+    p_watch.add_argument(
+        "--debounce", type=float, default=1.0, help="Quiet period s after last change"
+    )
+    p_watch.add_argument(
+        "--exclude",
+        "-x",
+        action="append",
+        default=[],
+        help="Additional exclude pattern (repeatable)",
+    )
+    p_watch.add_argument("--iterations", type=int, default=3, help="Max WTF iterations")
+    p_watch.add_argument("--llm", action="store_true", help="Use LLM-backed policies")
+    p_watch.add_argument("--crush", action="store_true", help="Use Crush CLI backend")
+    p_watch.add_argument("--router", default=None, help="Path to router JSON config")
+    p_watch.add_argument("--stream", action="store_true", help="Stream LLM output")
+    p_watch.add_argument(
+        "--no-stream", action="store_true", help="Disable streaming (default: on when interactive)"
+    )
+    p_watch.add_argument(
+        "--fast",
+        action="store_true",
+        help="Faster generation: skip chain-of-thought, lower token cap",
+    )
     p_watch.set_defaults(func=cmd_watch)
 
     # feedback
@@ -1426,8 +1553,9 @@ def main() -> None:
 
     # demo
     p_demo = sub.add_parser("demo", help="Run the demo pipeline (deterministic policies)")
-    p_demo.add_argument("--goal", "-g", default=None,
-                        help="Optional goal override for the demo pipeline")
+    p_demo.add_argument(
+        "--goal", "-g", default=None, help="Optional goal override for the demo pipeline"
+    )
     p_demo.set_defaults(func=cmd_demo)
 
     # diff
@@ -1446,63 +1574,65 @@ def main() -> None:
     p_diff = sub.add_parser("diff", help="Compare two saved sessions")
     p_diff.add_argument("session_a", help="First session name or .json path")
     p_diff.add_argument("session_b", help="Second session name or .json path")
-    p_diff.add_argument("--brief", "-b", action="store_true",
-                        help="Only list file names, no content diffs")
-    p_diff.add_argument("--output", "-o", default=None,
-                        help="Write diff report to file (.md or .txt)")
+    p_diff.add_argument(
+        "--brief", "-b", action="store_true", help="Only list file names, no content diffs"
+    )
+    p_diff.add_argument(
+        "--output", "-o", default=None, help="Write diff report to file (.md or .txt)"
+    )
     p_diff.set_defaults(func=cmd_diff)
 
     # templates
     p_tpl = sub.add_parser("templates", help="List and generate from templates")
-    p_tpl.add_argument("--generate", "-g", default=None,
-                       help="Template key to generate from")
-    p_tpl.add_argument("--output", "-o", default=None,
-                       help="Output file path")
-    p_tpl.add_argument("--name", "-n", default=None,
-                       help="Project/script name")
-    p_tpl.add_argument("--description", "-d", default=None,
-                       help="Description for the generated file")
-    p_tpl.add_argument("--target", "-t", default=None,
-                       help="Target module for test templates")
+    p_tpl.add_argument("--generate", "-g", default=None, help="Template key to generate from")
+    p_tpl.add_argument("--output", "-o", default=None, help="Output file path")
+    p_tpl.add_argument("--name", "-n", default=None, help="Project/script name")
+    p_tpl.add_argument(
+        "--description", "-d", default=None, help="Description for the generated file"
+    )
+    p_tpl.add_argument("--target", "-t", default=None, help="Target module for test templates")
     p_tpl.set_defaults(func=cmd_templates)
 
     # export
     p_exp = sub.add_parser("export", help="Export a session as HTML or Markdown")
     p_exp.add_argument("session", help="Session name or path")
-    p_exp.add_argument("--format", "-f", choices=["html", "md"], default="html",
-                       help="Output format")
-    p_exp.add_argument("--output", "-o", default=None,
-                       help="Output file path")
+    p_exp.add_argument(
+        "--format", "-f", choices=["html", "md"], default="html", help="Output format"
+    )
+    p_exp.add_argument("--output", "-o", default=None, help="Output file path")
     p_exp.set_defaults(func=cmd_export)
 
     # plugins
     p_plug = sub.add_parser("plugins", help="List and load plugins")
-    p_plug.add_argument("--load", "-l", action="store_true",
-                        help="Load all plugins and show registered tools")
+    p_plug.add_argument(
+        "--load", "-l", action="store_true", help="Load all plugins and show registered tools"
+    )
     p_plug.set_defaults(func=cmd_plugins)
 
     # scaffold
     p_scaffold = sub.add_parser("scaffold", help="Generate project from a scaffold")
-    p_scaffold.add_argument("name", nargs="?", default=None,
-                            help="Scaffold name (omit to list)")
-    p_scaffold.add_argument("--output", "-o", default=".",
-                            help="Output directory")
-    p_scaffold.add_argument("--var", "-v", action="append", default=[],
-                            help="Template variable (key=value)")
-    p_scaffold.add_argument("--install", action="store_true",
-                            help="Install a scaffold package from PyPI")
-    p_scaffold.add_argument("--uninstall", action="store_true",
-                            help="Uninstall a scaffold package")
+    p_scaffold.add_argument("name", nargs="?", default=None, help="Scaffold name (omit to list)")
+    p_scaffold.add_argument("--output", "-o", default=".", help="Output directory")
+    p_scaffold.add_argument(
+        "--var", "-v", action="append", default=[], help="Template variable (key=value)"
+    )
+    p_scaffold.add_argument(
+        "--install", action="store_true", help="Install a scaffold package from PyPI"
+    )
+    p_scaffold.add_argument("--uninstall", action="store_true", help="Uninstall a scaffold package")
     p_scaffold.set_defaults(func=cmd_scaffold, command=None)
 
     # init
     p_init = sub.add_parser("init", help="Interactive project initialization wizard")
-    p_init.add_argument("name", nargs="?", default=None,
-                        help="Scaffold name (omit to pick from list)")
-    p_init.add_argument("--output", "-o", default=".",
-                        help="Output directory (default: current dir)")
-    p_init.add_argument("--non-interactive", action="store_true",
-                        help="Skip prompts, use default variable values")
+    p_init.add_argument(
+        "name", nargs="?", default=None, help="Scaffold name (omit to pick from list)"
+    )
+    p_init.add_argument(
+        "--output", "-o", default=".", help="Output directory (default: current dir)"
+    )
+    p_init.add_argument(
+        "--non-interactive", action="store_true", help="Skip prompts, use default variable values"
+    )
     p_init.set_defaults(func=cmd_init)
 
     # version
@@ -1519,72 +1649,93 @@ def main() -> None:
 
     # completion
     p_comp = sub.add_parser("completion", help="Generate shell completion script")
-    p_comp.add_argument("shell", choices=["bash", "zsh", "powershell"],
-                        help="Shell to generate completion for")
+    p_comp.add_argument(
+        "shell", choices=["bash", "zsh", "powershell"], help="Shell to generate completion for"
+    )
     p_comp.set_defaults(func=cmd_completion)
 
     # testgen
     p_tg = sub.add_parser("testgen", help="Generate pytest test stubs from Python source files")
-    p_tg.add_argument("--path", "-p", default=None,
-                      help="Single Python file to analyze")
-    p_tg.add_argument("--dir", "-d", default=None,
-                      help="Directory to scan recursively for .py files")
-    p_tg.add_argument("--output", "-o", default="./tests",
-                      help="Output directory for generated test files (default: ./tests)")
-    p_tg.add_argument("--overwrite", action="store_true",
-                      help="Overwrite existing test files without warning")
+    p_tg.add_argument("--path", "-p", default=None, help="Single Python file to analyze")
+    p_tg.add_argument(
+        "--dir", "-d", default=None, help="Directory to scan recursively for .py files"
+    )
+    p_tg.add_argument(
+        "--output",
+        "-o",
+        default="./tests",
+        help="Output directory for generated test files (default: ./tests)",
+    )
+    p_tg.add_argument(
+        "--overwrite", action="store_true", help="Overwrite existing test files without warning"
+    )
     p_tg.set_defaults(func=cmd_testgen)
 
     # commit
     p_commit = sub.add_parser("commit", help="Stage all changes and commit")
-    p_commit.add_argument("-m", "--message", default="",
-                          help="Commit message (auto-generated if omitted)")
-    p_commit.add_argument("--push", action="store_true",
-                          help="Push after commit")
-    p_commit.add_argument("--amend", action="store_true",
-                          help="Amend the last commit")
+    p_commit.add_argument(
+        "-m", "--message", default="", help="Commit message (auto-generated if omitted)"
+    )
+    p_commit.add_argument("--push", action="store_true", help="Push after commit")
+    p_commit.add_argument("--amend", action="store_true", help="Amend the last commit")
     p_commit.set_defaults(func=cmd_commit)
 
     # doc
     p_doc = sub.add_parser("doc", help="Generate API documentation from docstrings")
-    p_doc.add_argument("--path", "-p", default=".",
-                       help="Path to scan (file or directory). Default: current dir.")
-    p_doc.add_argument("--output", "-o", default="docs",
-                       help="Output directory. Default: docs/")
-    p_doc.add_argument("--format", "-f", choices=["md", "html"], default="md",
-                       help="Output format: md (markdown, default) or html.")
-    p_doc.add_argument("--recursive", "-r", action="store_true",
-                       help="Walk directories recursively.")
-    p_doc.add_argument("--name", "-n", default="virgo",
-                       help="Project display name. Default: 'virgo'")
+    p_doc.add_argument(
+        "--path", "-p", default=".", help="Path to scan (file or directory). Default: current dir."
+    )
+    p_doc.add_argument("--output", "-o", default="docs", help="Output directory. Default: docs/")
+    p_doc.add_argument(
+        "--format",
+        "-f",
+        choices=["md", "html"],
+        default="md",
+        help="Output format: md (markdown, default) or html.",
+    )
+    p_doc.add_argument(
+        "--recursive", "-r", action="store_true", help="Walk directories recursively."
+    )
+    p_doc.add_argument(
+        "--name", "-n", default="virgo", help="Project display name. Default: 'virgo'"
+    )
     p_doc.set_defaults(func=cmd_doc)
 
     # agent — autonomous runtime (ReAct loop over tools)
     p_agent = sub.add_parser("agent", help="Run the autonomous agent runtime")
-    p_agent.add_argument("--goal", "-g", required=True,
-                         help="Goal for the autonomous agent to accomplish")
-    p_agent.add_argument("--steps", "-i", type=int, default=12,
-                         help="Max ReAct steps per attempt (default: 12)")
-    p_agent.add_argument("--retries", "-r", type=int, default=2,
-                         help="Max evaluation-retry attempts (default: 2)")
-    p_agent.add_argument("--llm", action="store_true",
-                         help="Use LLM-backed policies (requires Ollama)")
-    p_agent.add_argument("--no-mcp", action="store_true",
-                         help="Disable MCP server discovery/bridge")
-    p_agent.add_argument("--mcp", action="append", default=[],
-                         help="Explicit MCP server spec name=cmd args (repeatable)")
-    p_agent.add_argument("--no-experience", action="store_true",
-                         help="Disable experience memory")
-    p_agent.add_argument("--stream", action="store_true",
-                         help="Stream LLM output")
-    p_agent.add_argument("--no-stream", action="store_true",
-                         help="Disable streaming (default: on when interactive)")
+    p_agent.add_argument(
+        "--goal", "-g", required=True, help="Goal for the autonomous agent to accomplish"
+    )
+    p_agent.add_argument(
+        "--steps", "-i", type=int, default=12, help="Max ReAct steps per attempt (default: 12)"
+    )
+    p_agent.add_argument(
+        "--retries", "-r", type=int, default=2, help="Max evaluation-retry attempts (default: 2)"
+    )
+    p_agent.add_argument(
+        "--llm", action="store_true", help="Use LLM-backed policies (requires Ollama)"
+    )
+    p_agent.add_argument(
+        "--no-mcp", action="store_true", help="Disable MCP server discovery/bridge"
+    )
+    p_agent.add_argument(
+        "--mcp",
+        action="append",
+        default=[],
+        help="Explicit MCP server spec name=cmd args (repeatable)",
+    )
+    p_agent.add_argument("--no-experience", action="store_true", help="Disable experience memory")
+    p_agent.add_argument("--stream", action="store_true", help="Stream LLM output")
+    p_agent.add_argument(
+        "--no-stream", action="store_true", help="Disable streaming (default: on when interactive)"
+    )
     p_agent.set_defaults(func=cmd_agent)
 
     # chat
     p_chat = sub.add_parser("chat", help="Interactive chat with virgo")
-    p_chat.add_argument("--resume", default=None,
-                        help="Resume a previous chat session (name or path)")
+    p_chat.add_argument(
+        "--resume", default=None, help="Resume a previous chat session (name or path)"
+    )
     p_chat.set_defaults(func=cmd_chat)
 
     # chat-ls

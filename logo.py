@@ -4,13 +4,13 @@ Pure ASCII — works on every terminal.
 Uses pyfiglet (optional; falls back to plain text).
 """
 
-
 _LOGO = None
 
 
 def _build_logo() -> str:
     try:
         import pyfiglet
+
         text = pyfiglet.figlet_format("VIRGO", font="banner3-D")
     except ImportError:
         text = (
@@ -29,9 +29,7 @@ def _build_logo() -> str:
     bottom = "+" + "=" * (width + 4) + "+"
 
     # Constellation accent bar — pure ASCII
-    stars = (
-        "    *   *   *   *   *   *   *   *   *   *   *   *   *   *   *"
-    )
+    stars = "    *   *   *   *   *   *   *   *   *   *   *   *   *   *   *"
 
     tagline = "multi-agent state machine"
     phases = "discover -> plan -> code -> test -> fix"

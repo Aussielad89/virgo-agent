@@ -8,11 +8,11 @@ module manually when you want continuous monitoring.
 
 from __future__ import annotations
 
-import sys
 import os
-import time
 import subprocess
-from datetime import datetime, timezone
+import sys
+import time
+from datetime import UTC, datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -30,7 +30,7 @@ def run_cycle() -> dict[str, object]:
     """
     start = time.time()
     results: dict[str, object] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "steps": {},
     }
 
@@ -40,7 +40,9 @@ def run_cycle() -> dict[str, object]:
     try:
         subprocess.run(
             [sys.executable, os.path.join(HERE, "virgo_diagnostics.py")],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         results["steps"]["diagnostics"] = "ok"
     except subprocess.TimeoutExpired:
@@ -55,7 +57,9 @@ def run_cycle() -> dict[str, object]:
     try:
         subprocess.run(
             [sys.executable, os.path.join(HERE, "virgo_alerts.py")],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         results["steps"]["alerts"] = "ok"
     except Exception as exc:
@@ -67,7 +71,9 @@ def run_cycle() -> dict[str, object]:
     try:
         subprocess.run(
             [sys.executable, os.path.join(HERE, "virgo_fixer.py")],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         results["steps"]["fixer"] = "ok"
     except Exception as exc:
@@ -96,7 +102,7 @@ def run_watchdog(interval: int = DEFAULT_INTERVAL, cycles: int = 0) -> None:
     try:
         while True:
             count += 1
-            print(f"\n{icon('rocket')} Cycle {count} — {datetime.now(timezone.utc).isoformat()}")
+            print(f"\n{icon('rocket')} Cycle {count} — {datetime.now(UTC).isoformat()}")
             results = run_cycle()
             log.info("Cycle %d complete: %s", count, results["steps"])
             print(f"\n{icon('done')} Cycle {count} finished in {results['total_time_s']}s")
@@ -114,11 +120,18 @@ def run_watchdog(interval: int = DEFAULT_INTERVAL, cycles: int = 0) -> None:
 
 if __name__ == "__main__":
     import argparse
+
     p = argparse.ArgumentParser(description="Virgo watchdog — scheduled monitoring")
-    p.add_argument("-i", "--interval", type=int, default=DEFAULT_INTERVAL,
-                   help=f"Seconds between cycles (default: {DEFAULT_INTERVAL})")
-    p.add_argument("-c", "--cycles", type=int, default=0,
-                   help="Number of cycles (default: infinite)")
+    p.add_argument(
+        "-i",
+        "--interval",
+        type=int,
+        default=DEFAULT_INTERVAL,
+        help=f"Seconds between cycles (default: {DEFAULT_INTERVAL})",
+    )
+    p.add_argument(
+        "-c", "--cycles", type=int, default=0, help="Number of cycles (default: infinite)"
+    )
     args = p.parse_args()
     run_watchdog(interval=args.interval, cycles=args.cycles)
     input("\n[PRESS ENTER TO RETURN]")

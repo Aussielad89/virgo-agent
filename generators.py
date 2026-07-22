@@ -22,8 +22,8 @@ from __future__ import annotations
 import textwrap
 from typing import Protocol
 
-
 # ── Protocol ───────────────────────────────────────────────────────────────
+
 
 class BaseGenerator(Protocol):
     """Protocol all language generators must satisfy.
@@ -32,15 +32,16 @@ class BaseGenerator(Protocol):
     each tuple is ``(relative_file_path, file_contents)``.
     """
 
-    def generate(self, plan: str) -> list[tuple[str, str]]:
-        ...
+    def generate(self, plan: str) -> list[tuple[str, str]]: ...
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────
 
+
 def _snake_to_pascal(name: str) -> str:
     """Convert a snake_case or kebab-case string to PascalCase."""
     import re
+
     return "".join(word.capitalize() for word in re.split(r"[-_ ]+", name) if word)
 
 
@@ -64,6 +65,7 @@ def _comment_char(lang: str) -> str:
 
 # ── JavaScript Generator ───────────────────────────────────────────────────
 
+
 class JavaScriptGenerator:
     """Generate JavaScript project scaffolding (Node.js / CommonJS)."""
 
@@ -85,6 +87,7 @@ class JavaScriptGenerator:
 
         # Package.json
         import json
+
         files: list[tuple[str, str]] = [
             ("package.json", json.dumps(package_json, indent=2) + "\n"),
         ]
@@ -133,6 +136,7 @@ class JavaScriptGenerator:
 
 # ── TypeScript Generator ──────────────────────────────────────────────────
 
+
 class TypeScriptGenerator:
     """Generate TypeScript project scaffolding with tsconfig."""
 
@@ -160,6 +164,7 @@ class TypeScriptGenerator:
         }
 
         import json
+
         pkg = {
             "name": name,
             "version": "1.0.0",
@@ -224,6 +229,7 @@ class TypeScriptGenerator:
 
 # ── Rust Generator ─────────────────────────────────────────────────────────
 
+
 class RustGenerator:
     """Generate Rust project scaffolding (Cargo.toml + src/main.rs or lib.rs)."""
 
@@ -240,7 +246,7 @@ class RustGenerator:
             name = "{name}"
             version = "0.1.0"
             edition = "2021"
-            description = "{plan.strip().splitlines()[0] if plan else f'{name} project'}"
+            description = "{plan.strip().splitlines()[0] if plan else f"{name} project"}"
 
             [dependencies]
 
@@ -304,6 +310,7 @@ class RustGenerator:
 
 
 # ── Go Generator ──────────────────────────────────────────────────────────
+
 
 class GoGenerator:
     """Generate Go project scaffolding (go.mod + main.go)."""
@@ -399,10 +406,7 @@ def get_generator(lang: str) -> BaseGenerator:
     cls = LANG_GENERATORS.get(canonical)
     if cls is None:
         available = ", ".join(sorted(LANG_GENERATORS))
-        raise KeyError(
-            f"Unknown language {lang!r}. "
-            f"Available: {available}"
-        )
+        raise KeyError(f"Unknown language {lang!r}. Available: {available}")
     return cls()
 
 

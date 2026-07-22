@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import sys
 import traceback
-from typing import Any, Optional
+from typing import Any
 
 from tools import ToolRegistry
 
@@ -43,6 +43,7 @@ def _build_registry() -> ToolRegistry:
 
 # ── JSON-RPC helpers ──────────────────────────────────────────────────
 
+
 def _rpc_error(id: Any, code: int, message: str) -> str:
     return json.dumps({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 
@@ -53,6 +54,7 @@ def _rpc_result(id: Any, result: Any) -> str:
 
 # ── MCP method handlers ──────────────────────────────────────────────
 
+
 def _handle_initialize(req: dict) -> str:
     """Handle ``initialize`` — the MCP handshake."""
     client_info = req.get("params", {}).get("clientInfo", {})
@@ -60,11 +62,14 @@ def _handle_initialize(req: dict) -> str:
     client_version = client_info.get("version", "0.0")
     # Log to stderr so it doesn't interfere with stdio protocol
     print(f"[virgo-mcp] client connected: {client_name} v{client_version}", file=sys.stderr)
-    return _rpc_result(req["id"], {
-        "protocolVersion": PROTOCOL_VERSION,
-        "capabilities": {"tools": {}},
-        "serverInfo": SERVER_INFO,
-    })
+    return _rpc_result(
+        req["id"],
+        {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {"tools": {}},
+            "serverInfo": SERVER_INFO,
+        },
+    )
 
 
 def _handle_tools_list(req: dict, registry: ToolRegistry) -> str:
@@ -73,15 +78,17 @@ def _handle_tools_list(req: dict, registry: ToolRegistry) -> str:
     # Map Virgo tool fields to MCP Tool schema
     mcp_tools = []
     for t in tools_meta:
-        mcp_tools.append({
-            "name": t["name"],
-            "description": t.get("description", ""),
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-            },
-        })
+        mcp_tools.append(
+            {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            }
+        )
     return _rpc_result(req["id"], {"tools": mcp_tools})
 
 
@@ -95,9 +102,12 @@ def _handle_tools_call(req: dict, registry: ToolRegistry) -> str:
         result = registry.execute(tool_name, **arguments)
         # Serialise result to a string so it is always JSON-safe
         text = json.dumps(result, default=str, indent=2) if not isinstance(result, str) else result
-        return _rpc_result(req["id"], {
-            "content": [{"type": "text", "text": text}],
-        })
+        return _rpc_result(
+            req["id"],
+            {
+                "content": [{"type": "text", "text": text}],
+            },
+        )
     except KeyError:
         return _rpc_error(req["id"], -32602, f"Unknown tool: {tool_name}")
     except Exception as exc:
@@ -107,7 +117,7 @@ def _handle_tools_call(req: dict, registry: ToolRegistry) -> str:
         return _rpc_error(req["id"], -32000, str(exc))
 
 
-def _dispatch(req: dict, registry: ToolRegistry) -> Optional[str]:
+def _dispatch(req: dict, registry: ToolRegistry) -> str | None:
     """Route one MCP request to its handler.
 
     Returns the JSON-RPC response string, or ``None`` when no response is
@@ -134,6 +144,7 @@ def _dispatch(req: dict, registry: ToolRegistry) -> Optional[str]:
 
 
 # ── Main loop ─────────────────────────────────────────────────────────
+
 
 def main() -> None:
     """Run the MCP stdio server loop."""

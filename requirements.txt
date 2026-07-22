@@ -1,11 +1,21 @@
-requests>=2.31
-rich>=13.0
+# Runtime dependencies (matches pyproject [project].dependencies)
+python-dotenv>=1.0
+textual>=2.0
+pyyaml>=6.0
+psutil>=5.9
+
+# Optional web dashboard (pyproject extra: web)
 fastapi>=0.100
 uvicorn>=0.23
 jinja2>=3.1
-pyyaml>=6.0
-python-dotenv>=1.0
+sse-starlette>=2.0
+
+# Optional desktop GUI (pyproject extra: desktop) — heavy, install separately
+# PyQt6>=6.6
+
+# Development / test tooling (pyproject extra: dev)
 pytest>=8.0
 pytest-cov>=5.0
 pytest-xdist>=3.0
 mypy>=1.10
+ruff>=0.5

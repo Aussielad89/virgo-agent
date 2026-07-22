@@ -10,18 +10,20 @@ from __future__ import annotations
 import os
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
-
+from typing import Any
 
 # ── Result type ─────────────────────────────────────────────────────
+
 
 @dataclass
 class AgentResult:
     """What a SubAgent produced."""
+
     name: str
     goal: str
-    status: str              # success | failed | skipped
+    status: str  # success | failed | skipped
     plan: str = ""
     files_created: list[str] = field(default_factory=list)
     output: str = ""
@@ -30,6 +32,7 @@ class AgentResult:
 
 
 # ── SubAgent ────────────────────────────────────────────────────────
+
 
 class SubAgent:
     """A focused worker with its own LLM client and tool subset.
@@ -45,17 +48,19 @@ class SubAgent:
         name: str,
         goal: str,
         *,
-        tools: Optional[list[str]] = None,
-        planner: Optional[Callable] = None,
-        generator: Optional[Callable] = None,
-        fixer: Optional[Callable] = None,
+        tools: list[str] | None = None,
+        planner: Callable | None = None,
+        generator: Callable | None = None,
+        fixer: Callable | None = None,
         max_iterations: int = 3,
-        blackboard: Any = None,          # shared Blackboard
+        blackboard: Any = None,  # shared Blackboard
     ) -> None:
         self.name = name
         self.goal = goal
         self.tool_names = tools or [
-            "file_sampler", "code_patcher", "python_runner",
+            "file_sampler",
+            "code_patcher",
+            "python_runner",
         ]
         self.planner = planner
         self.generator = generator
@@ -67,8 +72,8 @@ class SubAgent:
 
     def run(
         self,
-        registry: Any,      # ToolRegistry
-        env: Any,           # AgentEnvironment
+        registry: Any,  # ToolRegistry
+        env: Any,  # AgentEnvironment
         *,
         verbose: bool = True,
     ) -> AgentResult:
@@ -85,8 +90,7 @@ class SubAgent:
 
         self._log(verbose, f"[{self.name}] Starting — {self.goal}")
         if bb is not None:
-            bb.post(f"agent/{self.name}/status", "started",
-                    source=self.name, phase="init")
+            bb.post(f"agent/{self.name}/status", "started", source=self.name, phase="init")
 
         try:
             # ── Phase 1: Plan ───────────────────────────────────────
@@ -97,8 +101,7 @@ class SubAgent:
                 result.plan = plan
                 self._log(verbose, f"[{self.name}] Plan ready")
                 if bb is not None:
-                    bb.post(f"agent/{self.name}/plan", plan,
-                            source=self.name, phase="plan")
+                    bb.post(f"agent/{self.name}/plan", plan, source=self.name, phase="plan")
 
             # ── Phase 2: Generate ───────────────────────────────────
             if self.generator:
@@ -106,7 +109,7 @@ class SubAgent:
                 files = self.generator(plan, registry=registry, env=env)
             else:
                 self._log(verbose, f"[{self.name}] Generating (fallback) …")
-                slug = re.sub(r'[^a-z0-9]+', '_', self.name.lower()).strip('_')
+                slug = re.sub(r"[^a-z0-9]+", "_", self.name.lower()).strip("_")
                 fname = f"{slug}.py"
                 content = (
                     f"#!/usr/bin/env python3\n"
@@ -120,7 +123,7 @@ class SubAgent:
 
             for fpath, content in files:
                 if not fpath.endswith(".py"):
-                    slug = re.sub(r'[^a-z0-9]+', '_', self.name.lower()).strip('_')
+                    slug = re.sub(r"[^a-z0-9]+", "_", self.name.lower()).strip("_")
                     fpath = f"{slug}.py"
                 try:
                     registry.execute(
@@ -135,8 +138,12 @@ class SubAgent:
                     self._log(verbose, f"[{self.name}]   write failed {fpath}: {exc}")
 
             if bb is not None and result.files_created:
-                bb.post(f"agent/{self.name}/files", result.files_created,
-                        source=self.name, phase="generate")
+                bb.post(
+                    f"agent/{self.name}/files",
+                    result.files_created,
+                    source=self.name,
+                    phase="generate",
+                )
 
             # ── Phase 3: WTF loop ───────────────────────────────────
             if result.files_created and self.fixer:
@@ -182,14 +189,12 @@ class SubAgent:
             result.error = str(exc)
             self._log(verbose, f"[{self.name}] FAILED: {exc}")
             if bb is not None:
-                bb.post(f"agent/{self.name}/status", "failed",
-                        source=self.name, phase="done")
+                bb.post(f"agent/{self.name}/status", "failed", source=self.name, phase="done")
 
         result.duration = time.time() - t0
         self._log(verbose, f"[{self.name}] Done ({result.duration:.1f}s)")
         if bb is not None and result.status == "success":
-            bb.post(f"agent/{self.name}/status", "completed",
-                    source=self.name, phase="done")
+            bb.post(f"agent/{self.name}/status", "completed", source=self.name, phase="done")
         return result
 
     # ── Internal ────────────────────────────────────────────────────

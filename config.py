@@ -48,9 +48,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "sandbox": {
         "mode": "allowlist",
         "allowed_commands": [
-            "python", "pip", "git", "ls", "cat", "echo",
-            "pwd", "head", "tail", "wc", "sort", "grep",
-            "find", "mkdir", "cp", "mv", "which",
+            "python",
+            "pip",
+            "git",
+            "ls",
+            "cat",
+            "echo",
+            "pwd",
+            "head",
+            "tail",
+            "wc",
+            "sort",
+            "grep",
+            "find",
+            "mkdir",
+            "cp",
+            "mv",
+            "which",
         ],
     },
     "plugins": {
@@ -108,7 +122,7 @@ def load(path: str = "") -> dict[str, Any]:
             raise ImportError(
                 "pyyaml is required for YAML configs. Install with: pip install pyyaml"
             )
-        with open(config_path, "r", encoding="utf-8") as fh:
+        with open(config_path, encoding="utf-8") as fh:
             raw = yaml.safe_load(fh) or {}
     else:
         raise ValueError(f"Unsupported config format: {ext} (use .toml, .json, .yaml, or .yml)")
@@ -122,18 +136,20 @@ def load(path: str = "") -> dict[str, Any]:
 def _load_toml(path: Path) -> dict[str, Any]:
     """Load a TOML file. Uses stdlib tomllib (3.11+) or tomli."""
     import sys as _sys
+
     if _sys.version_info >= (3, 11):
         import tomllib
+
         with open(path, "rb") as fh:
             return tomllib.load(fh)
     try:
         import tomli
+
         with open(path, "rb") as fh:
             return tomli.load(fh)
     except ImportError:
         raise ImportError(
-            "tomli is required for TOML configs on Python <3.11. "
-            "Install with: pip install tomli"
+            "tomli is required for TOML configs on Python <3.11. Install with: pip install tomli"
         )
 
 

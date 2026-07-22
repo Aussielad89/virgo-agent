@@ -25,16 +25,17 @@ from __future__ import annotations
 import json
 import re
 import threading
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
-from typing import Any, Optional
-
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from typing import Any
 
 # ── Entry type ──────────────────────────────────────────────────────
+
 
 @dataclass
 class BoardEntry:
     """A single post on the blackboard."""
+
     topic: str
     content: Any
     source: str = ""
@@ -44,10 +45,11 @@ class BoardEntry:
 
     def __post_init__(self) -> None:
         if not self.timestamp:
-            self.timestamp = datetime.now(timezone.utc).isoformat()
+            self.timestamp = datetime.now(UTC).isoformat()
 
 
 # ── Blackboard ─────────────────────────────────────────────────────
+
 
 class Blackboard:
     """Thread-safe shared knowledge space for swarm agents.
@@ -100,7 +102,7 @@ class Blackboard:
         topic: str,
         *,
         latest: bool = True,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Read content for *topic*.
 
         If *latest* is True (default) returns the most recent entry's
@@ -115,7 +117,7 @@ class Blackboard:
                 return entries[-1].content
             return [e.content for e in entries]
 
-    def get_entry(self, topic: str, *, latest: bool = True) -> Optional[BoardEntry]:
+    def get_entry(self, topic: str, *, latest: bool = True) -> BoardEntry | None:
         """Like ``get()`` but returns the full ``BoardEntry`` object."""
         with self._lock:
             entries = self._topics.get(topic)
@@ -152,7 +154,7 @@ class Blackboard:
         topic: str,
         *,
         timeout: float = 30.0,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Block until *topic* has at least one entry, then return its content.
 
         Returns None on timeout.
@@ -172,7 +174,7 @@ class Blackboard:
             entries = self._topics.get(topic)
             return entries[-1].content if entries else None
 
-    def clear(self, topic: Optional[str] = None) -> None:
+    def clear(self, topic: str | None = None) -> None:
         """Remove all entries, or just those under *topic*."""
         with self._lock:
             if topic:
@@ -228,8 +230,5 @@ class Blackboard:
                 content_preview = str(last.content)
                 if len(content_preview) > 80:
                     content_preview = content_preview[:77] + "..."
-                lines.append(
-                    f"  {topic} ({len(entries)} post(s){src})"
-                    f"\n    → {content_preview}"
-                )
+                lines.append(f"  {topic} ({len(entries)} post(s){src})\n    → {content_preview}")
             return "\n".join(lines)

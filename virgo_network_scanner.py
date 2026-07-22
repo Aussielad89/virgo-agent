@@ -7,10 +7,10 @@ using concurrent threads. Saves results to virgo_network_map.json.
 
 from __future__ import annotations
 
-import socket
-from concurrent.futures import ThreadPoolExecutor
-import sys
 import os
+import socket
+import sys
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -58,7 +58,9 @@ def run_subnet_scan() -> None:
     print(f"{icon('antenna')} Local Machine IP Detected: {local_ip}")
 
     if local_ip == "127.0.0.1":
-        print(f"{icon('error')} Error: Not connected to an active local network. Aborting subnet scan.")
+        print(
+            f"{icon('error')} Error: Not connected to an active local network. Aborting subnet scan."
+        )
         return
 
     # Extract the subnet prefix (e.g., '192.168.1.')
@@ -68,7 +70,9 @@ def run_subnet_scan() -> None:
     # Common ports to check on active local devices
     ports_to_check = [22, 80, 11434, 8000, 8080, 1883]
 
-    print(f"{icon('search')} Scanning subnet {subnet_prefix}0/24 for active hosts on ports: {ports_to_check}...")
+    print(
+        f"{icon('search')} Scanning subnet {subnet_prefix}0/24 for active hosts on ports: {ports_to_check}..."
+    )
     print(f"{icon('bolt')} Utilizing ThreadPoolExecutor for rapid multi-threaded scanning...")
 
     active_devices: dict[str, list[int]] = {}

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from virgo_scaffold import list_scaffolds, load_scaffold, generate
+from virgo_scaffold import generate, list_scaffolds, load_scaffold
 
 HERE = Path(__file__).parent.parent
 SCAFFOLDS_DIR = HERE / "scaffolds"
@@ -100,8 +100,12 @@ class TestGenerate:
         assert (tmp_dir / "testcli" / "cli.py").exists()
 
     def test_template_substitution(self, tmp_dir: Path) -> None:
-        generate("cli-app", output_dir=str(tmp_dir), project_name="testcli",
-                 app_description="My test CLI")
+        generate(
+            "cli-app",
+            output_dir=str(tmp_dir),
+            project_name="testcli",
+            app_description="My test CLI",
+        )
         pyproject = (tmp_dir / "pyproject.toml").read_text(encoding="utf-8")
         assert "testcli" in pyproject
         assert "My test CLI" in pyproject
@@ -139,8 +143,12 @@ class TestGenerate:
         assert Path("tests/test_core.py") in paths
 
     def test_agent_tool_scaffold(self, tmp_dir: Path) -> None:
-        created = generate("agent-tool", output_dir=str(tmp_dir),
-                           module_name="virgo_custom", tool_description="My custom tool")
+        created = generate(
+            "agent-tool",
+            output_dir=str(tmp_dir),
+            module_name="virgo_custom",
+            tool_description="My custom tool",
+        )
         paths = [p.relative_to(tmp_dir) for p in created]
         assert Path("virgo_custom.py") in paths
         assert Path("tests/test_virgo_custom.py") in paths
@@ -161,7 +169,7 @@ class TestGenerate:
             # Clear env of any scaffold-related vars
             if "VIRGO_SCAFFOLD_SKIP_DEFAULTS" in os.environ:
                 mp.delenv("VIRGO_SCAFFOLD_SKIP_DEFAULTS")
-            created = generate("fastapi-crud", output_dir=str(tmp_dir))
+            generate("fastapi-crud", output_dir=str(tmp_dir))
             # Default project_name from scaffold is "myapi"
             assert (tmp_dir / "myapi" / "main.py").exists()
 
@@ -182,14 +190,19 @@ class TestGenerate:
 class TestGeneratedCodeSanity:
     """Verify generated Python files are syntactically valid."""
 
-    @pytest.mark.parametrize("scaffold,overrides", [
-        ("cli-app", {"project_name": "sanitycli", "app_description": "test"}),
-        ("fastapi-crud", {"project_name": "sanityapi", "app_title": "Test API"}),
-        ("flask-app", {"project_name": "sanityweb", "app_title": "Test"}),
-        ("python-lib", {"project_name": "sanitylib", "lib_description": "test"}),
-        ("agent-tool", {"module_name": "virgo_sanity", "tool_description": "test"}),
-    ])
-    def test_generated_python_is_valid_syntax(self, scaffold: str, overrides: dict, tmp_dir: Path) -> None:
+    @pytest.mark.parametrize(
+        "scaffold,overrides",
+        [
+            ("cli-app", {"project_name": "sanitycli", "app_description": "test"}),
+            ("fastapi-crud", {"project_name": "sanityapi", "app_title": "Test API"}),
+            ("flask-app", {"project_name": "sanityweb", "app_title": "Test"}),
+            ("python-lib", {"project_name": "sanitylib", "lib_description": "test"}),
+            ("agent-tool", {"module_name": "virgo_sanity", "tool_description": "test"}),
+        ],
+    )
+    def test_generated_python_is_valid_syntax(
+        self, scaffold: str, overrides: dict, tmp_dir: Path
+    ) -> None:
         created = generate(scaffold, output_dir=str(tmp_dir), **overrides)
         py_files = [p for p in created if p.suffix == ".py"]
         for py_file in py_files:

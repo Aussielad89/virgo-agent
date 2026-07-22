@@ -5,7 +5,6 @@ Tests for environment — AgentEnvironment manager.
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -13,10 +12,9 @@ import pytest
 HERE = Path(__file__).parent.parent
 sys.path.insert(0, str(HERE))
 
-from environment import AgentEnvironment, _bin_subdir, ENV_DIR_NAME
-
-
 import os
+
+from environment import ENV_DIR_NAME, AgentEnvironment, _bin_subdir
 
 
 def _venv_supported() -> bool:
@@ -31,7 +29,9 @@ def _venv_supported() -> bool:
 
 # The environment manager requires a working ``venv``; skip when unavailable
 # (e.g. certain CI images) rather than failing the whole suite.
-requires_venv = pytest.mark.skipif(not _venv_supported(), reason="venv creation unsupported in this environment")
+requires_venv = pytest.mark.skipif(
+    not _venv_supported(), reason="venv creation unsupported in this environment"
+)
 
 
 class TestConstants:
@@ -103,7 +103,11 @@ class TestPackageManagement:
         env.setup()
         # Install a small package
         result = env.install("pytz")
-        assert "Successfully installed" in result or "already satisfied" in result or "Requirement already satisfied" in result
+        assert (
+            "Successfully installed" in result
+            or "already satisfied" in result
+            or "Requirement already satisfied" in result
+        )
 
     def test_ensure_already_installed(self, tmp_path: Path) -> None:
         env = AgentEnvironment(str(tmp_path))
@@ -138,7 +142,7 @@ class TestScriptExecution:
     def test_run_with_cwd(self, tmp_path: Path) -> None:
         env = AgentEnvironment(str(tmp_path))
         env.setup()
-        import os
+
         proc = env.run("import os; print(os.getcwd())", cwd=str(tmp_path))
         assert str(tmp_path) in proc.stdout
 

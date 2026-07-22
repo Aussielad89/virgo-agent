@@ -16,6 +16,7 @@ import sys
 _ORIGINAL_ENCODING = (sys.stdout.encoding or "").lower()
 if sys.stdout.encoding and _ORIGINAL_ENCODING != "utf-8":
     import io
+
     sys.stdout = io.TextIOWrapper(
         sys.stdout.buffer,
         encoding="utf-8",
@@ -38,42 +39,42 @@ def _supports_emoji() -> bool:
 # On UTF-8 terminals the emoji is used; on cp1252/etc the ASCII text is used.
 
 _ICONS: dict[str, tuple[str, str]] = {
-    "rocket":     ("\U0001F680", "[RUN]"),    # 🚀
-    "error":       ("\u274C",    "[ERR]"),     # ❌
-    "file":        ("\U0001F4C4", "[FILE]"),   # 📄
-    "warn":        ("\u26A0\uFE0F", "[!]"),    # ⚠️
-    "arrow":       ("\U0001F449", ">"),        # 👉
-    "history":     ("\U0001F4DC", "[LOG]"),    # 📜
-    "brain":       ("\U0001F9E0", "[AI]"),     # 🧠
-    "virgo":       ("\U0001F6F8", "[VIRGO]"),  # 🛸
-    "web":         ("\U0001F310", "[WEB]"),    # 🌐
-    "search":      ("\U0001F50D", "[SRCH]"),   # 🔍
-    "video":       ("\U0001F4FA", "[VID]"),    # 📺
-    "tool":        ("\U0001F6E0", "[TOOL]"),   # 🛠
-    "fix":         ("\U0001F527", "[FIX]"),    # 🔧
-    "check":       ("\U0001F52C", "[CHK]"),    # 🔬
-    "sat":         ("\U0001F4E1", "[NET]"),    # 🛰️
-    "ok":          ("\u2705",    "[OK]"),       # ✅
-    "shield":      ("\U0001F6E1", "[SHIELD]"), # 🛡️
-    "refresh":     ("\U0001F504", "[SYNC]"),   # 🔄
-    "save":        ("\U0001F4BE", "[SAVE]"),   # 💾
-    "bolt":        ("\u26A1",    "[PWR]"),     # ⚡
-    "sparkle":     ("\u2728",    "[+]"),       # ✨
-    "done":        ("\U0001F3C6", "[DONE]"),   # 🏆
-    "alert":       ("\U0001F514", "[ALERT]"),  # 🔔
-    "antenna":     ("\U0001F4E1", "[NET]"),    # 📡
-    "goal":        ("\U0001F3AF", "[GOAL]"),   # 🎯
-    "discover":    ("\U0001F50D", "[SCAN]"),   # 🔍
-    "code":        ("\U0001F4BB", "[CODE]"),   # 💻
-    "test":        ("\U0001F6E0", "[TEST]"),   # 🛠
-    "pass":        ("\u2705",    "[PASS]"),    # ✅
-    "fail":        ("\u274C",    "[FAIL]"),    # ❌
-    "info":        ("\u2139",    "[INFO]"),    # ℹ
-    "syntax":      ("\U0001F52C", "[SYNTAX]"), # 🔬
-    "audio":       ("\U0001F399\ufe0f", "[AUDIO]"), # 🎙️
-    "mic":         ("\U0001F3A4", "[MIC]"),   # 🎤
-    "send":        ("\U0001F4E4", "[SEND]"),  # 📤
-    "compare":     ("\U0001F9F5", "[AB]"),    # 🧵
+    "rocket": ("\U0001f680", "[RUN]"),  # 🚀
+    "error": ("\u274c", "[ERR]"),  # ❌
+    "file": ("\U0001f4c4", "[FILE]"),  # 📄
+    "warn": ("\u26a0\ufe0f", "[!]"),  # ⚠️
+    "arrow": ("\U0001f449", ">"),  # 👉
+    "history": ("\U0001f4dc", "[LOG]"),  # 📜
+    "brain": ("\U0001f9e0", "[AI]"),  # 🧠
+    "virgo": ("\U0001f6f8", "[VIRGO]"),  # 🛸
+    "web": ("\U0001f310", "[WEB]"),  # 🌐
+    "search": ("\U0001f50d", "[SRCH]"),  # 🔍
+    "video": ("\U0001f4fa", "[VID]"),  # 📺
+    "tool": ("\U0001f6e0", "[TOOL]"),  # 🛠
+    "fix": ("\U0001f527", "[FIX]"),  # 🔧
+    "check": ("\U0001f52c", "[CHK]"),  # 🔬
+    "sat": ("\U0001f4e1", "[NET]"),  # 🛰️
+    "ok": ("\u2705", "[OK]"),  # ✅
+    "shield": ("\U0001f6e1", "[SHIELD]"),  # 🛡️
+    "refresh": ("\U0001f504", "[SYNC]"),  # 🔄
+    "save": ("\U0001f4be", "[SAVE]"),  # 💾
+    "bolt": ("\u26a1", "[PWR]"),  # ⚡
+    "sparkle": ("\u2728", "[+]"),  # ✨
+    "done": ("\U0001f3c6", "[DONE]"),  # 🏆
+    "alert": ("\U0001f514", "[ALERT]"),  # 🔔
+    "antenna": ("\U0001f4e1", "[NET]"),  # 📡
+    "goal": ("\U0001f3af", "[GOAL]"),  # 🎯
+    "discover": ("\U0001f50d", "[SCAN]"),  # 🔍
+    "code": ("\U0001f4bb", "[CODE]"),  # 💻
+    "test": ("\U0001f6e0", "[TEST]"),  # 🛠
+    "pass": ("\u2705", "[PASS]"),  # ✅
+    "fail": ("\u274c", "[FAIL]"),  # ❌
+    "info": ("\u2139", "[INFO]"),  # ℹ
+    "syntax": ("\U0001f52c", "[SYNTAX]"),  # 🔬
+    "audio": ("\U0001f399\ufe0f", "[AUDIO]"),  # 🎙️
+    "mic": ("\U0001f3a4", "[MIC]"),  # 🎤
+    "send": ("\U0001f4e4", "[SEND]"),  # 📤
+    "compare": ("\U0001f9f5", "[AB]"),  # 🧵
 }
 
 _use_emoji = _supports_emoji()

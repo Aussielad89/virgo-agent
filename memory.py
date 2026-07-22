@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 HERE = Path(__file__).parent
 MEMORY_DIR = HERE / ".virgo_memory"
@@ -19,6 +19,7 @@ MEMORY_DIR = HERE / ".virgo_memory"
 # ---------------------------------------------------------------------------
 # JSON encoder that handles dataclasses + Path
 # ---------------------------------------------------------------------------
+
 
 class _Encoder(json.JSONEncoder):
     def default(self, o: Any) -> Any:
@@ -33,7 +34,8 @@ class _Encoder(json.JSONEncoder):
 # Save / load
 # ---------------------------------------------------------------------------
 
-def save_state(state: Any, name: Optional[str] = None) -> Path:
+
+def save_state(state: Any, name: str | None = None) -> Path:
     """Serialize a WorkspaceState (or any dataclass) to JSON.
 
     Writes to ``.virgo_memory/<name>.json`` and returns the path.
@@ -41,7 +43,7 @@ def save_state(state: Any, name: Optional[str] = None) -> Path:
     """
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     if not name:
-        name = datetime.now(timezone.utc).strftime("run_%Y%m%d_%H%M%S")
+        name = datetime.now(UTC).strftime("run_%Y%m%d_%H%M%S")
     path = MEMORY_DIR / f"{name}.json"
     data = json.dumps(state, cls=_Encoder, indent=2, ensure_ascii=False)
     path.write_text(data, encoding="utf-8")
@@ -66,16 +68,18 @@ def list_sessions() -> list[dict[str, Any]]:
     for p in sorted(MEMORY_DIR.glob("*.json"), reverse=True):
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-            sessions.append({
-                "name": p.stem,
-                "path": str(p),
-                "goal": data.get("goal", "")[:100],
-                "phase": data.get("phase", ""),
-                "loop_passed": data.get("loop_passed"),
-                "iteration": data.get("iteration", 0),
-                "generated": len(data.get("generated_files", [])),
-                "modified": datetime.fromtimestamp(p.stat().st_mtime).isoformat(),
-            })
+            sessions.append(
+                {
+                    "name": p.stem,
+                    "path": str(p),
+                    "goal": data.get("goal", "")[:100],
+                    "phase": data.get("phase", ""),
+                    "loop_passed": data.get("loop_passed"),
+                    "iteration": data.get("iteration", 0),
+                    "generated": len(data.get("generated_files", [])),
+                    "modified": datetime.fromtimestamp(p.stat().st_mtime).isoformat(),
+                }
+            )
         except Exception:
             sessions.append({"name": p.stem, "path": str(p), "error": "corrupt"})
     return sessions
@@ -85,16 +89,17 @@ def list_sessions() -> list[dict[str, Any]]:
 # Replay
 # ---------------------------------------------------------------------------
 
+
 def replay(
     name_or_path: str,
     orch: Any,  # Orchestrator instance
-    env: Any,   # AgentEnvironment
+    env: Any,  # AgentEnvironment
     registry: Any,  # ToolRegistry
     *,
     planner: Any = None,
     code_gen: Any = None,
     fixer: Any = None,
-    max_iterations: Optional[int] = None,
+    max_iterations: int | None = None,
 ) -> Any:
     """Re-run a saved pipeline from its persisted state.
 
@@ -108,7 +113,8 @@ def replay(
     goal = data.get("goal", "")
 
     # Build a partial WorkspaceState with discovered files pre-loaded
-    from orchestrator import WorkspaceState, DiscoveredFile, GeneratedFile
+    from orchestrator import DiscoveredFile, GeneratedFile, WorkspaceState
+
     state = WorkspaceState(goal=goal, base_path=data.get("base_path", "."))
 
     for df_dict in data.get("discovered_files", []):
@@ -145,10 +151,11 @@ def replay(
 # Feedback memory — learn from successful fixes
 # ---------------------------------------------------------------------------
 
+
 class FeedbackMemory:
     """Store and retrieve (error_pattern → fix) pairs."""
 
-    def __init__(self, path: Optional[Path] = None) -> None:
+    def __init__(self, path: Path | None = None) -> None:
         self.path = path or MEMORY_DIR / "feedback.json"
         self._data: list[dict[str, str]] = []
         self.load()
@@ -167,19 +174,23 @@ class FeedbackMemory:
             encoding="utf-8",
         )
 
-    def record(self, error_snippet: str, patch_old: str, patch_new: str, success: bool = True) -> None:
+    def record(
+        self, error_snippet: str, patch_old: str, patch_new: str, success: bool = True
+    ) -> None:
         """Store a fix that resolved an error."""
         if not success:
             return
-        self._data.append({
-            "error": error_snippet[:500],
-            "old": patch_old[:500],
-            "new": patch_new[:500],
-            "count": 1,
-        })
+        self._data.append(
+            {
+                "error": error_snippet[:500],
+                "old": patch_old[:500],
+                "new": patch_new[:500],
+                "count": 1,
+            }
+        )
         self.save()
 
-    def lookup(self, error_snippet: str) -> Optional[dict[str, str]]:
+    def lookup(self, error_snippet: str) -> dict[str, str] | None:
         """Return a matching fix if one exists."""
         for entry in reversed(self._data):
             if entry["error"] in error_snippet or error_snippet in entry["error"]:

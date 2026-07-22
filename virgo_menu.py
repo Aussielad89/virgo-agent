@@ -10,17 +10,17 @@ and supports dynamic reconfiguration without code changes.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
 import subprocess
 import sys
-import glob
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from _console import icon
-from _log import log, OUTDIR
+from _log import OUTDIR, log
 
 CONFIG_PATH = os.path.join(HERE, "dashboard.json")
 
@@ -55,6 +55,7 @@ MENU_ENTRIES: list[dict] = _build_menu_from_config() if MENU_CONFIG else []
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
+
 
 def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
@@ -133,7 +134,7 @@ def run_pipeline() -> None:
     cmd = [sys.executable, os.path.join(HERE, "cli.py"), "run", "--goal", goal]
     if use_llm:
         cmd.append("--llm")
-    print(f"\n{icon('rocket')} Running: virgo run --goal \"{goal}\"" + (" --llm" if use_llm else ""))
+    print(f'\n{icon("rocket")} Running: virgo run --goal "{goal}"' + (" --llm" if use_llm else ""))
     try:
         subprocess.run(cmd)
         input(f"\n{icon('arrow')} [PRESS ENTER TO RETURN TO MENU]")
@@ -154,8 +155,10 @@ def _dispatch_action(entry: dict) -> bool:
     elif action == "scaffold_list":
         run_script("virgo_scaffold.py list")
     elif action == "scaffold_gen":
-        name = input(f"{icon('arrow')} Project name [{entry.get('default_name', 'myapp')}]: ").strip() or entry.get('default_name', 'myapp')
-        var_flag = f"-v {entry['var_name']}" if "var_name" in entry else f"-v project_name"
+        name = input(
+            f"{icon('arrow')} Project name [{entry.get('default_name', 'myapp')}]: "
+        ).strip() or entry.get("default_name", "myapp")
+        var_flag = f"-v {entry['var_name']}" if "var_name" in entry else "-v project_name"
         run_script(
             f"virgo_scaffold.py generate {entry['scaffold']} "
             f"-o ../scaffold-output/{entry['scaffold']} "
@@ -176,6 +179,7 @@ def _have_msvcrt() -> bool:
     """Return True if msvcrt is available (Windows)."""
     try:
         import msvcrt  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -255,7 +259,6 @@ def master_dashboard() -> None:
     categories = MENU_CONFIG.get("categories", [])
     exit_key = MENU_CONFIG.get("exit_key", "X")
     entries = _build_menu_from_config()
-    total = len(entries)
 
     if not entries:
         print(f"{icon('error')} No menu entries found in {CONFIG_PATH}")

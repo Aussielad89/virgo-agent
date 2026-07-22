@@ -35,13 +35,17 @@ def _extract_functions(tree: ast.Module, source: str) -> list[dict]:
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             doc = ast.get_docstring(node) or ""
-            items.append({
-                "name": node.name,
-                "type": "async_function" if isinstance(node, ast.AsyncFunctionDef) else "function",
-                "doc": doc.split("\n")[0] if doc else "",
-                "args": _extract_args(node),
-                "returns": _type_name(node.returns),
-            })
+            items.append(
+                {
+                    "name": node.name,
+                    "type": "async_function"
+                    if isinstance(node, ast.AsyncFunctionDef)
+                    else "function",
+                    "doc": doc.split("\n")[0] if doc else "",
+                    "args": _extract_args(node),
+                    "returns": _type_name(node.returns),
+                }
+            )
     return items
 
 
@@ -57,7 +61,9 @@ def _extract_classes(tree: ast.Module, source: str) -> list[dict]:
                     doc = ast.get_docstring(item) or ""
                     entry = {
                         "name": item.name,
-                        "type": "async_method" if isinstance(item, ast.AsyncFunctionDef) else "method",
+                        "type": "async_method"
+                        if isinstance(item, ast.AsyncFunctionDef)
+                        else "method",
                         "doc": doc.split("\n")[0] if doc else "",
                         "args": _extract_args(item),
                         "returns": _type_name(item.returns),
@@ -67,13 +73,15 @@ def _extract_classes(tree: ast.Module, source: str) -> list[dict]:
                     else:
                         methods.append(entry)
             doc = ast.get_docstring(node) or ""
-            classes.append({
-                "name": node.name,
-                "type": "class",
-                "doc": doc.split("\n")[0] if doc else "",
-                "init_args": init_args,
-                "methods": methods,
-            })
+            classes.append(
+                {
+                    "name": node.name,
+                    "type": "class",
+                    "doc": doc.split("\n")[0] if doc else "",
+                    "init_args": init_args,
+                    "methods": methods,
+                }
+            )
     return classes
 
 
@@ -114,18 +122,22 @@ def _extract_args(node) -> list[dict]:
             idx = i - (n - len(defaults))
             if 0 <= idx < len(defaults):
                 default = _literal(defaults[idx])
-        args.append({
-            "name": arg.arg,
-            "ann": _type_name(arg.annotation),
-            "default": default,
-        })
+        args.append(
+            {
+                "name": arg.arg,
+                "ann": _type_name(arg.annotation),
+                "default": default,
+            }
+        )
     for j, arg in enumerate(a.kwonlyargs):
         default = _literal(a.kw_defaults[j]) if a.kw_defaults else None
-        args.append({
-            "name": arg.arg,
-            "ann": _type_name(arg.annotation),
-            "default": default,
-        })
+        args.append(
+            {
+                "name": arg.arg,
+                "ann": _type_name(arg.annotation),
+                "default": default,
+            }
+        )
     if args and args[0]["name"] in ("self", "cls"):
         args = args[1:]
     return args
@@ -371,15 +383,18 @@ def main(argv: list[str] | None = None) -> None:
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
-        "--path", "-p",
+        "--path",
+        "-p",
         help="Single Python file to analyze.",
     )
     group.add_argument(
-        "--dir", "-d",
+        "--dir",
+        "-d",
         help="Directory to scan recursively for .py files.",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default="./tests",
         help="Output directory for generated test files (default: ./tests).",
     )

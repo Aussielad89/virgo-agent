@@ -20,14 +20,15 @@ from pathlib import Path
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
-from textual.reactive import reactive
-from textual.screen import Screen, ModalScreen
+from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
+from textual.screen import ModalScreen, Screen
 from textual.widgets import (
-    Button, Footer, Header, Input, Label, ListItem,
-    ListView, RichLog, Static, Tree,
+    Footer,
+    Header,
+    RichLog,
+    Static,
+    Tree,
 )
-from textual.widgets.tree import TreeNode
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -58,6 +59,7 @@ ENTRIES = _build_entries()
 
 
 # ── Output screen: shows live subprocess output ─────────────────────────
+
 
 class OutputScreen(ModalScreen):
     """Full-screen modal that runs a script and shows live output."""
@@ -113,12 +115,16 @@ class OutputScreen(ModalScreen):
                 await self.process.wait()
                 rc = self.process.returncode or 0
                 if rc == 0:
-                    await status.update(f"[bold green]{icon('pass')} Completed (exit {rc})[/bold green]")
+                    await status.update(
+                        f"[bold green]{icon('pass')} Completed (exit {rc})[/bold green]"
+                    )
                 else:
                     await status.update(f"[bold red]{icon('fail')} Failed (exit {rc})[/bold red]")
 
             elif action == "pipeline":
-                await log_widget.write("[yellow]Pipeline requires interactive input — use the console dashboard for this.[/yellow]\n")
+                await log_widget.write(
+                    "[yellow]Pipeline requires interactive input — use the console dashboard for this.[/yellow]\n"
+                )
                 await status.update("[bold yellow]Not available in TUI mode[/bold yellow]")
 
             elif action == "view":
@@ -126,10 +132,16 @@ class OutputScreen(ModalScreen):
                 candidate = str(HERE / file_name) if not os.path.isabs(file_name) else file_name
                 if os.path.exists(candidate):
                     content = Path(candidate).read_text(encoding="utf-8")
-                    await log_widget.write(f"[bold]{icon('file')} {candidate}[/bold]\n\n{content}\n")
-                    await status.update(f"[bold green]{icon('pass')} Loaded {file_name}[/bold green]")
+                    await log_widget.write(
+                        f"[bold]{icon('file')} {candidate}[/bold]\n\n{content}\n"
+                    )
+                    await status.update(
+                        f"[bold green]{icon('pass')} Loaded {file_name}[/bold green]"
+                    )
                 else:
-                    await log_widget.write(f"[yellow]{icon('warn')} {candidate} not found. Run the tool first.[/yellow]\n")
+                    await log_widget.write(
+                        f"[yellow]{icon('warn')} {candidate} not found. Run the tool first.[/yellow]\n"
+                    )
                     await status.update("[bold yellow]File not found[/bold yellow]")
 
             elif action == "search_history":
@@ -147,7 +159,9 @@ class OutputScreen(ModalScreen):
                             await log_widget.write(f"  {sf.name}  [{engine}]  {first}\n")
                         except Exception:
                             await log_widget.write(f"  {sf.name}  (corrupt)\n")
-                    await status.update(f"[bold]Found {min(len(search_files), 10)} search history files[/bold]")
+                    await status.update(
+                        f"[bold]Found {min(len(search_files), 10)} search history files[/bold]"
+                    )
                 else:
                     await log_widget.write("[yellow]No search history found.[/yellow]\n")
                     await status.update("[bold yellow]No history[/bold yellow]")
@@ -159,7 +173,9 @@ class OutputScreen(ModalScreen):
                 await status.update(f"[bold green]{icon('pass')} Done[/bold green]")
 
             elif action == "scaffold_gen":
-                await log_widget.write("[yellow]Scaffold generation requires interactive input — use the console dashboard.[/yellow]\n")
+                await log_widget.write(
+                    "[yellow]Scaffold generation requires interactive input — use the console dashboard.[/yellow]\n"
+                )
                 await status.update("[bold yellow]Use console dashboard[/bold yellow]")
 
             else:
@@ -167,7 +183,7 @@ class OutputScreen(ModalScreen):
 
         except Exception as e:
             await log_widget.write(f"[bold red]{icon('error')} Error: {e}[/bold red]\n")
-            await status.update(f"[bold red]Error[/bold red]")
+            await status.update("[bold red]Error[/bold red]")
 
     def key_q(self) -> None:
         if self.process and self.process.returncode is None:
@@ -176,6 +192,7 @@ class OutputScreen(ModalScreen):
 
 
 # ── Main dashboard screen ──────────────────────────────────────────────
+
 
 class DashboardScreen(Screen):
     """Main dashboard with category-organized tool list."""
@@ -255,6 +272,7 @@ class DashboardScreen(Screen):
 
 
 # ── App ────────────────────────────────────────────────────────────────
+
 
 class VirgoTextualApp(App):
     """Textual TUI dashboard for Virgo Agent Framework."""

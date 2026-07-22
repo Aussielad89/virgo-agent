@@ -17,7 +17,7 @@ NODES = {
     "n1": (80, 80),
     "n2": (140, 120),
     "n3": (200, 100),
-    "spica": (260, 140),   # brightest star
+    "spica": (260, 140),  # brightest star
     "n5": (310, 180),
     "n6": (340, 260),
     "n7": (230, 210),
@@ -27,9 +27,18 @@ NODES = {
     "n11": (160, 180),
 }
 LINES = [
-    ("n1", "n2"), ("n2", "n3"), ("n3", "spica"), ("spica", "n5"),
-    ("n5", "n6"), ("spica", "n7"), ("n7", "n8"), ("n7", "n9"),
-    ("n9", "n10"), ("n3", "n11"), ("n2", "n9"), ("n5", "n8"),
+    ("n1", "n2"),
+    ("n2", "n3"),
+    ("n3", "spica"),
+    ("spica", "n5"),
+    ("n5", "n6"),
+    ("spica", "n7"),
+    ("n7", "n8"),
+    ("n7", "n9"),
+    ("n9", "n10"),
+    ("n3", "n11"),
+    ("n2", "n9"),
+    ("n5", "n8"),
 ]
 SPICA = "spica"
 WHITE_NODES = {"n1", "n3", "spica", "n6", "n8", "n10"}
@@ -66,7 +75,10 @@ def draw_mark(size: int) -> Image.Image:
     for k, (x, y) in pts.items():
         big = (size / 12) if k == SPICA else (size / 22)
         for r, a in ((big, 60), (big * 0.6, 90)):
-            d.ellipse([x - r, y - r, x + r, y + r], fill=(0, 217, 255, a) if k not in WHITE_NODES else (255, 255, 255, a))
+            d.ellipse(
+                [x - r, y - r, x + r, y + r],
+                fill=(0, 217, 255, a) if k not in WHITE_NODES else (255, 255, 255, a),
+            )
 
     # node cores
     for k, (x, y) in pts.items():

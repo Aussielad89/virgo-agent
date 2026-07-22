@@ -15,14 +15,14 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from environment import AgentEnvironment
-from tools import ToolRegistry
 from logo import print_logo
 from orchestrator import Orchestrator, TestLog, WorkspaceState
-
+from tools import ToolRegistry
 
 # ===========================================================================
 # Policy: planner
 # ===========================================================================
+
 
 def planner(goal: str, state: WorkspaceState) -> str:
     """Examine discovered files and produce a plan."""
@@ -134,8 +134,9 @@ def code_generator(
 # Policy: fixer
 # ===========================================================================
 
+
 def fixer(
-    log: "TestLog",
+    log: TestLog,
     state: WorkspaceState,
     registry: ToolRegistry,
     env: AgentEnvironment,
@@ -149,19 +150,23 @@ def fixer(
 
     # -- UnicodeEncodeError (emoji on cp1252) → strip non-ASCII ---------
     if "UnicodeEncodeError" in err:
-        return [(
-            "parse_logs.py",
-            'print(f"==> Summary written to {out_path} with {len(entries)} entries")',
-            'print("==> Summary written to {} with {} entries".format(out_path, len(entries)))',
-        )]
+        return [
+            (
+                "parse_logs.py",
+                'print(f"==> Summary written to {out_path} with {len(entries)} entries")',
+                'print("==> Summary written to {} with {} entries".format(out_path, len(entries)))',
+            )
+        ]
 
     # -- FileNotFoundError → prepend full path resolution ---------------
     if "FileNotFoundError" in err or "No such file" in err:
-        return [(
-            "parse_logs.py",
-            'log_path = Path("mock_logs.txt")',
-            'log_path = Path(__file__).parent / "mock_logs.txt"',
-        )]
+        return [
+            (
+                "parse_logs.py",
+                'log_path = Path("mock_logs.txt")',
+                'log_path = Path(__file__).parent / "mock_logs.txt"',
+            )
+        ]
 
     # -- ImportError → try installing the missing package ---------------
     m_import = re.search(r"ModuleNotFoundError: No module named '(\w+)'", err)
@@ -188,6 +193,7 @@ def fixer(
 # Main
 # ===========================================================================
 
+
 def main(goal: str | None = None) -> None:
     print_logo()
 
@@ -203,7 +209,9 @@ def main(goal: str | None = None) -> None:
     registry.register_defaults(env)
 
     orch = Orchestrator(
-        env, registry, base_path=str(HERE),
+        env,
+        registry,
+        base_path=str(HERE),
         workspace_excludes=["agent_env", ".crush", ".git", "__pycache__"],
     )
 

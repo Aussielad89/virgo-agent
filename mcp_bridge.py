@@ -31,10 +31,9 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Optional
 
-from _log import log
 from _console import icon
+from _log import log
 
 try:  # tools_core may not exist yet at import time in some test setups
     from tools_core import Tool, ToolRegistry
@@ -45,20 +44,21 @@ except Exception:  # pragma: no cover - import shim for standalone use
 
 # ── JSON-RPC client for a single stdio MCP server ─────────────────────
 
+
 class McpServer:
     """A thin stdio JSON-RPC client for one MCP server process."""
 
     def __init__(self, name: str, command: list[str]) -> None:
         self.name = name
         self.command = command
-        self._proc: Optional[subprocess.Popen] = None
+        self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
         self._req_id = 0
         self._tools: list[dict] = []
         self._ready = False
         self._read_queue: queue.Queue = queue.Queue()
         self._reader_stop = threading.Event()
-        self._reader_thread: Optional[threading.Thread] = None
+        self._reader_thread: threading.Thread | None = None
 
     # -- lifecycle -------------------------------------------------------
     def start(self, timeout: float = 20.0) -> bool:
@@ -143,7 +143,7 @@ class McpServer:
         self._proc.stdin.write(json.dumps(obj) + "\n")
         self._proc.stdin.flush()
 
-    def _read_line(self, timeout: float) -> Optional[str]:
+    def _read_line(self, timeout: float) -> str | None:
         try:
             item = self._read_queue.get(timeout=timeout)
         except queue.Empty:
@@ -152,7 +152,7 @@ class McpServer:
             return None  # EOF sentinel
         return item
 
-    def _request(self, method: str, params: dict, timeout: float = 20.0) -> Optional[dict]:
+    def _request(self, method: str, params: dict, timeout: float = 20.0) -> dict | None:
         with self._lock:
             self._req_id += 1
             req_id = self._req_id
@@ -206,6 +206,7 @@ class McpServer:
 
 # ── Discovery ─────────────────────────────────────────────────────────
 
+
 def _parse_mcp_servers_from_obj(obj: dict) -> dict[str, list[str]]:
     """Extract ``mcpServers`` definitions into {name: [cmd, ...]}."""
     out: dict[str, list[str]] = {}
@@ -246,7 +247,7 @@ def _discover_configs() -> list[Path]:
     return found
 
 
-def discover_mcp_servers(explicit: Optional[list[str]] = None) -> dict[str, list[str]]:
+def discover_mcp_servers(explicit: list[str] | None = None) -> dict[str, list[str]]:
     """Return {server_name: command_list} from configs + explicit specs.
 
     ``explicit`` entries are ``name=cmd args...`` strings passed via CLI.
@@ -269,6 +270,7 @@ def discover_mcp_servers(explicit: Optional[list[str]] = None) -> dict[str, list
 
 # ── Registry builder ──────────────────────────────────────────────────
 
+
 def _build_env_from_cmd(cmd: list[str]) -> tuple[list[str], dict[str, str]]:
     env: dict[str, str] = {}
     if cmd and cmd[0] == "__ENV__":
@@ -278,9 +280,9 @@ def _build_env_from_cmd(cmd: list[str]) -> tuple[list[str], dict[str, str]]:
 
 
 def build_mcp_registry(
-    explicit: Optional[list[str]] = None,
+    explicit: list[str] | None = None,
     timeout: float = 20.0,
-) -> "ToolRegistry":
+) -> ToolRegistry:
     """Launch discovered MCP servers and wrap their tools as Virgo tools.
 
     Returns a ToolRegistry (from tools_core) containing one Tool per
@@ -316,7 +318,7 @@ def build_mcp_registry(
     return registry
 
 
-def _patch_env(server: "McpServer") -> None:
+def _patch_env(server: McpServer) -> None:
     """Monkey-patch Popen to use the server's env (helper for env-in-cmd)."""
     real_start = server.start
 
@@ -340,7 +342,7 @@ def _patch_env(server: "McpServer") -> None:
     server.start = _wrapped  # type: ignore[method-assign]
 
 
-def _make_mcp_tool(server_name: str, tool_name: str, description: str, server: "McpServer") -> "Tool":
+def _make_mcp_tool(server_name: str, tool_name: str, description: str, server: McpServer) -> Tool:
     virgo_name = f"mcp_{server_name}__{tool_name}"
 
     def _run(args: str) -> str:
@@ -374,6 +376,7 @@ def _parse_kv(text: str) -> dict[str, str]:
 
 
 # ── Standalone smoke runner (for manual testing) ──────────────────────
+
 
 def main() -> None:  # pragma: no cover - manual CLI
     print(f"{icon('rocket')}  Virgo MCP bridge")

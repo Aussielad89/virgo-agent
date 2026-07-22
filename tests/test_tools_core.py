@@ -4,33 +4,32 @@ Tests for tools_core — Tool, ToolRegistry, built-in tools, parse_tool_calls.
 
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
 HERE = Path(__file__).parent.parent
 import sys
+
 sys.path.insert(0, str(HERE))
 
 from tools_core import (
     Tool,
     ToolRegistry,
+    _is_dangerous_command,
     make_builtin_registry,
     parse_tool_calls,
-    _is_dangerous_command,
 )
-
 
 # ===========================================================================
 # Tool dataclass
 # ===========================================================================
 
+
 class TestTool:
     def test_tool_fields(self) -> None:
         def run(args: str) -> str:
             return args.upper()
+
         t = Tool(name="up", description="uppercase", run=run, schema="<text>")
         assert t.name == "up"
         assert t.description == "uppercase"
@@ -50,6 +49,7 @@ class TestTool:
 # ===========================================================================
 # ToolRegistry
 # ===========================================================================
+
 
 class TestToolRegistry:
     def test_register_and_get(self) -> None:
@@ -80,6 +80,7 @@ class TestToolRegistry:
     def test_call_wraps_exception(self) -> None:
         def boom(args: str) -> str:
             raise RuntimeError("kaboom")
+
         r = ToolRegistry()
         r.register(Tool(name="boom", description="", run=boom))
         out = r.call("boom", "x")
@@ -87,8 +88,7 @@ class TestToolRegistry:
 
     def test_describe_includes_tools(self) -> None:
         r = ToolRegistry()
-        r.register(Tool(name="shell", description="run a command", run=lambda a: a,
-                        schema="<cmd>"))
+        r.register(Tool(name="shell", description="run a command", run=lambda a: a, schema="<cmd>"))
         desc = r.describe()
         assert "shell" in desc
         assert "run a command" in desc
@@ -99,17 +99,16 @@ class TestToolRegistry:
 # Built-in registry
 # ===========================================================================
 
+
 class TestBuiltinRegistry:
     def test_builtin_names(self) -> None:
         reg = make_builtin_registry()
         names = {t.name for t in reg.list_tools()}
-        assert names == {"shell", "file_read", "file_write", "python_run",
-                         "web_fetch", "think"}
+        assert names == {"shell", "file_read", "file_write", "python_run", "web_fetch", "think"}
 
     def test_think_tool(self) -> None:
         reg = make_builtin_registry()
-        assert reg.call("think", "I should plan first") == \
-            "THOUGHT: I should plan first"
+        assert reg.call("think", "I should plan first") == "THOUGHT: I should plan first"
 
     def test_think_empty(self) -> None:
         reg = make_builtin_registry()
@@ -119,6 +118,7 @@ class TestBuiltinRegistry:
 # ===========================================================================
 # Built-in tools — safe inputs
 # ===========================================================================
+
 
 class TestShellTool:
     def test_safe_command(self) -> None:
@@ -165,6 +165,7 @@ class TestFileWriteTool:
     def test_write_and_verify(self) -> None:
         reg = make_builtin_registry()
         import os
+
         d = tempfile.mkdtemp()
         path = os.path.join(d, "out.txt")
         try:
@@ -173,6 +174,7 @@ class TestFileWriteTool:
             assert Path(path).read_text(encoding="utf-8") == "hello world"
         finally:
             import shutil
+
             shutil.rmtree(d, ignore_errors=True)
 
     def test_write_bad_format(self) -> None:
@@ -209,6 +211,7 @@ class TestWebFetchTool:
 # parse_tool_calls
 # ===========================================================================
 
+
 class TestParseFenced:
     def test_single(self) -> None:
         text = "Tool: shell\nARGS: echo hi\n"
@@ -219,8 +222,7 @@ class TestParseFenced:
         assert parse_tool_calls(text) == [("file_write", "path.txt\nline two")]
 
     def test_multiple(self) -> None:
-        text = ("Tool: a\nARGS: 1\n"
-                "Tool: b\nARGS: 2\n")
+        text = "Tool: a\nARGS: 1\nTool: b\nARGS: 2\n"
         assert parse_tool_calls(text) == [("a", "1"), ("b", "2")]
 
     def test_no_args_marker(self) -> None:
@@ -257,6 +259,7 @@ class TestParseNoMatch:
 # ===========================================================================
 # helpers
 # ===========================================================================
+
 
 class TestHelpers:
     def test_dangerous_detection(self) -> None:

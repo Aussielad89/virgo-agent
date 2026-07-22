@@ -13,7 +13,7 @@ import argparse
 import difflib
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -22,10 +22,10 @@ from _console import icon
 from _log import log
 from memory import load_state
 
-
 # ===========================================================================
 # Resolve & validate
 # ===========================================================================
+
 
 def resolve_session(name_or_path: str) -> dict[str, Any]:
     """Load a session dict by name (lookup in .virgo_memory/) or file path.
@@ -46,6 +46,7 @@ def resolve_session(name_or_path: str) -> dict[str, Any]:
 # ===========================================================================
 # Core diff logic
 # ===========================================================================
+
 
 def _safe_get(data: dict[str, Any], *keys: str, default: Any = "") -> Any:
     """Get nested value from a dict, returning *default* on missing keys."""
@@ -104,7 +105,7 @@ def diff_sessions(
             "phase": session_a.get("phase", ""),
             "iteration": session_a.get("iteration", 0),
             "max_iterations": session_a.get("max_iterations", 0),
-            "loop_passed": session_a.get("loop_passed", None),
+            "loop_passed": session_a.get("loop_passed"),
             "generated_count": len(session_a.get("generated_files", [])),
             "discovered_count": len(session_a.get("discovered_files", [])),
         },
@@ -114,7 +115,7 @@ def diff_sessions(
             "phase": session_b.get("phase", ""),
             "iteration": session_b.get("iteration", 0),
             "max_iterations": session_b.get("max_iterations", 0),
-            "loop_passed": session_b.get("loop_passed", None),
+            "loop_passed": session_b.get("loop_passed"),
             "generated_count": len(session_b.get("generated_files", [])),
             "discovered_count": len(session_b.get("discovered_files", [])),
         },
@@ -177,6 +178,7 @@ def diff_sessions(
 # Rendering
 # ===========================================================================
 
+
 def _status_icon(status: str) -> str:
     icons = {
         "identical": icon("ok"),
@@ -187,7 +189,7 @@ def _status_icon(status: str) -> str:
     return icons.get(status, icon("info"))
 
 
-def render_diff(diff: dict[str, Any], output_path: Optional[str] = None) -> str:
+def render_diff(diff: dict[str, Any], output_path: str | None = None) -> str:
     """Render a diff dict as a human-readable string.
 
     If *output_path* is provided, the output is also written to that file
@@ -339,6 +341,7 @@ def render_diff(diff: dict[str, Any], output_path: Optional[str] = None) -> str:
 # CLI entry point
 # ===========================================================================
 
+
 def cmd_diff(args: argparse.Namespace) -> None:
     """Compare two saved sessions."""
     log.info("Diffing sessions: %s vs %s", args.session_a, args.session_b)
@@ -359,12 +362,14 @@ def main() -> None:
     parser.add_argument("session_a", help="First session name or .json path")
     parser.add_argument("session_b", help="Second session name or .json path")
     parser.add_argument(
-        "--brief", "-b",
+        "--brief",
+        "-b",
         action="store_true",
         help="Only list file names, no content diffs",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default=None,
         help="Write diff report to a file (.md or .txt)",
     )

@@ -58,6 +58,7 @@ def render(template: str, **vars: Any) -> str:
       ``title``, ``strip``, ``int``, ``bool``, ``json``.
     Unknown variables are left untouched.
     """
+
     def _replace(m: re.Match) -> str:
         name = m.group(1)
         filt = m.group(2)
@@ -305,8 +306,7 @@ def generate(
     """
     if template_key not in BUILTIN_TEMPLATES:
         raise KeyError(
-            f"Unknown template {template_key!r}. "
-            f"Available: {', '.join(BUILTIN_TEMPLATES)}"
+            f"Unknown template {template_key!r}. Available: {', '.join(BUILTIN_TEMPLATES)}"
         )
 
     code = render(BUILTIN_TEMPLATES[template_key]["code"], **vars)

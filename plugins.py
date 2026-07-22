@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
-import os
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 HERE = Path(__file__).parent
 PLUGIN_DIRS = [
@@ -60,7 +59,7 @@ def load_path(path: Path, registry: Any) -> None:
 
     # 1. Look for a register() function
     if hasattr(module, "register"):
-        fn = getattr(module, "register")
+        fn = module.register
         if callable(fn):
             fn(registry)
             print(f"  [plugins]  Loaded: {path.name}  (register())")
@@ -74,9 +73,11 @@ def load_path(path: Path, registry: Any) -> None:
         if isinstance(obj, Tool):
             registry.register(obj)
             count += 1
-        elif (inspect.isfunction(obj) and
-              obj.__module__ == module.__name__ and
-              (name.startswith("tool_") or name.startswith("_tool_"))):
+        elif (
+            inspect.isfunction(obj)
+            and obj.__module__ == module.__name__
+            and (name.startswith("tool_") or name.startswith("_tool_"))
+        ):
             # Wrap function as a Tool
             tool_name = name.removeprefix("_").removeprefix("tool_").replace("_", " ")
             registry.register(Tool(name=tool_name, fn=obj, description=obj.__doc__ or ""))
@@ -102,10 +103,10 @@ def load_all(registry: Any) -> int:
 def create_plugin(
     name: str,
     code: str,
-    directory: Optional[Path] = None,
+    directory: Path | None = None,
 ) -> Path:
     """Create a new plugin file in the specified plugin directory."""
-    dest = (directory or PLUGIN_DIRS[0])
+    dest = directory or PLUGIN_DIRS[0]
     dest.mkdir(parents=True, exist_ok=True)
     path = dest / name
     path.write_text(code, encoding="utf-8")
@@ -113,6 +114,7 @@ def create_plugin(
 
 
 # ── Hot-reload ───────────────────────────────────────────────────────
+
 
 def _file_hash(path: Path) -> str:
     """Return a stable hash of the file's mtime + size for change detection."""
@@ -127,7 +129,7 @@ def watch_plugins(
     registry: Any,
     *,
     interval: float = 2.0,
-    callback: Optional[callable] = None,
+    callback: callable | None = None,
 ) -> threading.Thread:
     """Start a background thread watching plugin directories for changes.
 
@@ -146,6 +148,7 @@ def watch_plugins(
     try:
         import watchdog.events  # type: ignore
         import watchdog.observers  # type: ignore
+
         _HAS_WATCHDOG = True
     except ImportError:
         _HAS_WATCHDOG = False
@@ -172,6 +175,7 @@ def watch_plugins(
                 print(f"  [plugins]  Hot-reload error for {path.name}: {exc}")
 
     if _HAS_WATCHDOG:
+
         class _Handler(watchdog.events.FileSystemEventHandler):
             def on_created(self, event):
                 if event.src_path.endswith(".py") and not Path(event.src_path).name.startswith("_"):

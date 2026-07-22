@@ -18,11 +18,12 @@ infrastructure.
 from __future__ import annotations
 
 import os
-import time
 import textwrap
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from environment import AgentEnvironment
@@ -36,16 +37,16 @@ if TYPE_CHECKING:
 from _console import icon  # re-export for tests / backwards compat
 
 _STEP_LABELS = {
-    "goal":     "goal",
+    "goal": "goal",
     "discover": "discover",
-    "plan":     "plan",
+    "plan": "plan",
     "generate": "generate",
-    "test":     "test",
-    "fix":      "fix",
-    "pass":     "pass",
-    "fail":     "fail",
-    "info":     "info",
-    "syntax":   "syntax",
+    "test": "test",
+    "fix": "fix",
+    "pass": "pass",
+    "fail": "fail",
+    "info": "info",
+    "syntax": "syntax",
 }
 
 
@@ -59,9 +60,11 @@ def _step(label: str, *parts: str) -> None:
 # Data types — flow through the pipeline
 # ===========================================================================
 
+
 @dataclass
 class DiscoveredFile:
     """Metadata for one file found during workspace discovery."""
+
     path: str
     extension: str
     size: int
@@ -71,15 +74,17 @@ class DiscoveredFile:
 @dataclass
 class GeneratedFile:
     """A file produced in the generate phase."""
+
     path: str
     content: str
-    iteration: int = 0          # last WTF iteration it was tested in
-    passed: bool | None = None   # latest test result
+    iteration: int = 0  # last WTF iteration it was tested in
+    passed: bool | None = None  # latest test result
 
 
 @dataclass
 class TestLog:
     """Result from executing a generated file in the agent env."""
+
     file: str
     iteration: int
     returncode: int
@@ -98,6 +103,7 @@ class WorkspaceState:
     External policy callbacks receive this so they can inspect what
     was discovered, what has been generated, and what errors occurred.
     """
+
     goal: str
     base_path: str = "."
 
@@ -117,8 +123,8 @@ class WorkspaceState:
     loop_passed: bool = False
 
     # -- lifecycle ----------------------------------------------------------
-    phase: str = "init"          # init | discovered | planned | generated |
-                                 # testing | fixing | complete
+    phase: str = "init"  # init | discovered | planned | generated |
+    # testing | fixing | complete
     context: dict[str, Any] = field(default_factory=dict)
 
 
@@ -138,13 +144,14 @@ CodeGenerator = Callable[
 # fixer(error_log, state, registry, env) -> list[(file, old, new)] | None
 Fixer = Callable[
     [TestLog, WorkspaceState, Any, Any],
-    Optional[list[tuple[str, str, str]]],
+    list[tuple[str, str, str]] | None,
 ]
 
 
 # ===========================================================================
 # Orchestrator
 # ===========================================================================
+
 
 class Orchestrator:
     """Four-phase state machine for autonomous code generation.
@@ -170,10 +177,10 @@ class Orchestrator:
         self,
         env: AgentEnvironment,
         registry: ToolRegistry,
-        base_path: Optional[str] = None,
+        base_path: str | None = None,
         *,
-        workspace_includes: Optional[list[str]] = None,
-        workspace_excludes: Optional[list[str]] = None,
+        workspace_includes: list[str] | None = None,
+        workspace_excludes: list[str] | None = None,
     ) -> None:
         self.env = env
         self.registry = registry
@@ -193,7 +200,7 @@ class Orchestrator:
         self.suffix_excludes = [".bak", ".pyc", ".pyo"]
 
         # Populated by .run()
-        self.state: Optional[WorkspaceState] = None
+        self.state: WorkspaceState | None = None
 
     # ======================================================================
     # Public entry point
@@ -203,9 +210,9 @@ class Orchestrator:
         self,
         goal: str,
         *,
-        planner: Optional[Planner] = None,
-        code_gen: Optional[CodeGenerator] = None,
-        fixer: Optional[Fixer] = None,
+        planner: Planner | None = None,
+        code_gen: CodeGenerator | None = None,
+        fixer: Fixer | None = None,
         max_iterations: int = 5,
         max_plan_cycles: int = 5,
         run_critic: bool = False,
@@ -249,6 +256,7 @@ class Orchestrator:
         # Display pipeline overview graph
         try:
             from workflow import render_graph as _render_graph
+
             print(_render_graph("discover"))
         except Exception:
             pass
@@ -319,9 +327,7 @@ class Orchestrator:
                     content=content,
                     mode="write",
                 )
-                state.generated_files.append(
-                    GeneratedFile(path=fpath, content=content)
-                )
+                state.generated_files.append(GeneratedFile(path=fpath, content=content))
                 syntax = result.get("syntax_check", "")
                 extra = f"syntax:{syntax}" if syntax else ""
                 _step("generate", fpath, extra)
@@ -333,6 +339,7 @@ class Orchestrator:
             paths = [str(self.base_path / gf.path) for gf in state.generated_files]
             try:
                 from critic import review_files
+
                 report = review_files(paths)
                 print(f"\n{report}")
                 if not report.passed:
@@ -349,6 +356,7 @@ class Orchestrator:
             for gf in state.generated_files:
                 try:
                     from autodepend import auto_install
+
                     installed = auto_install(gf.content, self.env)
                     if installed:
                         _step("info", f"  Installed: {', '.join(installed)}")
@@ -374,8 +382,8 @@ class Orchestrator:
         max_iterations: int = 3,
         verbose: bool = True,
         use_llm: bool = False,
-        share: bool = False,       # enable agent-to-agent blackboard
-        ordered: bool = False,     # run agents in sequence, not parallel
+        share: bool = False,  # enable agent-to-agent blackboard
+        ordered: bool = False,  # run agents in sequence, not parallel
     ) -> list[dict[str, Any]]:
         """Delegate sub-goals to parallel agents and collect results.
 
@@ -404,8 +412,10 @@ class Orchestrator:
         if use_llm:
             try:
                 import main
+
                 # Create a minimal state so adapters have something to pass
                 from orchestrator import WorkspaceState as _WS
+
                 _swarm_state = _WS(goal=goal, base_path=str(self.base_path))
 
                 # Discover the workspace so planners have context
@@ -415,23 +425,28 @@ class Orchestrator:
                     return main.my_planner(goal, _swarm_state)
 
                 def _generator(plan: str, **kwargs: Any) -> list[tuple[str, str]]:
-                    return main.my_generator(plan, _swarm_state,
-                                              self.registry, self.env)
+                    return main.my_generator(plan, _swarm_state, self.registry, self.env)
 
-                def _fixer(file: str, error: str, **kwargs: Any) -> list[tuple[str, str, str]] | None:
+                def _fixer(
+                    file: str, error: str, **kwargs: Any
+                ) -> list[tuple[str, str, str]] | None:
                     from orchestrator import TestLog
+
                     log = TestLog(
-                        file=file, iteration=1, returncode=1,
-                        stdout="", stderr=error,
+                        file=file,
+                        iteration=1,
+                        returncode=1,
+                        stdout="",
+                        stderr=error,
                     )
-                    return main.my_fixer(log, _swarm_state,
-                                          self.registry, self.env)
+                    return main.my_fixer(log, _swarm_state, self.registry, self.env)
 
                 planner = _planner
                 generator = _generator
                 fixer = _fixer
             except Exception as exc:
                 import traceback
+
                 print(f"  [swarm] LLM load failed: {exc}")
                 traceback.print_exc()
 
@@ -445,6 +460,7 @@ class Orchestrator:
         bb = None
         if share:
             from blackboard import Blackboard
+
             bb = Blackboard()
             bb.post("swarm/goal", goal, source="orchestrator", phase="init")
 
@@ -467,21 +483,32 @@ class Orchestrator:
                     bb.wait_for(f"agent/{prev}/status", timeout=600)
 
                 agent = SubAgent(
-                    name=name, goal=sub_goal,
-                    planner=planner, generator=generator, fixer=fixer,
-                    max_iterations=max_iterations, blackboard=bb,
+                    name=name,
+                    goal=sub_goal,
+                    planner=planner,
+                    generator=generator,
+                    fixer=fixer,
+                    max_iterations=max_iterations,
+                    blackboard=bb,
                 )
                 result = agent.run(self.registry, self.env, verbose=verbose)
-                results.append({
-                    "name": result.name, "goal": result.goal,
-                    "status": result.status, "files": result.files_created,
-                    "output": result.output, "error": result.error,
-                    "duration": round(result.duration, 2),
-                })
+                results.append(
+                    {
+                        "name": result.name,
+                        "goal": result.goal,
+                        "status": result.status,
+                        "files": result.files_created,
+                        "output": result.output,
+                        "error": result.error,
+                        "duration": round(result.duration, 2),
+                    }
+                )
                 status_icon = "✅" if result.status == "success" else "❌"
-                print(f"  {status_icon}  [{idx}/{len(agents)}] {name} — "
-                      f"{result.status} ({result.duration:.1f}s) "
-                      f"→ {len(result.files_created)} file(s)")
+                print(
+                    f"  {status_icon}  [{idx}/{len(agents)}] {name} — "
+                    f"{result.status} ({result.duration:.1f}s) "
+                    f"→ {len(result.files_created)} file(s)"
+                )
         else:
             # Parallel: fan out agents via thread pool
             if verbose and len(agents) > 1:
@@ -489,22 +516,28 @@ class Orchestrator:
 
             def _run_agent(name: str, sub_goal: str) -> dict[str, Any]:
                 agent = SubAgent(
-                    name=name, goal=sub_goal,
-                    planner=planner, generator=generator, fixer=fixer,
-                    max_iterations=max_iterations, blackboard=bb,
+                    name=name,
+                    goal=sub_goal,
+                    planner=planner,
+                    generator=generator,
+                    fixer=fixer,
+                    max_iterations=max_iterations,
+                    blackboard=bb,
                 )
                 result = agent.run(self.registry, self.env, verbose=verbose)
                 return {
-                    "name": result.name, "goal": result.goal,
-                    "status": result.status, "files": result.files_created,
-                    "output": result.output, "error": result.error,
+                    "name": result.name,
+                    "goal": result.goal,
+                    "status": result.status,
+                    "files": result.files_created,
+                    "output": result.output,
+                    "error": result.error,
                     "duration": round(result.duration, 2),
                 }
 
             with ThreadPoolExecutor(max_workers=len(agents)) as pool:
                 fut_to_name = {
-                    pool.submit(_run_agent, name, sub_goal): name
-                    for name, sub_goal in agents
+                    pool.submit(_run_agent, name, sub_goal): name for name, sub_goal in agents
                 }
                 for future in as_completed(fut_to_name):
                     name = fut_to_name[future]
@@ -512,15 +545,23 @@ class Orchestrator:
                         result = future.result()
                         results.append(result)
                         status_icon = "✅" if result["status"] == "success" else "❌"
-                        print(f"  {status_icon}  {name} — {result['status']} "
-                              f"({result['duration']:.1f}s) "
-                              f"→ {len(result['files'])} file(s)")
+                        print(
+                            f"  {status_icon}  {name} — {result['status']} "
+                            f"({result['duration']:.1f}s) "
+                            f"→ {len(result['files'])} file(s)"
+                        )
                     except Exception as exc:
-                        results.append({
-                            "name": name, "goal": "", "status": "failed",
-                            "files": [], "output": "", "error": str(exc),
-                            "duration": 0,
-                        })
+                        results.append(
+                            {
+                                "name": name,
+                                "goal": "",
+                                "status": "failed",
+                                "files": [],
+                                "output": "",
+                                "error": str(exc),
+                                "duration": 0,
+                            }
+                        )
                         print(f"  ❌  {name} — failed ({exc})")
 
             # Restore original ordering
@@ -530,8 +571,7 @@ class Orchestrator:
         total = time.time() - t0
         passed = sum(1 for r in results if r["status"] == "success")
         print(f"  {'=' * 58}")
-        print(f"  Swarm done: {passed}/{len(results)} agents passed "
-              f"in {total:.1f}s")
+        print(f"  Swarm done: {passed}/{len(results)} agents passed in {total:.1f}s")
         if bb is not None:
             print(f"  {'─' * 58}")
             print("  Blackboard summary:")
@@ -576,9 +616,7 @@ class Orchestrator:
                     continue
 
                 try:
-                    sample = self.registry.execute(
-                        "file_sampler", file_path=str(p)
-                    )
+                    sample = self.registry.execute("file_sampler", file_path=str(p))
                 except Exception:
                     sample = None
 
@@ -604,7 +642,7 @@ class Orchestrator:
 
     def _wtf_loop(
         self,
-        fixer: Optional[Fixer],
+        fixer: Fixer | None,
         max_iterations: int,
     ) -> None:
         state = self.state
@@ -616,8 +654,10 @@ class Orchestrator:
         if state.generated_files:
             try:
                 from workflow import ProgressBar as _ProgressBar
-                _pb = _ProgressBar(total=len(state.generated_files) * max_iterations,
-                                   prefix="  WTF")
+
+                _pb = _ProgressBar(
+                    total=len(state.generated_files) * max_iterations, prefix="  WTF"
+                )
             except Exception:
                 pass
 
@@ -626,7 +666,7 @@ class Orchestrator:
         while state.iteration < max_iterations and not state.loop_passed:
             state.iteration += 1
             elapsed = time.time() - _wtf_start
-            elapsed_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed/60:.1f}m"
+            elapsed_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
             _step("test", f"Cycle {state.iteration}/{max_iterations}  [{elapsed_str}]")
 
             all_passed = True
@@ -702,9 +742,14 @@ class Orchestrator:
         total_count = len(state.generated_files)
         if total_count > 0:
             wtf_elapsed = time.time() - _wtf_start
-            wtf_elapsed_str = f"{wtf_elapsed:.1f}s" if wtf_elapsed < 60 else f"{wtf_elapsed/60:.1f}m"
-            _step("info", f"WTF summary: {passed_count}/{total_count} passed, "
-                          f"{state.iteration} cycle(s), {wtf_elapsed_str}")
+            wtf_elapsed_str = (
+                f"{wtf_elapsed:.1f}s" if wtf_elapsed < 60 else f"{wtf_elapsed / 60:.1f}m"
+            )
+            _step(
+                "info",
+                f"WTF summary: {passed_count}/{total_count} passed, "
+                f"{state.iteration} cycle(s), {wtf_elapsed_str}",
+            )
 
         if _pb:
             _passed = sum(1 for gf in state.generated_files if gf.passed)

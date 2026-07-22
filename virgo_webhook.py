@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from _console import icon
-from _log import log, OUTDIR
+from _log import OUTDIR, log
 
 ALERT_FILE = str(OUTDIR / "ALERTS_TRIGGERED.txt")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
@@ -43,7 +43,7 @@ def build_telemetry() -> dict:
         "agent": "virgo-webhook",
         "status": "idle",
         "alerts": [],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "alert_count": 0,
     }
 
@@ -77,13 +77,20 @@ def dispatch_http(payload: dict, url: str) -> bool:
         try:
             with urlopen(req, timeout=15) as resp:
                 body = resp.read().decode("utf-8", errors="replace")
-                log.info("Webhook POST %s → %s (attempt %d/%d)", url, resp.status, attempt, WEBHOOK_RETRIES)
+                log.info(
+                    "Webhook POST %s → %s (attempt %d/%d)",
+                    url,
+                    resp.status,
+                    attempt,
+                    WEBHOOK_RETRIES,
+                )
                 print(f"{icon('ok')} HTTP {resp.status} — {body[:200]}")
                 return True
         except URLError as exc:
             log.warning("Webhook attempt %d/%d failed: %s", attempt, WEBHOOK_RETRIES, exc)
             if attempt < WEBHOOK_RETRIES:
                 import time as _time
+
                 _time.sleep(1 * attempt)  # linear backoff
             else:
                 print(f"{icon('error')} All {WEBHOOK_RETRIES} attempts failed: {exc}")

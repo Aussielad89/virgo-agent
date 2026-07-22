@@ -21,7 +21,7 @@ import pytest
 HERE = Path(__file__).parent.parent
 sys.path.insert(0, str(HERE))
 
-from experience import ExperienceMemory, get_memory, _keywords, _overlap
+from experience import ExperienceMemory, _keywords, _overlap, get_memory
 
 
 @pytest.fixture
@@ -56,7 +56,17 @@ class TestAdd:
 
     def test_add_includes_required_fields(self, fresh_memory: ExperienceMemory) -> None:
         entry = fresh_memory.add("goal text", "approach text", ["t"], "out", False)
-        for key in ("id", "ts", "goal", "approach", "tools_used", "outcome", "success", "lesson", "keywords"):
+        for key in (
+            "id",
+            "ts",
+            "goal",
+            "approach",
+            "tools_used",
+            "outcome",
+            "success",
+            "lesson",
+            "keywords",
+        ):
             assert key in entry, f"missing key {key}"
 
     def test_add_persists_line(self, fresh_memory: ExperienceMemory, mem_path: Path) -> None:
@@ -66,7 +76,9 @@ class TestAdd:
         assert json.loads(lines[0])["goal"] == "persist me"
 
     def test_add_extracts_keywords(self, fresh_memory: ExperienceMemory) -> None:
-        entry = fresh_memory.add("deploy database cluster", "use terraform", [], "ok", True, "terraform works")
+        entry = fresh_memory.add(
+            "deploy database cluster", "use terraform", [], "ok", True, "terraform works"
+        )
         kws = set(entry["keywords"])
         assert "deploy" in kws
         assert "database" in kws
@@ -137,13 +149,23 @@ class TestFormatForPrompt:
 
 class TestStats:
     def test_stats_empty(self, fresh_memory: ExperienceMemory) -> None:
-        assert fresh_memory.stats() == {"count": 0, "successes": 0, "failures": 0, "with_embeddings": 0}
+        assert fresh_memory.stats() == {
+            "count": 0,
+            "successes": 0,
+            "failures": 0,
+            "with_embeddings": 0,
+        }
 
     def test_stats_counts(self, fresh_memory: ExperienceMemory) -> None:
         fresh_memory.add("g1", "a1", [], "o", True)
         fresh_memory.add("g2", "a2", [], "o", True)
         fresh_memory.add("g3", "a3", [], "o", False)
-        assert fresh_memory.stats() == {"count": 3, "successes": 2, "failures": 1, "with_embeddings": 0}
+        assert fresh_memory.stats() == {
+            "count": 3,
+            "successes": 2,
+            "failures": 1,
+            "with_embeddings": 0,
+        }
 
 
 class TestCorruptLines:
@@ -159,7 +181,9 @@ class TestCorruptLines:
         assert reloaded.stats()["count"] == 1
         assert reloaded.recall("valid task")[0]["id"] == good["id"]
 
-    def test_reload_preserves_entries_and_ids(self, mem_path: Path, fresh_memory: ExperienceMemory) -> None:
+    def test_reload_preserves_entries_and_ids(
+        self, mem_path: Path, fresh_memory: ExperienceMemory
+    ) -> None:
         fresh_memory.add("first", "a", [], "o", True)
         fresh_memory.add("second", "b", [], "o", False)
         reloaded = ExperienceMemory(path=str(mem_path))
@@ -196,7 +220,9 @@ class TestGetMemory:
         m2 = get_memory()
         assert m1 is m2
 
-    def test_get_memory_explicit_path(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_get_memory_explicit_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         monkeypatch.setattr("experience._INSTANCE", None)
         m = get_memory(path=str(tmp_path / "exp.jsonl"))
         assert isinstance(m, ExperienceMemory)

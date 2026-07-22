@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 HERE = Path(__file__).parent
 
@@ -15,66 +15,69 @@ HERE = Path(__file__).parent
 # Markdown export
 # ===========================================================================
 
-def to_markdown(state: Any, title: Optional[str] = None) -> str:
+
+def to_markdown(state: Any, title: str | None = None) -> str:
     """Render a WorkspaceState as a Markdown document."""
     lines: list[str] = []
     lines.append(f"# {title or 'virgo — Pipeline Report'}")
     lines.append("")
     lines.append(f"- **Goal:** {getattr(state, 'goal', 'N/A')}")
     lines.append(f"- **Phase:** {getattr(state, 'phase', 'N/A')}")
-    lines.append(f"- **Result:** {'✅ PASS' if getattr(state, 'loop_passed', False) else '❌ FAIL'}")
+    lines.append(
+        f"- **Result:** {'✅ PASS' if getattr(state, 'loop_passed', False) else '❌ FAIL'}"
+    )
     lines.append(f"- **WTF iterations:** {getattr(state, 'iteration', 0)}")
     lines.append(f"- **Generated files:** {len(getattr(state, 'generated_files', []))}")
     lines.append("")
     lines.append("## Plan")
     lines.append("")
     lines.append("```")
-    lines.append(getattr(state, 'plan', '*No plan*'))
+    lines.append(getattr(state, "plan", "*No plan*"))
     lines.append("```")
     lines.append("")
 
     # Discovered files
-    discovered = getattr(state, 'discovered_files', [])
+    discovered = getattr(state, "discovered_files", [])
     if discovered:
         lines.append("## Discovered Files")
         lines.append("")
         lines.append("| File | Size | Format |")
         lines.append("|------|------|--------|")
         for df in discovered:
-            fmt = (df.sample or {}).get("format", "") if hasattr(df, 'sample') else ""
-            sz = f"{df.size:,} B" if hasattr(df, 'size') else ""
+            fmt = (df.sample or {}).get("format", "") if hasattr(df, "sample") else ""
+            sz = f"{df.size:,} B" if hasattr(df, "size") else ""
             lines.append(f"| {getattr(df, 'path', '')} | {sz} | {fmt} |")
         lines.append("")
 
     # Generated files
-    generated = getattr(state, 'generated_files', [])
+    generated = getattr(state, "generated_files", [])
     if generated:
         lines.append("## Generated Files")
         lines.append("")
         for gf in generated:
-            status = "✅ PASS" if getattr(gf, 'passed', False) else "❌ FAIL"
+            status = "✅ PASS" if getattr(gf, "passed", False) else "❌ FAIL"
             lines.append(f"### `{getattr(gf, 'path', '')}` — {status}")
             lines.append("")
             lines.append("```python")
-            lines.append(getattr(gf, 'content', '*No content*'))
+            lines.append(getattr(gf, "content", "*No content*"))
             lines.append("```")
             lines.append("")
 
     # Test logs
-    logs = getattr(state, 'test_logs', [])
+    logs = getattr(state, "test_logs", [])
     if logs:
         lines.append("## Test Logs")
         lines.append("")
         for tl in logs:
-            status = "✅ PASS" if getattr(tl, 'passed', True) else "❌ FAIL"
+            status = "✅ PASS" if getattr(tl, "passed", True) else "❌ FAIL"
             lines.append(f"### `{getattr(tl, 'file', '')}` — {status}")
             lines.append("")
-            if getattr(tl, 'stdout', ''):
+            if getattr(tl, "stdout", ""):
                 lines.append("**stdout:**")
                 lines.append("```")
                 lines.append(tl.stdout[:500])
                 lines.append("```")
-            if getattr(tl, 'stderr', ''):
+            if getattr(tl, "stderr", ""):
                 lines.append("**stderr:**")
                 lines.append("```")
                 lines.append(tl.stderr[:500])
@@ -149,26 +152,27 @@ _HTML_TEMPLATE = """\
 """
 
 
-def to_html(state: Any, title: Optional[str] = None) -> str:
+def to_html(state: Any, title: str | None = None) -> str:
     """Render a WorkspaceState as an HTML document."""
-    goal = getattr(state, 'goal', 'N/A')
-    phase = getattr(state, 'phase', 'N/A')
-    passed = getattr(state, 'loop_passed', False)
-    iteration = getattr(state, 'iteration', 0)
-    plan = getattr(state, 'plan', '*No plan*')
+    goal = getattr(state, "goal", "N/A")
+    phase = getattr(state, "phase", "N/A")
+    passed = getattr(state, "loop_passed", False)
+    iteration = getattr(state, "iteration", 0)
+    plan = getattr(state, "plan", "*No plan*")
 
     result_badge = (
-        '<span class="badge badge-pass">PASS</span>' if passed
+        '<span class="badge badge-pass">PASS</span>'
+        if passed
         else '<span class="badge badge-fail">FAIL</span>'
     )
 
     # Discovered files table
-    discovered = getattr(state, 'discovered_files', [])
+    discovered = getattr(state, "discovered_files", [])
     if discovered:
         rows = ""
         for df in discovered:
-            fmt = (df.sample or {}).get("format", "") if hasattr(df, 'sample') else ""
-            sz = f"{df.size:,} B" if hasattr(df, 'size') else ""
+            fmt = (df.sample or {}).get("format", "") if hasattr(df, "sample") else ""
+            sz = f"{df.size:,} B" if hasattr(df, "size") else ""
             rows += f"<tr><td>{getattr(df, 'path', '')}</td><td>{sz}</td><td>{fmt}</td></tr>\n"
         discovered_section = f"""\
 <h2>Discovered Files</h2>
@@ -180,15 +184,19 @@ def to_html(state: Any, title: Optional[str] = None) -> str:
         discovered_section = ""
 
     # Generated files
-    generated = getattr(state, 'generated_files', [])
+    generated = getattr(state, "generated_files", [])
     if generated:
         gf_sections = ""
         for gf in generated:
-            status = "PASS" if getattr(gf, 'passed', False) else "FAIL"
-            badge = f'<span class="badge badge-pass">{status}</span>' if getattr(gf, 'passed', False) else f'<span class="badge badge-fail">{status}</span>'
-            code = getattr(gf, 'content', '')
+            status = "PASS" if getattr(gf, "passed", False) else "FAIL"
+            badge = (
+                f'<span class="badge badge-pass">{status}</span>'
+                if getattr(gf, "passed", False)
+                else f'<span class="badge badge-fail">{status}</span>'
+            )
+            code = getattr(gf, "content", "")
             gf_sections += f"""\
-<h3>{getattr(gf, 'path', '')}  {badge}</h3>
+<h3>{getattr(gf, "path", "")}  {badge}</h3>
 <pre>{_escape_html(code)}</pre>
 """
         generated_section = f"<h2>Generated Files</h2>\n{gf_sections}"
@@ -196,19 +204,23 @@ def to_html(state: Any, title: Optional[str] = None) -> str:
         generated_section = ""
 
     # Test logs
-    logs = getattr(state, 'test_logs', [])
+    logs = getattr(state, "test_logs", [])
     if logs:
         log_sections = ""
         for tl in logs:
-            status = "PASS" if getattr(tl, 'passed', True) else "FAIL"
-            badge = f'<span class="badge badge-pass">{status}</span>' if getattr(tl, 'passed', True) else f'<span class="badge badge-fail">{status}</span>'
-            stdout = _escape_html(getattr(tl, 'stdout', '')[:800])
-            stderr = _escape_html(getattr(tl, 'stderr', '')[:800])
+            status = "PASS" if getattr(tl, "passed", True) else "FAIL"
+            badge = (
+                f'<span class="badge badge-pass">{status}</span>'
+                if getattr(tl, "passed", True)
+                else f'<span class="badge badge-fail">{status}</span>'
+            )
+            stdout = _escape_html(getattr(tl, "stdout", "")[:800])
+            stderr = _escape_html(getattr(tl, "stderr", "")[:800])
             log_sections += f"""\
-<h3>{getattr(tl, 'file', '')}  {badge}</h3>
+<h3>{getattr(tl, "file", "")}  {badge}</h3>
 <div class="log">
-{'<pre>STDOUT:<br>' + stdout + '</pre>' if stdout else ''}
-{'<pre style="color:#ff6677;">STDERR:<br>' + stderr + '</pre>' if stderr else ''}
+{"<pre>STDOUT:<br>" + stdout + "</pre>" if stdout else ""}
+{'<pre style="color:#ff6677;">STDERR:<br>' + stderr + "</pre>" if stderr else ""}
 </div>
 """
         logs_section = f"<h2>Test Logs</h2>\n{log_sections}"
@@ -238,14 +250,15 @@ def _escape_html(text: str) -> str:
 # File writers
 # ===========================================================================
 
-def export_markdown(state: Any, path: str, title: Optional[str] = None) -> Path:
+
+def export_markdown(state: Any, path: str, title: str | None = None) -> Path:
     """Export state as a Markdown file."""
     p = Path(path)
     p.write_text(to_markdown(state, title), encoding="utf-8")
     return p
 
 
-def export_html(state: Any, path: str, title: Optional[str] = None) -> Path:
+def export_html(state: Any, path: str, title: str | None = None) -> Path:
     """Export state as an HTML file."""
     p = Path(path)
     p.write_text(to_html(state, title), encoding="utf-8")

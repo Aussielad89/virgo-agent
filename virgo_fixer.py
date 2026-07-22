@@ -36,7 +36,9 @@ def auto_remediate() -> None:
 
     # --- SECURITY ALERT: unexpected host ---
     if "[SECURITY]" in alerts:
-        print(f"{icon('shield')} [SECURITY ALERT] Detected. Adding host to known-device allowlist...")
+        print(
+            f"{icon('shield')} [SECURITY ALERT] Detected. Adding host to known-device allowlist..."
+        )
         print(f"{icon('ok')} Mock action: host recorded for review. No automated block applied.")
         fixed = True
 

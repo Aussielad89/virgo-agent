@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
-import os
 from pathlib import Path
 
 HERE = Path(__file__).parent.parent
 sys.path.insert(0, str(HERE))
 
 from cli import (  # noqa: E402
-    VIRGO_SYSTEM_PROMPT,
     _CHAT_TOOLS,
+    VIRGO_SYSTEM_PROMPT,
+    _chat_blocked,
     _parse_tool_calls,
     _run_chat_tool,
-    _chat_blocked,
 )
 
 
@@ -45,7 +45,7 @@ class TestParseToolCalls:
     def test_parse_multiple_calls(self) -> None:
         text = (
             'a [[virgo.read path="a.py"]] b '
-            '[[virgo.web url=https://x.com]] c '
+            "[[virgo.web url=https://x.com]] c "
             '[[virgo.py code="print(1)"]]'
         )
         calls = _parse_tool_calls(text)

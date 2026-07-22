@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 import threading
 
-import pytest
-
 from blackboard import Blackboard, BoardEntry
 
 
@@ -84,11 +82,11 @@ def test_serialization_round_trip():
     assert "x" in data["topics"]
     assert data["topics"]["x"][0]["content"] == {"k": "v"}
 
-    bb2 = Blackboard()
     # Replaying from a dict is supported via to_dict -> reconstruct manually.
     restored = Blackboard()
-    restored._topics = {t: [BoardEntry(**e) for e in entries]
-                       for t, entries in data["topics"].items()}
+    restored._topics = {
+        t: [BoardEntry(**e) for e in entries] for t, entries in data["topics"].items()
+    }
     assert restored.get("x") == {"k": "v"}
 
 

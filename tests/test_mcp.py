@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
-
-import pytest
 
 from mcp_bridge import (
     _build_env_from_cmd,
@@ -21,8 +18,8 @@ from mcp_server import (
     _rpc_error,
 )
 
-
 # ── Fake registry (mimics tools.ToolRegistry surface used by mcp_server) ──
+
 
 class _FakeTool:
     def __init__(self, name, description="", ret=None, raises=None):
@@ -52,16 +49,21 @@ class _FakeRegistry:
 
 
 def _reg():
-    return _FakeRegistry([
-        _FakeTool("echo", "Echo a value", ret={"ok": True}),
-        _FakeTool("boom", "Always fails", raises=RuntimeError("kaboom")),
-    ])
+    return _FakeRegistry(
+        [
+            _FakeTool("echo", "Echo a value", ret={"ok": True}),
+            _FakeTool("boom", "Always fails", raises=RuntimeError("kaboom")),
+        ]
+    )
 
 
 # ── mcp_server handlers ────────────────────────────────────────────────
 
+
 def test_initialize_handshake():
-    resp = json.loads(_handle_initialize({"id": 1, "params": {"clientInfo": {"name": "test", "version": "9"}}}))
+    resp = json.loads(
+        _handle_initialize({"id": 1, "params": {"clientInfo": {"name": "test", "version": "9"}}})
+    )
     assert resp["jsonrpc"] == "2.0"
     assert resp["id"] == 1
     assert resp["result"]["protocolVersion"] == PROTOCOL_VERSION
@@ -80,7 +82,9 @@ def test_tools_list_maps_metadata():
 
 
 def test_tools_call_success():
-    resp = json.loads(_handle_tools_call({"id": 3, "params": {"name": "echo", "arguments": {}}}, _reg()))
+    resp = json.loads(
+        _handle_tools_call({"id": 3, "params": {"name": "echo", "arguments": {}}}, _reg())
+    )
     assert resp["id"] == 3
     text = resp["result"]["content"][0]["text"]
     assert json.loads(text) == {"ok": True}
@@ -100,6 +104,7 @@ def test_tools_call_tool_exception_errors():
 
 # ── dispatch routing + hardening ────────────────────────────────────────
 
+
 def test_dispatch_routes_known_methods():
     init = json.loads(_dispatch({"id": 1, "method": "initialize", "params": {}}, _reg()))
     assert init["result"]["serverInfo"]["name"] == "virgo-mcp"
@@ -118,6 +123,7 @@ def test_dispatch_unknown_method_errors():
 
 def test_dispatch_survives_handler_crash():
     """A handler that raises must become a -32603, not crash the loop."""
+
     class _BadRegistry(_FakeRegistry):
         def list(self):
             raise RuntimeError("registry broken")
@@ -127,6 +133,7 @@ def test_dispatch_survives_handler_crash():
 
 
 # ── mcp_bridge pure helpers ──────────────────────────────────────────────
+
 
 def test_parse_mcp_servers_from_obj():
     obj = {

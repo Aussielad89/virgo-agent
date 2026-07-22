@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -14,7 +13,7 @@ import pytest
 HERE = Path(__file__).parent.parent
 sys.path.insert(0, str(HERE))
 
-from memory import save_state, load_state, list_sessions, MEMORY_DIR
+from memory import list_sessions, load_state, save_state
 
 
 class TestSaveLoad:
@@ -33,7 +32,9 @@ class TestSaveLoad:
         assert loaded["goal"] == "test"
         assert loaded["phase"] == "complete"
 
-    def test_save_auto_generates_name(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_save_auto_generates_name(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         monkeypatch.setattr("memory.MEMORY_DIR", tmp_path)
         state = {"goal": "test"}
         path = save_state(state)  # no name — should generate timestamp
@@ -68,6 +69,7 @@ class TestListSessions:
     def test_list_sorted_by_time(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setattr("memory.MEMORY_DIR", tmp_path)
         import time
+
         save_state({}, name="first")
         time.sleep(0.05)
         save_state({}, name="second")

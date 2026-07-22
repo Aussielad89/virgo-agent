@@ -17,8 +17,8 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 import subprocess
+import sys
 import textwrap
 import urllib.error
 import urllib.request
@@ -27,32 +27,33 @@ from pathlib import Path
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
-from environment import AgentEnvironment
-from tools import ToolRegistry
 from _console import icon
+from environment import AgentEnvironment
 from logo import print_logo
 from orchestrator import (
     Orchestrator,
-    WorkspaceState,
     TestLog,
+    WorkspaceState,
 )
+from tools import ToolRegistry
 
 # =========================================================================
 # Config — edit these to match your local API setup
 # =========================================================================
 
-LLM_BASE_URL   = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
-LLM_API_KEY    = os.getenv("LLM_API_KEY", "sk-no-key-required")
-LLM_TIMEOUT    = int(os.getenv("LLM_TIMEOUT", "300"))
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "sk-no-key-required")
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "300"))
 
 # You can point these at different models if they are available:
-MODEL_PLANNER  = os.getenv("MODEL_PLANNER", "ornith:latest")
+MODEL_PLANNER = os.getenv("MODEL_PLANNER", "ornith:latest")
 MODEL_GENERATOR = os.getenv("MODEL_GENERATOR", "ornith:latest")
-MODEL_FIXER   = os.getenv("MODEL_FIXER", "ornith:latest")
+MODEL_FIXER = os.getenv("MODEL_FIXER", "ornith:latest")
 
 # virgo.toml is the source of truth — override model defaults if present.
 try:
     from config import load as _cfg_load
+
     _cfg = _cfg_load()
     _model_cfg = _cfg.get("model", {})
     if _model_cfg.get("planner"):
@@ -73,13 +74,13 @@ FALLBACK_MODEL_FIXER = os.getenv("FALLBACK_FIXER", "")
 # Flags — toggled by CLI
 USE_CRUSH = False
 STREAM_OUTPUT = False
-FAST_MODE = False          # --fast: skip CoT block + lower max_tokens
+FAST_MODE = False  # --fast: skip CoT block + lower max_tokens
 CRUSH_BIN = os.path.expanduser("~/bin/crush.exe")
 
 # --fast per-role output caps (tokens). Lower = faster generation on CPU.
 FAST_MAX_TOKENS = {
     "planner": 1024,
-    "generator": 4096,   # code needs room; only the CoT block is dropped
+    "generator": 4096,  # code needs room; only the CoT block is dropped
     "fixer": 2048,
 }
 
@@ -115,6 +116,7 @@ def router_from_file(path: str) -> dict[str, tuple[str, str]]:
         }
     """
     import json
+
     with open(path) as f:
         data = json.load(f)
     config: dict[str, tuple[str, str]] = {}
@@ -158,10 +160,10 @@ def _fallback_model_for_role(role: str) -> str:
 
 
 _PROVIDER_BASE_URLS: dict[str, str] = {
-    "ollama":     os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
-    "openai":     "https://api.openai.com/v1",
+    "ollama": os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
+    "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
-    "groq":       "https://api.groq.com/openai/v1",
+    "groq": "https://api.groq.com/openai/v1",
 }
 
 
@@ -206,6 +208,7 @@ def _make_fallback_client(role: str, fallback_model: str) -> LLMClient | CrushCl
 # =========================================================================
 # Lightweight OpenAI-compatible client (stdlib only)
 # =========================================================================
+
 
 class LLMClient:
     """Minimal OpenAI chat-completion client using ``urllib``."""
@@ -255,8 +258,7 @@ class LLMClient:
             ) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(
-                f"Cannot reach {self.base_url} — is your local API server "
-                f"running?\n{exc}"
+                f"Cannot reach {self.base_url} — is your local API server running?\n{exc}"
             ) from exc
 
         try:
@@ -314,12 +316,10 @@ class LLMClient:
             ) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(
-                f"Cannot reach {self.base_url} — is your local API server "
-                f"running?\n{exc}"
+                f"Cannot reach {self.base_url} — is your local API server running?\n{exc}"
             ) from exc
 
         return full_text
-
 
     @staticmethod
     def _resolve_tokens(requested: int, role: str) -> int:
@@ -411,6 +411,7 @@ class CrushClient:
 # Helper — build a summary of discovered files for the LLM prompt
 # =========================================================================
 
+
 def _file_summary(state: WorkspaceState) -> str:
     """Format discovered-file metadata into a compact prompt block,
     including import/export analysis for Python files."""
@@ -422,16 +423,10 @@ def _file_summary(state: WorkspaceState) -> str:
             fmt = df.sample.get("format", "?")
             entry += f"  [{fmt}]"
             # Show a preview snippet for text-based files
-            preview = (
-                df.sample.get("preview")
-                or df.sample.get("rows")
-                or df.sample.get("sample")
-            )
+            preview = df.sample.get("preview") or df.sample.get("rows") or df.sample.get("sample")
             if preview:
                 if isinstance(preview, list):
-                    snippet = "\n".join(
-                        str(r) for r in preview[:5]
-                    )
+                    snippet = "\n".join(str(r) for r in preview[:5])
                 else:
                     snippet = str(preview)[:300]
                 entry += f"\n    sample:\n{textwrap.indent(snippet, '      ')}"
@@ -468,6 +463,7 @@ def _prompt(prompt: str) -> str:
 # Policy: my_planner
 # =========================================================================
 
+
 def my_planner(goal: str, state: WorkspaceState) -> str:
     """Analyse discovered files and produce a build plan via LLM."""
     client = get_client_for("planner")
@@ -501,12 +497,15 @@ def my_planner(goal: str, state: WorkspaceState) -> str:
     prompt = _prompt(prompt)
 
     messages = [
-        {"role": "system", "content": (
-            "You are a precise senior software architect. "
-            "Always think through the problem before proposing a solution. "
-            "Prefer simple, correct designs over clever ones. "
-            "Output reasoning then a numbered plan."
-        )},
+        {
+            "role": "system",
+            "content": (
+                "You are a precise senior software architect. "
+                "Always think through the problem before proposing a solution. "
+                "Prefer simple, correct designs over clever ones. "
+                "Output reasoning then a numbered plan."
+            ),
+        },
         {"role": "user", "content": prompt},
     ]
 
@@ -539,6 +538,7 @@ def my_planner(goal: str, state: WorkspaceState) -> str:
 # =========================================================================
 # Policy: my_generator
 # =========================================================================
+
 
 def my_generator(
     plan: str,
@@ -591,12 +591,15 @@ def my_generator(
 
     print(f"\n  {icon('code')}  Generator ({model_display})")
     messages = [
-        {"role": "system", "content": (
-            "You are a senior Python engineer writing production-quality code. "
-            "Think through the design before writing. "
-            "Every function gets type hints and a docstring. "
-            "Handle errors gracefully. Be concise but correct."
-        )},
+        {
+            "role": "system",
+            "content": (
+                "You are a senior Python engineer writing production-quality code. "
+                "Think through the design before writing. "
+                "Every function gets type hints and a docstring. "
+                "Handle errors gracefully. Be concise but correct."
+            ),
+        },
         {"role": "user", "content": prompt},
     ]
     try:
@@ -655,6 +658,7 @@ def _parse_file_blocks(text: str) -> list[tuple[str, str]]:
 # =========================================================================
 # Policy: my_fixer
 # =========================================================================
+
 
 def my_fixer(
     log: TestLog,
@@ -718,12 +722,15 @@ def my_fixer(
 
     print(f"\n  {icon('fix')}  Fixer ({model_display})")
     messages = [
-        {"role": "system", "content": (
-            "You are a senior debugging engineer. "
-            "Always diagnose the root cause before writing a fix. "
-            "Make minimal, precise patches — don't rewrite unrelated code. "
-            "Verify your fix would actually resolve the error."
-        )},
+        {
+            "role": "system",
+            "content": (
+                "You are a senior debugging engineer. "
+                "Always diagnose the root cause before writing a fix. "
+                "Make minimal, precise patches — don't rewrite unrelated code. "
+                "Verify your fix would actually resolve the error."
+            ),
+        },
         {"role": "user", "content": prompt},
     ]
     try:
@@ -781,6 +788,7 @@ def _parse_patches(text: str) -> list[tuple[str, str, str]]:
 # Bootstrap
 # =========================================================================
 
+
 def _check_api() -> bool:
     """Quick health-check: is the LLM API reachable?"""
     url = f"{LLM_BASE_URL.rstrip('/')}/models"
@@ -825,9 +833,15 @@ def main() -> None:
     registry.register_defaults(env)
 
     orch = Orchestrator(
-        env, registry, base_path=str(HERE),
+        env,
+        registry,
+        base_path=str(HERE),
         workspace_excludes=[
-            "agent_env", ".crush", ".git", "__pycache__", ".mypy_cache",
+            "agent_env",
+            ".crush",
+            ".git",
+            "__pycache__",
+            ".mypy_cache",
         ],
     )
 

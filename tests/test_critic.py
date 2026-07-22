@@ -5,20 +5,19 @@ Tests for critic — static analysis for generated code.
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
-
-import pytest
 
 HERE = Path(__file__).parent.parent
 sys.path.insert(0, str(HERE))
 
 from critic import (
-    Issue, ReviewReport,
-    _check_ast, _check_lines,
-    review_file, review_files,
+    Issue,
+    ReviewReport,
+    _check_ast,
+    _check_lines,
+    review_file,
+    review_files,
 )
-
 
 # ===========================================================================
 # Issue
@@ -76,6 +75,7 @@ class TestReviewReport:
 class TestCheckAST:
     def _check(self, source: str) -> list[Issue]:
         import ast
+
         tree = ast.parse(source)
         issues: list[Issue] = []
         _check_ast(tree, source, "test.py", issues)
@@ -96,7 +96,6 @@ def main():
 """
         issues = self._check(code)
         # Should warn about missing __name__ guard
-        missing = [i for i in issues if "main" in i.message.lower()]
         # This may not flag depending on ast logic; check at least it runs
         assert isinstance(issues, list)
 

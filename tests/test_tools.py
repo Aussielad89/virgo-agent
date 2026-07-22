@@ -4,18 +4,15 @@ Tests for tools — ToolRegistry and built-in tools.
 
 from __future__ import annotations
 
-import json
-import tempfile
+import sys
 from pathlib import Path
 
 import pytest
 
-import sys
 HERE = Path(__file__).parent.parent
 sys.path.insert(0, str(HERE))
 
 from tools import Tool, ToolRegistry
-
 
 # ===========================================================================
 # Tool
@@ -26,13 +23,16 @@ class TestTool:
     def test_basic_tool(self) -> None:
         def my_fn(x: int) -> int:
             return x * 2
+
         t = Tool(name="double", fn=my_fn, description="Doubles input")
         assert t.name == "double"
         assert t.description == "Doubles input"
         assert t(x=3) == 6
 
     def test_to_dict(self) -> None:
-        def fn() -> None: pass
+        def fn() -> None:
+            pass
+
         t = Tool(name="test", fn=fn, description="A test tool")
         d = t.to_dict()
         assert d["name"] == "test"
@@ -98,6 +98,7 @@ class TestToolRegistry:
         # Create a mock env
         class MockEnv:
             pass
+
         r = ToolRegistry()
         r.register_defaults(env=MockEnv())  # type: ignore
         assert r.get("python_runner") is not None
@@ -153,8 +154,9 @@ class TestCodePatcher:
 
     def test_write_new_file(self, registry: ToolRegistry, tmp_path: Path) -> None:
         target = tmp_path / "new_file.py"
-        result = registry.execute("code_patcher", file_path=str(target),
-                                   content="x = 1", mode="write")
+        result = registry.execute(
+            "code_patcher", file_path=str(target), content="x = 1", mode="write"
+        )
         assert target.exists()
         assert target.read_text() == "x = 1"
         assert result.get("action") == "overwritten"
@@ -162,10 +164,13 @@ class TestCodePatcher:
     def test_patch_existing_file(self, registry: ToolRegistry, tmp_path: Path) -> None:
         target = tmp_path / "patch_me.py"
         target.write_text("old_content")
-        result = registry.execute("code_patcher", file_path=str(target),
-                                   content="new_content",
-                                   old_string="old_content",
-                                   mode="patch")
+        result = registry.execute(
+            "code_patcher",
+            file_path=str(target),
+            content="new_content",
+            old_string="old_content",
+            mode="patch",
+        )
         assert target.read_text() == "new_content"
         assert result.get("action") == "patched"
 
@@ -173,10 +178,13 @@ class TestCodePatcher:
         target = tmp_path / "no_match.py"
         target.write_text("keep this")
         with pytest.raises(ValueError, match="old_string not found"):
-            registry.execute("code_patcher", file_path=str(target),
-                             content="replacement",
-                             old_string="nonexistent",
-                             mode="patch")
+            registry.execute(
+                "code_patcher",
+                file_path=str(target),
+                content="replacement",
+                old_string="nonexistent",
+                mode="patch",
+            )
 
 
 # ===========================================================================
@@ -226,17 +234,23 @@ class TestPythonRunner:
     @pytest.fixture
     def registry_with_env(self, tmp_path: Path) -> ToolRegistry:
         """Create a minimal environment for python_runner tests."""
+
         class MockEnv:
             env_dir = tmp_path / "agent_env"
             python = Path(sys.executable)
             base_path = tmp_path
+
             def _ensure_ready(self) -> None:
                 pass
+
             def run(self, script, cwd=None, **kwargs):
                 import subprocess
+
                 return subprocess.run(
                     [str(self.python), "-c", script],
-                    capture_output=True, text=True, cwd=cwd or str(self.base_path),
+                    capture_output=True,
+                    text=True,
+                    cwd=cwd or str(self.base_path),
                 )
 
         r = ToolRegistry()

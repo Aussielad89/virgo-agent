@@ -8,11 +8,11 @@ report to virgo_full_report.json.
 
 from __future__ import annotations
 
-import os
-import socket
-import platform
-import subprocess
 import json
+import os
+import platform
+import socket
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -77,10 +77,12 @@ def run_full_diagnostics() -> None:
                         if key in line.lower():
                             matched_fix = fix
                             break
-                    report["3_log_analysis"].append({
-                        "raw_log": line.strip(),
-                        "suggested_action": matched_fix,
-                    })
+                    report["3_log_analysis"].append(
+                        {
+                            "raw_log": line.strip(),
+                            "suggested_action": matched_fix,
+                        }
+                    )
     else:
         report["3_log_analysis"].append("mock_logs.txt missing. Skipping text analysis.")
 

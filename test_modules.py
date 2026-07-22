@@ -1,6 +1,7 @@
 """Quick smoke-test for environment.py and tools.py."""
-import sys
+
 import json
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -99,10 +100,14 @@ finally:
 # -- file_sampler: JSON -------------------------------------------------
 json_file = HERE / "_test_sample.json"
 try:
-    json_file.write_text(json.dumps([
-        {"id": 1, "value": "a"},
-        {"id": 2, "value": "b"},
-    ]))
+    json_file.write_text(
+        json.dumps(
+            [
+                {"id": 1, "value": "a"},
+                {"id": 2, "value": "b"},
+            ]
+        )
+    )
     result = reg.execute("file_sampler", file_path=str(json_file))
     assert result["format"] == "json"
     assert result["type"] == "array"
@@ -114,7 +119,8 @@ finally:
 # -- code_patcher: write ------------------------------------------------
 target = HERE / "_test_output.py"
 try:
-    result = reg.execute("code_patcher",
+    result = reg.execute(
+        "code_patcher",
         file_path=str(target),
         content="x = 42\n",
         mode="write",
@@ -126,7 +132,8 @@ try:
     print(f"  code_patcher (write): OK (syntax={result.get('syntax_check')})")
 
     # -- code_patcher: patch --------------------------------------------
-    result2 = reg.execute("code_patcher",
+    result2 = reg.execute(
+        "code_patcher",
         file_path=str(target),
         content="y = 99",
         mode="patch",
@@ -143,15 +150,18 @@ finally:
 # -- code_patcher: syntax failure detection -----------------------------
 bad_file = HERE / "_test_bad.py"
 try:
-    result = reg.execute("code_patcher",
+    result = reg.execute(
+        "code_patcher",
         file_path=str(bad_file),
         content="def foo(:\n    pass\n",
         mode="write",
         env=env,
     )
     # Syntax check should fail or be skipped depending on env
-    print(f"  code_patcher (bad syntax): check={result.get('syntax_check')!r}"
-          f"  error={result.get('syntax_error','')!r}")
+    print(
+        f"  code_patcher (bad syntax): check={result.get('syntax_check')!r}"
+        f"  error={result.get('syntax_error', '')!r}"
+    )
 finally:
     bad_file.unlink(missing_ok=True)
     (HERE / "_test_bad.py.bak").unlink(missing_ok=True)

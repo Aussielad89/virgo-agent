@@ -11,13 +11,13 @@ Results are printed to stdout and saved to virgo_search_memory_*.json.
 
 from __future__ import annotations
 
-import urllib.request
-import urllib.parse
-import urllib.error
 import json
+import os
 import re
 import sys
-import os
+import urllib.error
+import urllib.parse
+import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -45,12 +45,18 @@ def web_search(query: str) -> dict:
 
         results = []
         for i in range(min(3, len(links))):
-            clean_snippet = re.sub(r"<[^>]+>", "", snippets[i]).strip() if i < len(snippets) else "No description."
+            clean_snippet = (
+                re.sub(r"<[^>]+>", "", snippets[i]).strip()
+                if i < len(snippets)
+                else "No description."
+            )
             actual_url = links[i]
             if "//duckduckgo.com/l/?" in actual_url:
                 parsed = urllib.parse.urlparse(actual_url)
                 actual_url = urllib.parse.parse_qs(parsed.query).get("uddg", [actual_url])[0]
-            results.append({"title": f"Result {i+1}", "url": actual_url, "snippet": clean_snippet})
+            results.append(
+                {"title": f"Result {i + 1}", "url": actual_url, "snippet": clean_snippet}
+            )
 
         if not results:
             return {
@@ -89,7 +95,9 @@ def google_search(query: str) -> dict:
             html = response.read().decode("utf-8", errors="replace")
 
         links = re.findall(r'<a[^>]*href="(https?://[^"]*)"[^>]*>(.*?)</a>', html, re.DOTALL)
-        snippets = re.findall(r'<div[^>]*class="[^"]*VwiC3b[^"]*"[^>]*>(.*?)</div>', html, re.DOTALL)
+        snippets = re.findall(
+            r'<div[^>]*class="[^"]*VwiC3b[^"]*"[^>]*>(.*?)</div>', html, re.DOTALL
+        )
 
         results = []
         seen: set[str] = set()
@@ -124,7 +132,7 @@ def youtube_search(query: str) -> dict:
         with urllib.request.urlopen(req, timeout=5) as response:
             html = response.read().decode("utf-8", errors="replace")
 
-        video_ids = re.findall(r'/watch\?v=([a-zA-Z0-9_-]{11})', html)
+        video_ids = re.findall(r"/watch\?v=([a-zA-Z0-9_-]{11})", html)
         titles = re.findall(r'"title":{"runs":\[{"text":"([^"]+)"', html)
 
         results = []
@@ -133,12 +141,14 @@ def youtube_search(query: str) -> dict:
             if vid in seen_ids:
                 continue
             seen_ids.add(vid)
-            title = titles[len(results)].strip() if len(results) < len(titles) else f"Video {i+1}"
-            results.append({
-                "title": title[:80],
-                "url": f"https://www.youtube.com/watch?v={vid}",
-                "video_id": vid,
-            })
+            title = titles[len(results)].strip() if len(results) < len(titles) else f"Video {i + 1}"
+            results.append(
+                {
+                    "title": title[:80],
+                    "url": f"https://www.youtube.com/watch?v={vid}",
+                    "video_id": vid,
+                }
+            )
             if len(results) >= 5:
                 break
 
@@ -150,6 +160,7 @@ def youtube_search(query: str) -> dict:
 def save_results(data: dict, query: str, engine: str) -> None:
     """Save search results to a timestamped JSON file in the output dir."""
     import time
+
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     filename = str(SEARCH_MEMORY_DIR / f"virgo_search_memory_{timestamp}.json")
     data["query"] = query

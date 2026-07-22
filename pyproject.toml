@@ -11,6 +11,8 @@ license = "MIT"
 dependencies = [
     "python-dotenv",
     "textual>=2.0",
+    "pyyaml>=6.0",
+    "psutil>=5.9",
 ]
 requires-python = ">=3.11"
 authors = [
@@ -19,7 +21,7 @@ authors = [
 
 [project.optional-dependencies]
 web = ["fastapi", "uvicorn", "jinja2", "sse-starlette"]
-yaml = ["pyyaml"]
+desktop = ["PyQt6>=6.6", "psutil>=5.9"]
 dev = ["pytest>=7", "pytest-cov>=4", "pytest-xdist>=3", "mypy>=1", "ruff>=0.5"]
 
 [tool.ruff]
@@ -29,7 +31,7 @@ exclude = ["agent_env", ".virgo_memory", "venv", "__pycache__", "build", "dist"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
-ignore = ["E501", "B008", "C401", "C408", "SIM105", "UP038", "B904"]
+ignore = ["E501", "B008", "C401", "C408", "SIM105", "B904"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E402", "F403", "F405"]

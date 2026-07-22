@@ -9,7 +9,6 @@ from pathlib import Path
 from _console import icon
 from _log import log
 
-
 HERE = Path(__file__).resolve().parent
 
 

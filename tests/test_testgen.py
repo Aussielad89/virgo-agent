@@ -15,7 +15,6 @@ from virgo_testgen import (
     generate_tests,
 )
 
-
 SAMPLE = textwrap.dedent(
     '''
     """sample module"""

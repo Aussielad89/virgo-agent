@@ -6,8 +6,6 @@ import subprocess
 import sys
 from unittest.mock import patch
 
-import pytest
-
 from virgo_run import execute_pipeline_step
 
 

@@ -11,8 +11,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 HERE = Path(__file__).resolve().parent.parent
 
 
@@ -56,7 +54,6 @@ def test_parser_extracts_error_critical_entries():
 
 
 def test_parser_regex_matches_bracketed_and_unbracketed():
-    import re
 
     run = _load_run_module()
     # Extract the compiled pattern from PARSER_CODE.

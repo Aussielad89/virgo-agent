@@ -144,7 +144,7 @@ Pipeline: Discover → Plan → Generate → Critic → Deps → Test/Fix Loop
 
 ```bash
 pip install -e .[dev]
-python -m pytest tests/ -v            # 276 tests
+python -m pytest tests/ -v            # 363 tests
 python -m pytest tests/ --cov=.       # With coverage
 ```
 

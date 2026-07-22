@@ -7,9 +7,9 @@ and prints the first 3 lines of the response headers/banner.
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
-import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -38,7 +38,7 @@ def grab_banner(
 
     try:
         sock.connect((host, port))
-    except (socket.timeout, ConnectionRefusedError, OSError) as exc:
+    except (TimeoutError, ConnectionRefusedError, OSError) as exc:
         sock.close()
         print(f"{icon('error')} Connection failed: {exc}")
         return []
@@ -62,7 +62,7 @@ def grab_banner(
             buffer += chunk
             if buffer.count(b"\n") >= 3:
                 break
-    except (socket.timeout, OSError) as exc:
+    except (TimeoutError, OSError) as exc:
         print(f"{icon('warn')} Read interrupted: {exc}")
     finally:
         sock.close()
@@ -90,7 +90,9 @@ def run_fingerprinter() -> None:
         for i, line in enumerate(lines, 1):
             print(f"  {i}. {line}")
     else:
-        print(f"\n{icon('info')} No banner captured. Is Ollama running on {TARGET_HOST}:{TARGET_PORT}?")
+        print(
+            f"\n{icon('info')} No banner captured. Is Ollama running on {TARGET_HOST}:{TARGET_PORT}?"
+        )
 
     print()
 

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import evaluator
 from evaluator import Evaluation, evaluate
 
-
 # ── Fake client for LLM mode ────────────────────────────────────────────────
+
 
 class FakeClient:
     """Tiny stand-in for main.LLMClient.chat(messages, role='evaluator')."""
@@ -82,9 +81,7 @@ def test_deterministic_goal_term_check() -> None:
 
 
 def test_llm_mode_parse_happy_path() -> None:
-    client = FakeClient(
-        '{"passed": true, "score": 0.92, "rationale": "Goal achieved."}'
-    )
+    client = FakeClient('{"passed": true, "score": 0.92, "rationale": "Goal achieved."}')
     ev = evaluate(GOOD_GOAL, GOOD_TRANSCRIPT, client=client)
     assert client.called_with_role == "evaluator"
     assert ev.passed is True

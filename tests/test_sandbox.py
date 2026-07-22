@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import tempfile
-import os
-from pathlib import Path
-
 import pytest
 
-from virgo_sandbox import is_command_safe, run_sandboxed, ALLOWED_COMMANDS
+from virgo_sandbox import ALLOWED_COMMANDS, is_command_safe, run_sandboxed
 
 
 class TestIsCommandSafe:

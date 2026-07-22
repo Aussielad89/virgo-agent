@@ -25,7 +25,8 @@ HERE = Path(__file__).parent
 @dataclass
 class Issue:
     """A single code-quality issue found during review."""
-    severity: str          # "error" | "warning" | "info"
+
+    severity: str  # "error" | "warning" | "info"
     message: str
     line: int = 0
     file: str = ""
@@ -34,6 +35,7 @@ class Issue:
 @dataclass
 class ReviewReport:
     """Result of reviewing one or more files."""
+
     files_reviewed: int = 0
     issues: list[Issue] = field(default_factory=list)
 
@@ -56,7 +58,13 @@ class ReviewReport:
             return "\n".join(lines)
         lines.append(f"  {len(self.errors)} error(s), {len(self.warnings)} warning(s)")
         for i in self.issues:
-            tag = "[ERR]" if i.severity == "error" else "[WARN]" if i.severity == "warning" else "[INFO]"
+            tag = (
+                "[ERR]"
+                if i.severity == "error"
+                else "[WARN]"
+                if i.severity == "warning"
+                else "[INFO]"
+            )
             loc = f":{i.line}" if i.line else ""
             lines.append(f"    {tag}  {i.file}{loc}  {i.message}")
         return "\n".join(lines)
@@ -66,6 +74,7 @@ class ReviewReport:
 # Checks
 # ===========================================================================
 
+
 def _check_ast(tree: ast.Module, source: str, file: str, issues: list[Issue]) -> None:
     """Run AST-level checks on a parsed module."""
 
@@ -74,30 +83,37 @@ def _check_ast(tree: ast.Module, source: str, file: str, issues: list[Issue]) ->
     for node in ast.walk(tree):
         if isinstance(node, ast.If):
             # Check if the test compares __name__ to '__main__'
-            if (isinstance(node.test, ast.Compare) and
-                isinstance(node.test.left, ast.Name) and
-                node.test.left.id == "__name__" and
-                len(node.test.ops) == 1 and
-                isinstance(node.test.ops[0], ast.Eq) and
-                len(node.test.comparators) == 1 and
-                isinstance(node.test.comparators[0], ast.Constant) and
-                node.test.comparators[0].value == "__main__"):
+            if (
+                isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Name)
+                and node.test.left.id == "__name__"
+                and len(node.test.ops) == 1
+                and isinstance(node.test.ops[0], ast.Eq)
+                and len(node.test.comparators) == 1
+                and isinstance(node.test.comparators[0], ast.Constant)
+                and node.test.comparators[0].value == "__main__"
+            ):
                 has_main_guard = True
                 break
 
     # Only flag if the file has function/class defs or sys.exit calls
-    has_defs = any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-                   for n in ast.walk(tree))
+    has_defs = any(
+        isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) for n in ast.walk(tree)
+    )
     if has_defs and not has_main_guard:
         issues.append(Issue("warning", "Missing if __name__ == '__main__' guard", file=file))
 
     # --- bare except ------------------------------------------------------
     for node in ast.walk(tree):
         if isinstance(node, ast.ExceptHandler) and node.type is None:
-            issues.append(Issue(
-                "error", "Bare except: catches all exceptions — use except Exception:",
-                node.lineno if hasattr(node, 'lineno') else 0, file,
-            ))
+            issues.append(
+                Issue(
+                    "error",
+                    "Bare except: catches all exceptions — use except Exception:",
+                    node.lineno if hasattr(node, "lineno") else 0,
+                    file,
+                )
+            )
 
     # --- eval / exec ------------------------------------------------------
     for node in ast.walk(tree):
@@ -108,30 +124,47 @@ def _check_ast(tree: ast.Module, source: str, file: str, issues: list[Issue]) ->
             elif isinstance(node.func, ast.Attribute):
                 func_name = node.func.attr
             if func_name in ("eval", "exec"):
-                issues.append(Issue(
-                    "error", f"Use of {func_name}() — security risk",
-                    node.lineno, file,
-                ))
+                issues.append(
+                    Issue(
+                        "error",
+                        f"Use of {func_name}() — security risk",
+                        node.lineno,
+                        file,
+                    )
+                )
 
     # --- import * ---------------------------------------------------------
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.names and any(
-            n.name == "*" for n in node.names
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.names
+            and any(n.name == "*" for n in node.names)
         ):
-            issues.append(Issue(
-                "warning", "from X import * — pollutes namespace",
-                node.lineno, file,
-            ))
+            issues.append(
+                Issue(
+                    "warning",
+                    "from X import * — pollutes namespace",
+                    node.lineno,
+                    file,
+                )
+            )
 
     # --- function docstrings ----------------------------------------------
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if not (node.body and isinstance(node.body[0], ast.Expr) and
-                    isinstance(node.body[0].value, (ast.Constant, ast.Str))):
-                issues.append(Issue(
-                    "info", f"Function '{node.name}' missing docstring",
-                    node.lineno, file,
-                ))
+            if not (
+                node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, (ast.Constant, ast.Str))
+            ):
+                issues.append(
+                    Issue(
+                        "info",
+                        f"Function '{node.name}' missing docstring",
+                        node.lineno,
+                        file,
+                    )
+                )
 
 
 def _check_lines(source: str, file: str, issues: list[Issue]) -> None:
@@ -142,15 +175,23 @@ def _check_lines(source: str, file: str, issues: list[Issue]) -> None:
             issues.append(Issue("info", f"Line too long ({len(line)} chars)", i, file))
 
         # Hardcoded secrets (simple heuristic)
-        if re.search(r'(password|secret|token|api_key)\s*=\s*["\'][^"\']+["\']', line, re.IGNORECASE):
-            issues.append(Issue(
-                "warning", "Possible hardcoded secret on this line", i, file,
-            ))
+        if re.search(
+            r'(password|secret|token|api_key)\s*=\s*["\'][^"\']+["\']', line, re.IGNORECASE
+        ):
+            issues.append(
+                Issue(
+                    "warning",
+                    "Possible hardcoded secret on this line",
+                    i,
+                    file,
+                )
+            )
 
 
 # ===========================================================================
 # Public API
 # ===========================================================================
+
 
 def review_file(file_path: str) -> ReviewReport:
     """Run all checks on a single Python file, returning a ReviewReport."""
@@ -168,10 +209,14 @@ def review_file(file_path: str) -> ReviewReport:
         tree = ast.parse(source, filename=file_path)
         _check_ast(tree, source, base, report.issues)
     except SyntaxError as exc:
-        report.issues.append(Issue(
-            "error", f"Syntax error: {exc.msg}",
-            exc.lineno or 0, base,
-        ))
+        report.issues.append(
+            Issue(
+                "error",
+                f"Syntax error: {exc.msg}",
+                exc.lineno or 0,
+                base,
+            )
+        )
         return report
 
     _check_lines(source, base, report.issues)
@@ -196,9 +241,14 @@ def review_code(code: str, filename: str = "<string>") -> ReviewReport:
         tree = ast.parse(code, filename=filename)
         _check_ast(tree, code, filename, report.issues)
     except SyntaxError as exc:
-        report.issues.append(Issue(
-            "error", f"Syntax error: {exc.msg}", exc.lineno or 0, filename,
-        ))
+        report.issues.append(
+            Issue(
+                "error",
+                f"Syntax error: {exc.msg}",
+                exc.lineno or 0,
+                filename,
+            )
+        )
         return report
     _check_lines(code, filename, report.issues)
     return report

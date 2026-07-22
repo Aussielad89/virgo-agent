@@ -11,15 +11,16 @@ HERE = Path(__file__).parent.parent
 sys.path.insert(0, str(HERE))
 
 import pytest
-from orchestrator import Orchestrator
-from subagent import SubAgent, AgentResult
-from tools import ToolRegistry
-from environment import AgentEnvironment
 
+from environment import AgentEnvironment
+from orchestrator import Orchestrator
+from subagent import AgentResult, SubAgent
+from tools import ToolRegistry
 
 # ===========================================================================
 # Fixtures
 # ===========================================================================
+
 
 @pytest.fixture
 def registry() -> ToolRegistry:
@@ -50,6 +51,7 @@ def orch(registry: ToolRegistry, env: AgentEnvironment) -> Orchestrator:
 # SubAgent tests
 # ===========================================================================
 
+
 class TestSubAgent:
     """SubAgent is the per-worker unit used by Orchestrator.swarm()."""
 
@@ -75,7 +77,9 @@ class TestSubAgent:
         result = agent.run(registry, env, verbose=False)
         assert result.status == "success"
 
-    def test_subagent_fallback_file_content(self, registry: ToolRegistry, env: AgentEnvironment) -> None:
+    def test_subagent_fallback_file_content(
+        self, registry: ToolRegistry, env: AgentEnvironment
+    ) -> None:
         """The fallback generator should produce a valid .py file listed in results."""
         agent = SubAgent(name="writer", goal="write a test script")
         result = agent.run(registry, env, verbose=False)
@@ -140,6 +144,7 @@ class TestSubAgent:
 # Orchestrator.swarm() tests
 # ===========================================================================
 
+
 class TestOrchestratorSwarm:
     """Orchestrator.swarm() delegates to SubAgent workers."""
 
@@ -148,7 +153,9 @@ class TestOrchestratorSwarm:
         results = orch.swarm("empty test", [], verbose=False)
         assert results == []
 
-    def test_swarm_single_agent(self, orch: Orchestrator, registry: ToolRegistry, env: AgentEnvironment) -> None:
+    def test_swarm_single_agent(
+        self, orch: Orchestrator, registry: ToolRegistry, env: AgentEnvironment
+    ) -> None:
         """Swarm with one agent should produce one result."""
         results = orch.swarm(
             "Single agent test",

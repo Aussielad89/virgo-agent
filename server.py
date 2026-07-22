@@ -14,11 +14,12 @@ Start with::
 from __future__ import annotations
 
 import asyncio
-import json
+import os
 import sys
 import time
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Any
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -29,9 +30,9 @@ sys.path.insert(0, str(HERE))
 
 _IMPORTS_OK = True
 try:
+    import uvicorn  # noqa: F401
     from fastapi import FastAPI, Request  # noqa: F401
     from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse  # noqa: F401
-    import uvicorn  # noqa: F401
 except ImportError as exc:
     _IMPORTS_OK = False
     _IMPORT_ERROR = exc
@@ -287,6 +288,7 @@ _LOG_PAGE = """\
 # FastAPI application
 # ===========================================================================
 
+
 def _build_app() -> Any:
     """Create and return the FastAPI ASGI app."""
     import jinja2
@@ -325,25 +327,37 @@ def _build_app() -> Any:
     @app.get("/", response_class=HTMLResponse)
     async def sessions_page():
         from memory import list_sessions
+
         sessions = list_sessions()
         passed = sum(1 for s in sessions if s.get("loop_passed") is True)
         failed = sum(1 for s in sessions if s.get("loop_passed") is False)
-        tpl = env.from_string(_LAYOUT.replace("{{ content|safe }}",
-                              "{% block content %}" + _SESSIONS_PAGE + "{% endblock %}"))
-        return tpl.render(sessions=sessions, stats={"count": len(sessions), "passed": passed, "failed": failed})
+        tpl = env.from_string(
+            _LAYOUT.replace(
+                "{{ content|safe }}", "{% block content %}" + _SESSIONS_PAGE + "{% endblock %}"
+            )
+        )
+        return tpl.render(
+            sessions=sessions, stats={"count": len(sessions), "passed": passed, "failed": failed}
+        )
 
     @app.get("/session/{name}", response_class=HTMLResponse)
     async def session_page(name: str):
         from memory import load_state
+
         try:
             data = load_state(name)
         except FileNotFoundError:
             return HTMLResponse("<h1>not found</h1>", status_code=404)
-        tpl = env.from_string(_LAYOUT.replace("{{ content|safe }}",
-                              "{% block content %}" + _SESSION_PAGE + "{% endblock %}"))
+        tpl = env.from_string(
+            _LAYOUT.replace(
+                "{{ content|safe }}", "{% block content %}" + _SESSION_PAGE + "{% endblock %}"
+            )
+        )
         return tpl.render(
-            name=name, goal=data.get("goal", ""),
-            phase=data.get("phase", ""), iteration=data.get("iteration", 0),
+            name=name,
+            goal=data.get("goal", ""),
+            phase=data.get("phase", ""),
+            iteration=data.get("iteration", 0),
             loop_passed=data.get("loop_passed"),
             generated=data.get("generated_files", []),
             test_logs=data.get("test_logs", []),
@@ -351,16 +365,22 @@ def _build_app() -> Any:
 
     @app.get("/run", response_class=HTMLResponse)
     async def run_page():
-        tpl = env.from_string(_LAYOUT.replace("{{ content|safe }}",
-                              "{% block content %}" + _RUN_PAGE + "{% endblock %}"))
+        tpl = env.from_string(
+            _LAYOUT.replace(
+                "{{ content|safe }}", "{% block content %}" + _RUN_PAGE + "{% endblock %}"
+            )
+        )
         return tpl.render()
 
     @app.post("/run", response_class=HTMLResponse)
     async def run_pipeline(goal: str = Form(...), use_llm: str = Form("0")):
         """Trigger a pipeline run asynchronously and stream output via SSE."""
         _log_line(f"Web run: {goal[:80]}" + (" (LLM)" if use_llm == "1" else ""))
+        import subprocess
+        import sys
+
         from cli import HERE as _HERE
-        import subprocess, sys
+
         cmd = [sys.executable, str(_HERE / "cli.py"), "run", "--goal", goal, "--auto-approve"]
         if use_llm == "1":
             cmd.append("--llm")
@@ -382,38 +402,46 @@ def _build_app() -> Any:
                 _log_line(f"Web run error: {exc}")
 
         import threading
+
         t = threading.Thread(target=_run, daemon=True)
         t.start()
 
-        return """<div class="log-line" style="color:#00ff88;">&#9654; started: {}</div>
-<div class="log-line">view output in the <a href="/log">live log</a></div>""".format(goal[:80])
+        return f"""<div class="log-line" style="color:#00ff88;">&#9654; started: {goal[:80]}</div>
+<div class="log-line">view output in the <a href="/log">live log</a></div>"""
 
     @app.get("/status", response_class=HTMLResponse)
     async def status_page():
         from memory import list_sessions
+
         sessions = list_sessions()
         try:
             from experience import get_memory
+
             mem = get_memory()
             mem_stats = mem.stats()
         except Exception:
             mem_stats = {"count": 0, "with_embeddings": 0}
         try:
             from plugins import discover
+
             plugin_count = len(discover())
         except Exception:
             plugin_count = 0
         try:
             # Check LLM status
-            import urllib.request, json as _j
+            import urllib.request
+
             base = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1")
             req = urllib.request.Request(f"{base.rstrip('/')}/models")
             with urllib.request.urlopen(req, timeout=3) as resp:
                 llm_status = "LLM connected" if resp.status == 200 else "LLM unreachable"
         except Exception:
             llm_status = "LLM offline"
-        tpl = env.from_string(_LAYOUT.replace("{{ content|safe }}",
-                              "{% block content %}" + _STATUS_PAGE + "{% endblock %}"))
+        tpl = env.from_string(
+            _LAYOUT.replace(
+                "{{ content|safe }}", "{% block content %}" + _STATUS_PAGE + "{% endblock %}"
+            )
+        )
         return tpl.render(
             sessions=len(sessions),
             experiences=mem_stats.get("count", 0),
@@ -426,8 +454,11 @@ def _build_app() -> Any:
 
     @app.get("/log", response_class=HTMLResponse)
     async def log_page():
-        tpl = env.from_string(_LAYOUT.replace("{{ content|safe }}",
-                              "{% block content %}" + _LOG_PAGE + "{% endblock %}"))
+        tpl = env.from_string(
+            _LAYOUT.replace(
+                "{{ content|safe }}", "{% block content %}" + _LOG_PAGE + "{% endblock %}"
+            )
+        )
         return tpl.render()
 
     @app.get("/log-stream", response_class=PlainTextResponse)
@@ -453,7 +484,7 @@ def _build_app() -> Any:
                     try:
                         line = await asyncio.wait_for(queue.get(), timeout=10)
                         yield {"event": "message", "data": f"<div class='log-line'>{line}</div>"}
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         yield {"event": "heartbeat", "data": ""}
             finally:
                 if queue in app.state.sse_clients:
@@ -466,11 +497,13 @@ def _build_app() -> Any:
     @app.get("/api/sessions")
     async def api_sessions():
         from memory import list_sessions
+
         return JSONResponse(list_sessions())
 
     @app.get("/api/session/{name}")
     async def api_session(name: str):
         from memory import load_state
+
         try:
             return JSONResponse(load_state(name))
         except FileNotFoundError:
@@ -479,18 +512,22 @@ def _build_app() -> Any:
     @app.get("/api/status")
     async def api_status():
         from memory import list_sessions
+
         sessions = list_sessions()
         try:
             from experience import get_memory
+
             mem = get_memory()
             mem_stats = mem.stats()
         except Exception:
             mem_stats = {"count": 0}
-        return JSONResponse({
-            "sessions": len(sessions),
-            "experiences": mem_stats.get("count", 0),
-            "version": "0.6.0",
-        })
+        return JSONResponse(
+            {
+                "sessions": len(sessions),
+                "experiences": mem_stats.get("count", 0),
+                "version": "0.6.0",
+            }
+        )
 
     return app
 
@@ -498,6 +535,7 @@ def _build_app() -> Any:
 # ===========================================================================
 # Public API
 # ===========================================================================
+
 
 def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
     """Start the virgo web dashboard."""
@@ -507,9 +545,23 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
             print("[virgo] Attempting auto-install...")
             import subprocess
             import sys
-            subprocess.run([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn", "jinja2", "sse-starlette", "-q"],
-                         check=True)
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "fastapi",
+                    "uvicorn",
+                    "jinja2",
+                    "sse-starlette",
+                    "-q",
+                ],
+                check=True,
+            )
             import importlib
+
             for mod_name in ("fastapi", "uvicorn", "jinja2", "sse_starlette"):
                 importlib.invalidate_caches()
                 importlib.import_module(mod_name)
@@ -520,6 +572,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
             sys.exit(1)
 
     import uvicorn
+
     app = _build_app()
     print(f"\n  [virgo] Dashboard at  http://{host}:{port}")
     print("  [virgo] Routes:  /sessions  /run  /status  /log  /api/*")

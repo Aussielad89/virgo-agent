@@ -18,6 +18,7 @@ from pathlib import Path
 # Allow import without crashing if dotenv is missing
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass

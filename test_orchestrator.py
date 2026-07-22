@@ -1,14 +1,15 @@
 """Smoke-tests for orchestrator.py — discovery, state tracking, WTF loop."""
-import sys
+
 import json
+import sys
 from pathlib import Path
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from environment import AgentEnvironment
-from tools import ToolRegistry
 from orchestrator import Orchestrator
+from tools import ToolRegistry
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -22,8 +23,9 @@ env.install("tomli", quiet=True)
 reg = ToolRegistry()
 reg.register_defaults(env)
 
-orch = Orchestrator(env, reg, base_path=str(HERE),
-    workspace_excludes=["agent_env", ".crush", ".git", "__pycache__"])
+orch = Orchestrator(
+    env, reg, base_path=str(HERE), workspace_excludes=["agent_env", ".crush", ".git", "__pycache__"]
+)
 
 print("=== 1. Discovery ===")
 
@@ -80,9 +82,13 @@ state = orch.run(
     code_gen=lambda plan, s, r, e: [
         ("_test_buggy.py", "print('OK')\nimport sys; sys.exit(1)\n"),  # intentionally fails
     ],
-    fixer=lambda log, s, r, e: [
-        ("_test_buggy.py", "import sys; sys.exit(1)", "# fixed\n"),
-    ] if log.returncode != 0 else None,
+    fixer=lambda log, s, r, e: (
+        [
+            ("_test_buggy.py", "import sys; sys.exit(1)", "# fixed\n"),
+        ]
+        if log.returncode != 0
+        else None
+    ),
     max_iterations=3,
     auto_approve=True,
 )

@@ -31,7 +31,6 @@ from typing import Any
 from _console import icon
 from virgo_scaffold import generate, list_scaffolds, load_scaffold
 
-
 # ===========================================================================
 # Interactive wizard
 # ===========================================================================

@@ -30,8 +30,6 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-
 
 # ===========================================================================
 # Data model
@@ -41,6 +39,7 @@ from typing import Optional
 @dataclass
 class FunctionDoc:
     """Extracted documentation for a single function or method."""
+
     name: str
     signature: str
     docstring: str
@@ -53,6 +52,7 @@ class FunctionDoc:
 @dataclass
 class ClassDoc:
     """Extracted documentation for a single class."""
+
     name: str
     docstring: str
     bases: list[str] = field(default_factory=list)
@@ -64,6 +64,7 @@ class ClassDoc:
 @dataclass
 class ModuleDoc:
     """Extracted documentation for a single Python module (file)."""
+
     file_path: str
     module_name: str
     docstring: str
@@ -124,7 +125,7 @@ def _get_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
 
     # Positional args
     for i, arg in enumerate(args.args):
-        if i == 0 and getattr(arg, 'arg', '') in ('self', 'cls'):
+        if i == 0 and getattr(arg, "arg", "") in ("self", "cls"):
             # Omit self/cls from signature
             continue
         arg_str = arg.arg
@@ -184,7 +185,7 @@ def _get_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     return f"({sig}){returns}"
 
 
-def extract_docstrings(file_path: str) -> Optional[ModuleDoc]:
+def extract_docstrings(file_path: str) -> ModuleDoc | None:
     """Parse a Python file and extract all docstrings.
 
     Args:
@@ -297,10 +298,24 @@ def scan_directory(
         return [doc] if doc else []
 
     skip_dirs = {
-        ".git", "__pycache__", "node_modules", "agent_env", ".venv",
-        ".mypy_cache", ".pytest_cache", ".crush", "dist",
-        "virgo_agent.egg-info", ".github", ".hg", ".svn",
-        "venv", "env", ".tox", "build", "*.egg-info",
+        ".git",
+        "__pycache__",
+        "node_modules",
+        "agent_env",
+        ".venv",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".crush",
+        "dist",
+        "virgo_agent.egg-info",
+        ".github",
+        ".hg",
+        ".svn",
+        "venv",
+        "env",
+        ".tox",
+        "build",
+        "*.egg-info",
     }
     if exclude_dirs:
         skip_dirs.update(exclude_dirs)
@@ -445,9 +460,7 @@ def _build_markdown_index(
         ref = _module_to_ref(mod.module_name)
         rel = _rel_path(mod.file_path, base_dir)
         summary = _docstring_summary(mod.docstring, 60)
-        lines.append(
-            f"| [{mod.module_name}]({ref}.md) | `{rel}` | {summary} |"
-        )
+        lines.append(f"| [{mod.module_name}]({ref}.md) | `{rel}` | {summary} |")
     lines.append("")
 
     # Class index
@@ -465,8 +478,7 @@ def _build_markdown_index(
         for name, docstring, mod_ref in all_classes:
             summary = _docstring_summary(docstring, 60)
             lines.append(
-                f"| [{name}]({mod_ref}.md#{_module_to_ref(name)}) | "
-                f"`{mod_ref}` | {summary} |"
+                f"| [{name}]({mod_ref}.md#{_module_to_ref(name)}) | `{mod_ref}` | {summary} |"
             )
         lines.append("")
 
@@ -485,8 +497,7 @@ def _build_markdown_index(
         for name, docstring, mod_ref in all_funcs:
             summary = _docstring_summary(docstring, 60)
             lines.append(
-                f"| [{name}]({mod_ref}.md#{_module_to_ref(name)}) | "
-                f"`{mod_ref}` | {summary} |"
+                f"| [{name}]({mod_ref}.md#{_module_to_ref(name)}) | `{mod_ref}` | {summary} |"
             )
         lines.append("")
 
@@ -604,9 +615,7 @@ def _render_function_md(
 
     # Signature line
     async_prefix = "async " if func.is_async else ""
-    lines.append(
-        f'{hash_prefix} <a id="{ref}"></a>`{async_prefix}def {func.name}{func.signature}`'
-    )
+    lines.append(f'{hash_prefix} <a id="{ref}"></a>`{async_prefix}def {func.name}{func.signature}`')
     lines.append("")
 
     # Docstring
@@ -879,7 +888,7 @@ def _html_class(cls: ClassDoc) -> str:
             summary = _escape_html(_docstring_summary(m.docstring, 60))
             parts.append(
                 f"<tr>"
-                f"<td><a href=\"#{_module_to_ref(m.name)}\">{m.name}</a></td>"
+                f'<td><a href="#{_module_to_ref(m.name)}">{m.name}</a></td>'
                 f"<td><code>{async_prefix}{m.name}{sig}</code></td>"
                 f"<td>{summary}</td>"
                 f"</tr>"
@@ -938,33 +947,39 @@ def main(argv: list[str] | None = None) -> int:
         epilog="Files are written to --output (default: docs/).",
     )
     parser.add_argument(
-        "--path", "-p",
+        "--path",
+        "-p",
         default=".",
         help="Path to scan (file or directory). Default: current dir.",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         default="docs",
         help="Output directory. Default: docs/",
     )
     parser.add_argument(
-        "--format", "-f",
+        "--format",
+        "-f",
         choices=["md", "html"],
         default="md",
         help="Output format: md (markdown, default) or html.",
     )
     parser.add_argument(
-        "--recursive", "-r",
+        "--recursive",
+        "-r",
         action="store_true",
         help="Walk directories recursively.",
     )
     parser.add_argument(
-        "--name", "-n",
+        "--name",
+        "-n",
         default="virgo",
         help="Project display name. Default: 'virgo'",
     )
     parser.add_argument(
-        "--quiet", "-q",
+        "--quiet",
+        "-q",
         action="store_true",
         help="Suppress progress output.",
     )

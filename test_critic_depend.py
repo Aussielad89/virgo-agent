@@ -5,6 +5,7 @@ Runs the orchestrator with run_critic=True and auto_depend=True using
 a code_gen that produces a file with a known third-party import
 and missing __name__ guard.
 """
+
 import sys
 from pathlib import Path
 
@@ -12,8 +13,8 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from environment import AgentEnvironment
-from tools import ToolRegistry
 from orchestrator import Orchestrator
+from tools import ToolRegistry
 
 print("=== Critic + Auto-Depend Integration ===")
 
@@ -27,18 +28,33 @@ registry = ToolRegistry()
 registry.register_defaults(env)
 
 orch = Orchestrator(
-    env, registry, base_path=str(HERE),
-    workspace_excludes=["agent_env", ".crush", ".git", "__pycache__", ".mypy_cache", ".virgo_memory"],
+    env,
+    registry,
+    base_path=str(HERE),
+    workspace_excludes=[
+        "agent_env",
+        ".crush",
+        ".git",
+        "__pycache__",
+        ".mypy_cache",
+        ".virgo_memory",
+    ],
 )
+
 
 # code_gen produces a file with:
 #   - missing __name__ guard (critic warning)
 #   - import pandas (auto-depend should install)
 def code_gen(plan, state, reg, env):
-    return [("_test_critic_dep.py",
-             "import pandas\nimport sys\n\n"
-             "df = pandas.DataFrame({'a': [1,2,3]})\n"
-             "print(df.mean())\n")]
+    return [
+        (
+            "_test_critic_dep.py",
+            "import pandas\nimport sys\n\n"
+            "df = pandas.DataFrame({'a': [1,2,3]})\n"
+            "print(df.mean())\n",
+        )
+    ]
+
 
 state = orch.run(
     goal="test critic + auto-depend",

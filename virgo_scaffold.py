@@ -31,6 +31,7 @@ def _installed_scaffolds_dir() -> Path | None:
     """Return the path to installed-scaffolds data dir (created on first install)."""
     try:
         import importlib.metadata
+
         dist = importlib.metadata.distribution("virgo-agent")
         if dist and dist.locate_file("."):
             data_dir = Path(dist.locate_file(".")).parent / "scaffolds"
@@ -53,6 +54,7 @@ def _find_plugin_scaffolds() -> dict[str, dict[str, Any]]:
     # Method 1: scan data directories via importlib.metadata
     try:
         import importlib.metadata
+
         for dist in importlib.metadata.distributions():
             # Try entry points first
             try:
@@ -73,8 +75,7 @@ def _find_plugin_scaffolds() -> dict[str, dict[str, Any]]:
             try:
                 pkg_root = Path(dist.locate_file("."))
                 # Navigate to potential scaffolds/ dirs
-                for candidate in [pkg_root / "scaffolds",
-                                  pkg_root.parent / "scaffolds"]:
+                for candidate in [pkg_root / "scaffolds", pkg_root.parent / "scaffolds"]:
                     if candidate.is_dir():
                         for path in sorted(candidate.glob("*.json")):
                             try:
@@ -102,36 +103,42 @@ def _all_scaffolds() -> list[dict[str, Any]]:
         for path in sorted(SCAFFOLDS_DIR.glob("*.json")):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                results.append({
-                    "name": data.get("name", path.stem),
-                    "description": data.get("description", ""),
-                    "version": data.get("version", "0.0.0"),
-                    "dependencies": data.get("dependencies", []),
-                    "_source": "built-in",
-                    "_path": str(path),
-                })
+                results.append(
+                    {
+                        "name": data.get("name", path.stem),
+                        "description": data.get("description", ""),
+                        "version": data.get("version", "0.0.0"),
+                        "dependencies": data.get("dependencies", []),
+                        "_source": "built-in",
+                        "_path": str(path),
+                    }
+                )
             except (json.JSONDecodeError, OSError) as exc:
                 print(f"Warning: skipping {path.name}: {exc}", file=sys.stderr)
 
     # Plugin scaffolds
     for name, data in _find_plugin_scaffolds().items():
-        results.append({
-            "name": data.get("name", name),
-            "description": data.get("description", ""),
-            "version": data.get("version", "0.0.0"),
-            "dependencies": data.get("dependencies", []),
-            "_source": data.get("_plugin", "unknown"),
-            "_path": str(data.get("_path", "")),
-        })
+        results.append(
+            {
+                "name": data.get("name", name),
+                "description": data.get("description", ""),
+                "version": data.get("version", "0.0.0"),
+                "dependencies": data.get("dependencies", []),
+                "_source": data.get("_plugin", "unknown"),
+                "_path": str(data.get("_path", "")),
+            }
+        )
 
     return results
 
 
 def _render(text: str, vars: dict[str, str]) -> str:
     """Replace ``{{var}}`` placeholders with values from *vars*."""
+
     def _replace(m: re.Match) -> str:
         key = m.group(1)
         return vars.get(key, m.group(0))
+
     return _VAR_RE.sub(_replace, text)
 
 
@@ -275,7 +282,8 @@ def install_scaffold(package: str) -> None:
     print(f"  Installing {package!r}...")
     result = subprocess.run(
         [sys.executable, "-m", "pip", "install", package],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         print(f"  Error installing {package!r}:", file=sys.stderr)
@@ -285,9 +293,12 @@ def install_scaffold(package: str) -> None:
     # Verify the package provides scaffolds
     plugins = _find_plugin_scaffolds()
     # Check if any new scaffolds appeared (we can't easily diff, but we can report)
-    installed_scaffolds = [s for s in plugins.values()
-                           if s.get("_plugin", "").lower() in package.lower()
-                           or package.lower() in str(s.get("_path", "")).lower()]
+    installed_scaffolds = [
+        s
+        for s in plugins.values()
+        if s.get("_plugin", "").lower() in package.lower()
+        or package.lower() in str(s.get("_path", "")).lower()
+    ]
 
     if installed_scaffolds:
         print(f"  Found {len(installed_scaffolds)} scaffold(s) in {package!r}:")
@@ -295,7 +306,9 @@ def install_scaffold(package: str) -> None:
             print(f"    - {s.get('name', '?')}: {s.get('description', '')}")
     else:
         print(f"  Package {package!r} installed, but no scaffolds detected.")
-        print("  (Scaffolds must be in a ``scaffolds/`` dir or use ``virgo_scaffolds`` entry points)")
+        print(
+            "  (Scaffolds must be in a ``scaffolds/`` dir or use ``virgo_scaffolds`` entry points)"
+        )
 
 
 def uninstall_scaffold(package: str) -> None:
@@ -305,7 +318,8 @@ def uninstall_scaffold(package: str) -> None:
     print(f"  Uninstalling {package!r}...")
     result = subprocess.run(
         [sys.executable, "-m", "pip", "uninstall", package, "-y"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         print(f"  Error uninstalling {package!r}:", file=sys.stderr)
@@ -334,10 +348,16 @@ def main() -> None:
     p_show.add_argument("name", help="Scaffold name")
 
     # generate
-    p_gen = sub.add_parser("generate", aliases=["gen", "g"], help="Generate a project from a scaffold")
+    p_gen = sub.add_parser(
+        "generate", aliases=["gen", "g"], help="Generate a project from a scaffold"
+    )
     p_gen.add_argument("name", help="Scaffold name")
-    p_gen.add_argument("--output", "-o", default=".", help="Output directory (default: current dir)")
-    p_gen.add_argument("--var", "-v", action="append", default=[], help="Template variable (key=value)")
+    p_gen.add_argument(
+        "--output", "-o", default=".", help="Output directory (default: current dir)"
+    )
+    p_gen.add_argument(
+        "--var", "-v", action="append", default=[], help="Template variable (key=value)"
+    )
 
     # install
     p_install = sub.add_parser("install", help="Install a scaffold package from PyPI")

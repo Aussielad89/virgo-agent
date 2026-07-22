@@ -7,28 +7,24 @@ run anywhere, fast.
 
 from __future__ import annotations
 
-import os
-import sys
 import json
+import sys
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from agent_runtime import AgentRuntime, AgentConfig, build_runtime
-from tools_core import ToolRegistry, make_builtin_registry, Tool, parse_tool_calls
+from agent_runtime import AgentConfig, AgentRuntime, build_runtime
+from evaluator import evaluate
 from experience import ExperienceMemory
-from evaluator import evaluate, Evaluation
 from mcp_bridge import (
-    discover_mcp_servers,
-    _parse_mcp_servers_from_obj,
     _make_mcp_tool,
-    McpServer,
+    _parse_mcp_servers_from_obj,
+    discover_mcp_servers,
 )
-
+from tools_core import Tool, ToolRegistry, make_builtin_registry, parse_tool_calls
 
 # ── tools_core smoke ──────────────────────────────────────────────────
+
 
 def test_builtin_registry_has_core_tools():
     reg = make_builtin_registry()
@@ -47,7 +43,7 @@ def test_file_write_and_read_roundtrip(tmp_path):
 
 def test_shell_runs(tmp_path):
     reg = make_builtin_registry()
-    res = reg.call("shell", f"echo virgo_ok > {tmp_path/'x.txt'}")
+    res = reg.call("shell", f"echo virgo_ok > {tmp_path / 'x.txt'}")
     assert "virgo_ok" in res
 
 
@@ -73,6 +69,7 @@ def test_unknown_tool_errors():
 
 # ── experience memory ─────────────────────────────────────────────────
 
+
 def test_experience_add_recall(tmp_path):
     mem = ExperienceMemory(path=str(tmp_path / "exp.jsonl"))
     mem.add("parse the log file", "used python_run", ["python_run"], "ok", True, "use csv module")
@@ -84,6 +81,7 @@ def test_experience_add_recall(tmp_path):
 
 
 # ── evaluator ─────────────────────────────────────────────────────────
+
 
 def test_evaluator_deterministic_pass():
     transcript = (
@@ -114,6 +112,7 @@ def test_evaluator_llm_mode():
 
 # ── agent runtime (no LLM) ────────────────────────────────────────────
 
+
 def test_runtime_deterministic_runs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     rt = build_runtime(client=None, config=AgentConfig(use_experience=False), include_mcp=False)
@@ -127,10 +126,12 @@ def test_runtime_unknown_tool_recovers(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     reg = ToolRegistry()
     reg.register(Tool("think", "think", lambda a: f"THOUGHT: {a}"))
+
     # Force a bogus action by giving a fake client that emits an unknown tool.
     class _Bogus:
         def chat(self, messages, role="agent"):
             return "Tool: nope_xyz\nARGS: hi\nDONE"
+
     rt = AgentRuntime(registry=reg, client=_Bogus(), config=AgentConfig(use_experience=False))
     res = rt.run("do something")
     assert not res.passed  # unknown tool => error => not clean
@@ -138,6 +139,7 @@ def test_runtime_unknown_tool_recovers(tmp_path, monkeypatch):
 
 
 # ── mcp bridge (no real servers) ──────────────────────────────────────
+
 
 def test_mcp_discover_empty_when_no_config(tmp_path, monkeypatch):
     # Point discovery at an empty dir
@@ -149,7 +151,10 @@ def test_mcp_discover_empty_when_no_config(tmp_path, monkeypatch):
 def test_mcp_parse_servers_from_obj():
     obj = {
         "mcpServers": {
-            "fs": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]}
+            "fs": {
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+            }
         }
     }
     specs = _parse_mcp_servers_from_obj(obj)
@@ -161,9 +166,11 @@ def test_mcp_make_tool_wraps_call():
     class _FakeServer:
         def __init__(self):
             self.calls = []
+
         def call_tool(self, name, arguments):
             self.calls.append((name, arguments))
             return "ran"
+
     srv = _FakeServer()
     tool = _make_mcp_tool("fs", "read", "read a file", srv)
     assert tool.name == "mcp_fs__read"
@@ -176,11 +183,13 @@ def test_mcp_build_registry_no_servers(tmp_path, monkeypatch):
     monkeypatch.setattr("mcp_bridge._discover_configs", lambda: [])
     monkeypatch.setattr("mcp_bridge.discover_mcp_servers", lambda explicit=None: {})
     from mcp_bridge import build_mcp_registry
+
     reg = build_mcp_registry()
     assert len(reg.list_tools()) == 0
 
 
 # ── LLM-format tolerance (regression: live qwen run) ──────────────────
+
 
 def test_python_run_strips_code_fences():
     reg = make_builtin_registry()

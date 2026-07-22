@@ -17,11 +17,10 @@ from __future__ import annotations
 import json
 import os
 import re
-import urllib.request
 import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
 
 from _log import log
 
@@ -31,11 +30,48 @@ DEFAULT_PATH = ".virgo_memory/experience.jsonl"
 # Light stopword list to keep keywords meaningful.
 _STOPWORDS = frozenset(
     {
-        "this", "that", "with", "from", "have", "will", "your", "what", "when",
-        "were", "been", "they", "them", "their", "then", "than", "here", "there",
-        "would", "could", "should", "which", "while", "about", "after", "before",
-        "being", "where", "these", "those", "some", "such", "into", "over", "also",
-        "because", "other", "then", "more", "most", "very", "just", "like", "than",
+        "this",
+        "that",
+        "with",
+        "from",
+        "have",
+        "will",
+        "your",
+        "what",
+        "when",
+        "were",
+        "been",
+        "they",
+        "them",
+        "their",
+        "then",
+        "than",
+        "here",
+        "there",
+        "would",
+        "could",
+        "should",
+        "which",
+        "while",
+        "about",
+        "after",
+        "before",
+        "being",
+        "where",
+        "these",
+        "those",
+        "some",
+        "such",
+        "into",
+        "over",
+        "also",
+        "because",
+        "other",
+        "more",
+        "most",
+        "very",
+        "just",
+        "like",
     }
 )
 
@@ -109,7 +145,7 @@ def _overlap(query_kw: set[str], entry_kw: set[str]) -> float:
 class ExperienceMemory:
     """Append-only store of past task experiences, ranked by relevance."""
 
-    def __init__(self, path: Optional[str] = None) -> None:
+    def __init__(self, path: str | None = None) -> None:
         self.path = Path(path) if path else Path(DEFAULT_PATH)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._entries: list[dict] = []
@@ -231,8 +267,7 @@ class ExperienceMemory:
         scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
         return [entry for _, _, entry in scored[:k]]
 
-    def format_for_prompt(self, goal: str, k: int = 3,
-                          semantic: bool = True) -> str:
+    def format_for_prompt(self, goal: str, k: int = 3, semantic: bool = True) -> str:
         """Compact multiline block of past lessons for an LLM prompt.
 
         Uses semantic recall by default (embeddings), falling back to
@@ -262,17 +297,19 @@ class ExperienceMemory:
         failures = count - successes
         with_embeddings = sum(1 for e in self._entries if "embedding" in e)
         return {
-            "count": count, "successes": successes, "failures": failures,
+            "count": count,
+            "successes": successes,
+            "failures": failures,
             "with_embeddings": with_embeddings,
         }
 
 
 # ── module-level convenience ───────────────────────────────────────────
 
-_INSTANCE: Optional[ExperienceMemory] = None
+_INSTANCE: ExperienceMemory | None = None
 
 
-def get_memory(path: Optional[str] = None) -> ExperienceMemory:
+def get_memory(path: str | None = None) -> ExperienceMemory:
     """Lazy, process-wide singleton ExperienceMemory.
 
     The first call (without a path) creates the default store. Subsequent

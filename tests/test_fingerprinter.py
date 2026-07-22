@@ -5,11 +5,9 @@ from __future__ import annotations
 import socket
 import threading
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-import pytest
-
-from virgo_fingerprinter import grab_banner, TARGET_HOST, TARGET_PORT
+from virgo_fingerprinter import grab_banner
 
 
 def test_grab_banner_connection_refused() -> None:
@@ -117,7 +115,7 @@ def test_grab_banner_recv_timeout() -> None:
         instance = MagicMock()
         instance.connect.return_value = None
         instance.sendall.return_value = None
-        instance.recv.side_effect = socket.timeout("timed out")
+        instance.recv.side_effect = TimeoutError("timed out")
         mock_sock.return_value = instance
 
         lines = grab_banner(host="127.0.0.1", port=12345, timeout=1)
@@ -128,6 +126,7 @@ def test_run_fingerprinter_no_banner() -> None:
     """run_fingerprinter handles no-banner output gracefully."""
     with patch("virgo_fingerprinter.grab_banner", return_value=[]):
         from virgo_fingerprinter import run_fingerprinter
+
         run_fingerprinter()  # should not raise
 
 
@@ -135,4 +134,5 @@ def test_run_fingerprinter_with_banner() -> None:
     """run_fingerprinter handles successful banner output gracefully."""
     with patch("virgo_fingerprinter.grab_banner", return_value=["HTTP/1.1 200 OK", "Server: Test"]):
         from virgo_fingerprinter import run_fingerprinter
+
         run_fingerprinter()  # should not raise

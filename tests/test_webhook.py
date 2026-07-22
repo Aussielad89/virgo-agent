@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from virgo_webhook import build_telemetry, dispatch_webhook
 
@@ -53,8 +48,13 @@ def test_build_telemetry_with_alerts(tmp_path) -> None:
 @patch("virgo_webhook.WEBHOOK_URL", "")
 def test_dispatch_webhook_idle(capsys) -> None:
     """Dispatch with idle status prints no-action message."""
-    payload = {"agent": "virgo-webhook", "status": "idle", "alerts": [],
-               "timestamp": "2025-01-01T00:00:00Z", "alert_count": 0}
+    payload = {
+        "agent": "virgo-webhook",
+        "status": "idle",
+        "alerts": [],
+        "timestamp": "2025-01-01T00:00:00Z",
+        "alert_count": 0,
+    }
     dispatch_webhook(payload)
     captured = capsys.readouterr()
     assert "no action taken" in captured.out.lower()
@@ -63,9 +63,13 @@ def test_dispatch_webhook_idle(capsys) -> None:
 @patch("virgo_webhook.WEBHOOK_URL", "")
 def test_dispatch_webhook_dispatched(capsys) -> None:
     """Dispatch with alerts prints the JSON payload."""
-    payload = {"agent": "virgo-webhook", "status": "dispatched",
-               "alerts": ["[TEST] Test alert"], "timestamp": "2025-01-01T00:00:00Z",
-               "alert_count": 1}
+    payload = {
+        "agent": "virgo-webhook",
+        "status": "dispatched",
+        "alerts": ["[TEST] Test alert"],
+        "timestamp": "2025-01-01T00:00:00Z",
+        "alert_count": 1,
+    }
     dispatch_webhook(payload)
     captured = capsys.readouterr()
     assert "dispatch simulated successfully" in captured.out.lower()
