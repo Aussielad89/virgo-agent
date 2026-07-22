@@ -33,6 +33,7 @@ _test_*.py
 _test_*.csv
 _test_*.json
 _test_*.txt
+test_output.txt
 
 # Scratch / dev files (not for distribution)
 _verify_*.py
