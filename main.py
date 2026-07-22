@@ -41,7 +41,7 @@ from tools import ToolRegistry
 # Config — edit these to match your local API setup
 # =========================================================================
 
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:20128/v1")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "sk-no-key-required")
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "300"))
 
@@ -160,7 +160,7 @@ def _fallback_model_for_role(role: str) -> str:
 
 
 _PROVIDER_BASE_URLS: dict[str, str] = {
-    "ollama": os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
+    "ollama": os.getenv("LLM_BASE_URL", "http://localhost:20128/v1"),
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "groq": "https://api.groq.com/openai/v1",
@@ -183,7 +183,7 @@ def get_client_for(role: str = "generator") -> LLMClient | CrushClient:
             return CrushClient(model=model)
         base_url = _PROVIDER_BASE_URLS.get(
             provider,
-            os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
+            os.getenv("LLM_BASE_URL", "http://localhost:20128/v1"),
         )
         return LLMClient(model=model, base_url=base_url)
     # Fallback: old behaviour
@@ -199,7 +199,7 @@ def _make_fallback_client(role: str, fallback_model: str) -> LLMClient | CrushCl
             return CrushClient(model=fallback_model)
         base_url = _PROVIDER_BASE_URLS.get(
             provider,
-            os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
+            os.getenv("LLM_BASE_URL", "http://localhost:20128/v1"),
         )
         return LLMClient(model=fallback_model, base_url=base_url)
     return LLMClient(model=fallback_model)

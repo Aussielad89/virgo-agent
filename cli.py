@@ -378,7 +378,7 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
 
     # ── LLM / Ollama ──
     def check_llm() -> bool:
-        url = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+        url = os.getenv("LLM_BASE_URL", "http://localhost:20128/v1")
         req = _ur.Request(f"{url.rstrip('/')}/models", method="GET")
         try:
             with _ur.urlopen(req, timeout=5) as resp:
@@ -428,7 +428,7 @@ def cmd_config(args: argparse.Namespace) -> None:
     """View or set virgo configuration (environment variables)."""
 
     config_vars = {
-        "LLM_BASE_URL": "http://localhost:11434/v1",
+        "LLM_BASE_URL": "http://localhost:20128/v1",
         "LLM_API_KEY": "sk-no-key-required",
         "LLM_TIMEOUT": "300",
         "MODEL_PLANNER": "ornith:latest",

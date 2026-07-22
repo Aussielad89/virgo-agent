@@ -431,7 +431,7 @@ def _build_app() -> Any:
             # Check LLM status
             import urllib.request
 
-            base = os.environ.get("LLM_BASE_URL", "http://localhost:11434/v1")
+            base = os.environ.get("LLM_BASE_URL", "http://localhost:20128/v1")
             req = urllib.request.Request(f"{base.rstrip('/')}/models")
             with urllib.request.urlopen(req, timeout=3) as resp:
                 llm_status = "LLM connected" if resp.status == 200 else "LLM unreachable"

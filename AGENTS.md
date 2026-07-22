@@ -141,7 +141,7 @@ python virgo_desktop.py
 C:/Python314/python.exe virgo_desktop.py
 
 # New tools (infrastructure pass):
-python virgo_fingerprinter.py     # TCP banner grab (connects to localhost:11434)
+python virgo_fingerprinter.py     # TCP banner grab (connects to remote hosts)
 python virgo_webhook.py           # Build telemetry JSON, dispatch via print or HTTP POST
 python virgo_sandbox.py           # Restricted command sandbox (blocklist-based)
 python virgo_watchdog.py          # Run diagnostics→alerts→fixer on a configurable timer

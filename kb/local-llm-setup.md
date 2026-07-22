@@ -1,6 +1,7 @@
 # Local LLM Setup (this machine)
 
-Virgo runs on Ollama (localhost:11434). Reference for model selection and
+Virgo routes LLM requests through OmniRoute gateway (http://localhost:20128/v1).
+Reference for model selection and
 tuning. CPU-only inference — no GPU on this box (i7-12700, 32GB).
 
 ## Ollama models available (from /api/tags)
@@ -13,7 +14,7 @@ tuning. CPU-only inference — no GPU on this box (i7-12700, 32GB).
 - ornith — fallback model when others unavailable.
 
 ## Env vars (virgo)
-- LLM_BASE_URL — Ollama endpoint (default http://localhost:11434/v1).
+- LLM_BASE_URL — OmniRoute gateway endpoint (default http://localhost:20128/v1).
 - MODEL_PLANNER / MODEL_GENERATOR / MODEL_FIXER — pipeline role overrides.
 - VIRGO_LOG_LEVEL — DEBUG/INFO/WARNING/ERROR.
 

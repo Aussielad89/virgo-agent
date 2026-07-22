@@ -5,17 +5,17 @@ import socket
 def run_workflow():
     results = []
 
-    # 1. Check if Ollama port is listening
+    # 1. Check if OmniRoute port is listening
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(2)  # 2 second timeout max
     try:
-        result = sock.connect_ex(("127.0.0.1", 11434))
+        result = sock.connect_ex(("127.0.0.1", 20128))
         if result == 0:
-            results.append("Port 11434: OPEN")
+            results.append("Port 20128: OPEN")
         else:
-            results.append("Port 11434: CLOSED")
+            results.append("Port 20128: CLOSED")
     except Exception as e:
-        results.append(f"Port 11434: ERROR ({str(e)})")
+        results.append(f"Port 20128: ERROR ({str(e)})")
     finally:
         sock.close()
 

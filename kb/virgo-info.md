@@ -11,7 +11,7 @@ the user's Windows machine via Ollama (local LLMs, no cloud).
   alerts, auto-fix, web search, scaffolding.
 - Desktop GUI (`virgo_desktop.py`): PyQt6 chat + pipeline UI.
 - Chat: slash commands /help /tools /clear /read <path> /web <url> /py <code>.
-- LLM backends: Ollama (default, localhost:11434), vLLM, LM Studio, or the
+- LLM backends: OmniRoute gateway (default, localhost:20128), vLLM, LM Studio, or the
   Crush CLI. Default chat model: phi4-mini-reasoning:3.8b.
 
 ## Environment

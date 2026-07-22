@@ -80,7 +80,7 @@ _TOKEN_RE = re.compile(r"[a-zA-Z]+")
 # ── Optional embedding support via Ollama ─────────────────────────────
 
 _EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "qwen2.5-coder:7b")
-_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
+_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:20128/v1")
 
 
 def _get_embedding(text: str) -> list[float] | None:

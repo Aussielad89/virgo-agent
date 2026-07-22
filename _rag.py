@@ -198,7 +198,7 @@ def _tfidf_retrieve(query: str, top_k: int) -> list[tuple[str, str]]:
 # --------------------------------------------------------------------------
 _OLLAMA_EMBED_MODEL = os.environ.get("VIRGO_EMBED_MODEL", "nomic-embed-text")
 _OLLAMA_EMBED_URL = os.environ.get(
-    "VIRGO_EMBED_URL", "http://localhost:11434/api/embeddings"
+    "VIRGO_EMBED_URL", "http://localhost:20128/api/embeddings"
 )
 
 

@@ -3338,7 +3338,7 @@ class BenchmarkPage(PageWidget):
         t0 = time.time()
         try:
             req = urllib.request.Request(
-                "http://localhost:11434/api/generate",
+                "http://localhost:20128/api/generate",
                 data=json.dumps(
                     {
                         "model": model,
@@ -3385,7 +3385,7 @@ def _live_ollama_models() -> list[str]:
     import urllib.request
 
     try:
-        raw = urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3).read()
+        raw = urllib.request.urlopen("http://localhost:20128/api/tags", timeout=3).read()
         data = json.loads(raw)
         return sorted(m["name"] for m in data.get("models", []))
     except Exception:
@@ -3415,7 +3415,7 @@ class SettingsPage(PageWidget):
 
         form = self._section("Environment")
         env_vars = {
-            "LLM_BASE_URL": "http://localhost:11434/v1",
+            "LLM_BASE_URL": "http://localhost:20128/v1",
             "LLM_API_KEY": "«redacted:sk-…»",
             "MODEL_PLANNER": "phi4-mini-reasoning:3.8b",
             "MODEL_GENERATOR": "qwen3.5:2b",
