@@ -285,6 +285,21 @@ class Orchestrator:
         )
         state = self.state
 
+        # ── Load learning engine and inject memory context ───────────
+        try:
+            from learning_engine import get_learning
+
+            learning = get_learning()
+            # Inject relevant past experiences into state.context so
+            # planner and fixer policies can see them.
+            memory_block = learning.format_for_prompt(goal, k=3)
+            state.context["memory_block"] = memory_block
+            _step("info", "Learning engine: memory context loaded")
+        except Exception as exc:
+            log.warning("orchestrator: learning engine unavailable (%s)", exc)
+            state.context["memory_block"] = ""
+            learning = None
+
         # Display pipeline overview graph
         try:
             from workflow import render_graph as _render_graph
@@ -400,6 +415,43 @@ class Orchestrator:
         self._wtf_loop(fixer, max_iterations)
 
         state.phase = "complete"
+
+        # ── Record outcome as a lesson ───────────────────────────────
+        if learning is not None:
+            try:
+                tools_used = [gf.path for gf in state.generated_files]
+                outcome_parts = []
+                if state.test_logs:
+                    n_passed = sum(1 for tl in state.test_logs if tl.passed)
+                    outcome_parts.append(
+                        f"{n_passed}/{len(state.test_logs)} tests passed"
+                    )
+                if state.generated_files:
+                    outcome_parts.append(
+                        f"{len(state.generated_files)} file(s) generated"
+                    )
+                outcome_str = "; ".join(outcome_parts) if outcome_parts else "pipeline complete"
+
+                lesson_text = ""
+                if not state.loop_passed:
+                    lesson_text = "Plan/dependencies may need closer attention before code generation"
+                elif state.iteration > 2:
+                    lesson_text = "Multiple iterations required — consider more thorough planning"
+
+                learning.record(
+                    task_type="pipeline",
+                    goal=goal[:500],
+                    approach=state.plan[:500],
+                    tools_used=tools_used,
+                    outcome=outcome_str[:500],
+                    success=state.loop_passed,
+                    lesson=lesson_text,
+                    # tags auto-extracted from goal+approach+lesson
+                )
+                _step("info", "Learning engine: outcome recorded")
+            except Exception as exc:
+                log.warning("orchestrator: failed to record lesson (%s)", exc)
+
         return state
 
     # ======================================================================

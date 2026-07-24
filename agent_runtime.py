@@ -54,6 +54,15 @@ except Exception as exc:  # pragma: no cover
         return None
 
 try:
+    from learning_engine import LearningEngine, get_learning
+except Exception as exc:  # pragma: no cover
+    log.warning("agent_runtime: learning_engine unavailable (%s)", exc)
+    LearningEngine = None  # type: ignore
+
+    def get_learning() -> None:  # type: ignore
+        return None
+
+try:
     from evaluator import evaluate, Evaluation
 except Exception as exc:  # type: ignore
     log.warning("agent_runtime: evaluator unavailable (%s)", exc)
@@ -127,10 +136,12 @@ class AgentRuntime:
         client: Any = None,
         memory: Any = None,
         config: Optional[AgentConfig] = None,
+        learning: Any = None,
     ) -> None:
         self.registry = registry or (make_builtin_registry() if make_builtin_registry else ToolRegistry())
         self.client = client
         self.memory = memory or (get_memory() if get_memory else None)
+        self.learning = learning or (get_learning() if get_learning else None)
         self.config = config or AgentConfig()
         self.transcript: list[str] = []
         self.tools_used: list[str] = []
@@ -163,9 +174,25 @@ class AgentRuntime:
             except Exception as exc:  # pragma: no cover
                 log.warning("agent: experience lookup failed: %s", exc)
 
+        # Also inject lessons from the persistent learning engine
+        learning_block = ""
+        if self.learning is not None:
+            try:
+                learning_block = self.learning.format_for_prompt(goal, k=3)
+            except Exception as exc:  # pragma: no cover
+                log.warning("agent: learning engine lookup failed: %s", exc)
+
+        # Merge both memory sources
+        combined_experience = experience_block
+        if learning_block and "none" not in learning_block.lower():
+            if combined_experience and "none" not in combined_experience.lower():
+                combined_experience += "\n" + learning_block
+            else:
+                combined_experience = learning_block
+
         system = SYSTEM_PROMPT.format(
             tool_list=self._tool_list(),
-            experience=experience_block,
+            experience=combined_experience,
         )
         messages = [
             {"role": "system", "content": system},
@@ -226,6 +253,23 @@ class AgentRuntime:
             except Exception as exc:  # pragma: no cover
                 log.warning("agent: memory write failed: %s", exc)
                 _progress("error", f"Memory write failed: {exc}")
+
+        # Also persist to the learning engine
+        if self.learning is not None:
+            try:
+                self.learning.record(
+                    task_type="agent_runtime",
+                    goal=goal[:500],
+                    approach="react-loop",
+                    tools_used=sorted(set(self.tools_used)),
+                    outcome="success" if passed else f"failed after {attempts} attempt(s)",
+                    success=passed,
+                    lesson=lessons[0] if lessons else "",
+                    session_id="",
+                )
+            except Exception as exc:  # pragma: no cover
+                log.warning("agent: learning engine write failed: %s", exc)
+                _progress("error", f"Learning engine write failed: {exc}")
 
         return AgentResult(
             goal=goal,
@@ -384,4 +428,11 @@ def build_runtime(
             memory = get_memory()
         except Exception:  # pragma: no cover
             memory = None
-    return AgentRuntime(registry=registry, client=client, memory=memory, config=config)
+    learning = None
+    if get_learning:
+        try:
+            learning = get_learning()
+        except Exception:  # pragma: no cover
+            learning = None
+    return AgentRuntime(registry=registry, client=client, memory=memory,
+                        learning=learning, config=config)

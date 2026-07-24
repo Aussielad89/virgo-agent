@@ -114,7 +114,7 @@ def _run_formatter(
     if not resolved.is_file():
         return {"ok": False, "error": f"Not a file: {path}", "path": str(resolved)}
 
-    cmd = [binary, str(resolved), *extra_args]
+    cmd = [binary, *extra_args, str(resolved)]
 
     try:
         result = subprocess.run(
@@ -166,7 +166,7 @@ def tool_format_file(path: str) -> dict[str, Any]:
         return {"ok": False, "error": str(exc), "path": path}
 
     if name == "ruff":
-        return _run_formatter(name, binary, path)
+        return _run_formatter(name, binary, path, "format")
 
     # black — no extra args needed for in-place formatting
     return _run_formatter(name, binary, path)
@@ -190,7 +190,7 @@ def tool_format_check(path: str) -> dict[str, Any]:
         return {"ok": False, "error": str(exc), "path": path}
 
     if name == "ruff":
-        result = _run_formatter(name, binary, path, "--check", "--diff")
+        result = _run_formatter(name, binary, path, "format", "--check", "--diff")
     else:
         # black --check --diff
         result = _run_formatter(name, binary, path, "--check", "--diff")

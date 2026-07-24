@@ -15,6 +15,10 @@ Usage::
     virgo version                             # show version
     virgo update                              # pull latest from git
     virgo doctor                              # run health checks
+    virgo bot start                           # start Telegram bot
+    virgo memory list                         # show learning engine memory
+    virgo analyze <file>                      # analyze a media file
+    virgo plugin create <name>                # scaffold a new plugin
 
 Chat commands: /upload <file>, /save, /history, /help, /clear
 """
@@ -25,6 +29,7 @@ import argparse
 import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 # Load .env if python-dotenv is available
@@ -35,7 +40,7 @@ try:
 except ImportError:
     pass
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -757,33 +762,118 @@ def cmd_export(args: argparse.Namespace) -> None:
 
 def cmd_plugins(args: argparse.Namespace) -> None:
     """List and load plugins."""
-    from plugins import PLUGIN_DIRS, discover, load_all
+    from _console import icon
+    from plugins import PLUGIN_DIRS, discover, list_plugins, load_all
     from tools import ToolRegistry
 
     if args.load:
         reg = ToolRegistry()
         count = load_all(reg)
         tools = reg.list()
-        print(f"\n  [virgo] Loaded {count} plugin file(s), {len(tools)} tool(s)")
+        print(f"\n  {icon('tool')}  Loaded {count} plugin file(s), {len(tools)} tool(s)")
         for t in tools:
             print(f"    → {t['name']}: {t['description'][:80]}")
         print()
         return
 
-    # List available plugin files
+    if args.list:
+        plugins = list_plugins()
+        if not plugins:
+            print(f"\n  {icon('info')}  No plugins found. Place .py files in:")
+            for d in PLUGIN_DIRS:
+                print(f"    {d}")
+            print(f"\n  Use: virgo plugins --load to load them\n")
+            return
+
+        print(f"\n  {icon('tool')}  Plugins ({len(plugins)}):\n")
+        print(f"    {'Name':20s}  {'Version':10s}  {'Loaded':8s}  {'Description'}")
+        print(f"    {'-' * 20}  {'-' * 10}  {'-' * 8}  {'-' * 40}")
+        for p in plugins:
+            meta = p["meta"]
+            loaded = icon("ok") if p["loaded"] else "—"
+            print(f"    {meta['name']:20s}  {meta['version']:10s}  {loaded:8s}  {meta['description'][:40]}")
+        print()
+        return
+
+    # List available plugin files (default)
     files = discover()
     if not files:
-        print("\n  [virgo] No plugins found. Place .py files in:")
+        print(f"\n  {icon('info')}  No plugins found. Place .py files in:")
         for d in PLUGIN_DIRS:
             print(f"    {d}")
         print("\n  Use: virgo plugins --load to load them\n")
         return
 
-    print("\n  Plugin files found:")
+    print(f"\n  {icon('file')}  Plugin files found:")
     for f in files:
         size = f.stat().st_size
         print(f"    {f.parent.name}/{f.name}  ({size} B)")
-    print("\n  Use: virgo plugins --load to load them\n")
+    print("  Use: virgo plugins --load --list to load them\n")
+
+
+def cmd_plugin_create(args: argparse.Namespace) -> None:
+    """Create a new plugin project from the plugin scaffold."""
+    from _console import icon
+
+    name = args.name or args.interactive_name
+    description = args.desc or ""
+    author = args.author or ""
+    version = args.plugin_version or "0.1.0"
+
+    # Interactive mode
+    if args.interactive:
+        try:
+            name = input(f"  Plugin name [{name}]: ").strip() or name
+            description = input(f"  Description [{description}]: ").strip() or description
+            author = input(f"  Author [{author}]: ").strip() or author
+            version = input(f"  Version [{version}]: ").strip() or version
+        except (EOFError, KeyboardInterrupt):
+            print(f"\n  {icon('warn')}  Cancelled.")
+            return
+
+    from virgo_scaffold import generate
+
+    output_dir = args.output or f"plugins/{name}"
+
+    try:
+        created = generate(
+            "plugin",
+            output_dir=output_dir,
+            name=name,
+            description=description,
+            author=author,
+            version=version,
+        )
+        print(f"\n  {icon('ok')}  Created plugin {name!r} ({len(created)} files):\n")
+        for path in created:
+            print(f"    {path}")
+        print(f"\n  {icon('arrow')}  Next steps:")
+        print(f"    1. Edit {output_dir}/{name}.py with your tool logic")
+        print(f"    2. Run: virgo plugin install {output_dir}/{name}.py")
+        print(f"    3. Run: virgo plugins --load\n")
+    except ValueError as exc:
+        print(f"  {icon('error')}  {exc}")
+
+
+def cmd_plugin_install(args: argparse.Namespace) -> None:
+    """Install a plugin from a local path or GitHub URL."""
+    from _console import icon
+    from plugins import install_plugin, install_plugin_from_github
+
+    source = args.source
+    name = args.name
+
+    # GitHub owner/repo syntax
+    if "/" in source and not source.startswith(("https://", "http://", "/", ".", "\\")) and not source.endswith(".py"):
+        path = install_plugin_from_github(source, path=args.path or "", name=name)
+    else:
+        path = install_plugin(source, name=name)
+
+    if path:
+        print(f"\n  {icon('ok')}  Plugin installed. Run 'virgo plugins --load' to load it.\n")
+    else:
+        print(f"\n  {icon('error')}  Plugin installation failed.\n")
+        sys.exit(1)
 
 
 def cmd_completion(args: argparse.Namespace) -> None:
@@ -844,6 +934,34 @@ def cmd_doc(args: argparse.Namespace) -> None:
         ]
         + (["--recursive"] if args.recursive else [])
     )
+
+
+def cmd_bot(args: argparse.Namespace) -> None:
+    """Control the Telegram bot."""
+    from virgo_bot import bot_status, is_running, start_polling, stop_polling
+
+    if args.action == "start":
+        if is_running():
+            print(f"  {icon('warn')} Bot is already running.")
+            return
+        start_polling()
+        print(f"  {icon('info')} Bot started in background. Use 'virgo bot stop' to stop.")
+    elif args.action == "stop":
+        if not is_running():
+            print(f"  {icon('warn')} Bot is not running.")
+            return
+        stop_polling()
+        print(f"  {icon('ok')} Bot stopped.")
+    elif args.action == "status":
+        st = bot_status()
+        print(f"  {icon('info')} Bot status:")
+        print(f"    Running:     {st['running']}")
+        print(f"    Started:     {st['started']}")
+        print(f"    Uptime:      {st['uptime_seconds']}s")
+        print(f"    Mode:        {st['mode']}")
+        print(f"    Token set:   {st['token_set']}")
+        print(f"    Allowed:     {st['allowed_chats']}")
+        print(f"    Poll int:    {st['poll_interval']}")
 
 
 def cmd_agent(args: argparse.Namespace) -> None:
@@ -1394,6 +1512,226 @@ def cmd_init(args: argparse.Namespace) -> None:
 
 
 # ===========================================================================
+# Media analyzer — virgo analyze
+# ===========================================================================
+
+
+def cmd_analyze(args: argparse.Namespace) -> None:
+    """Analyze a media file and return structured metadata."""
+    from _console import icon
+    import json as _json
+    from virgo_media import MediaAnalyzer
+
+    analyzer = MediaAnalyzer()
+    result = analyzer.analyze(
+        args.file,
+        vision_prompt=args.vision,
+        deep=args.deep,
+    )
+
+    if args.json:
+        print(_json.dumps(result, indent=2, default=str))
+    else:
+        # Human-readable output
+        print(f"\n  {icon('search')}  Analysis: {result.get('filename', args.file)}\n")
+        print(f"  {'Type:':15s}  {result.get('detected_type', 'unknown')} / {result.get('format', '?')}")
+        print(f"  {'MIME:':15s}  {result.get('mime', '?')}")
+        print(f"  {'Size:':15s}  {result.get('size_kb', '?')} KB")
+        meta = result.get("metadata", {})
+        if meta:
+            if "width" in meta:
+                print(f"  {'Dimensions:':15s}  {meta.get('width', '?')}x{meta.get('height', '?')}")
+            if "pages" in meta:
+                print(f"  {'Pages:':15s}  {meta.get('pages', '?')}")
+            if "text_length" in meta:
+                print(f"  {'Text length:':15s}  {meta.get('text_length', '?')} chars")
+            if "duration_sec" in meta:
+                print(f"  {'Duration:':15s}  {meta.get('duration_sec', '?')}s")
+            if "sample_rate" in meta:
+                print(f"  {'Sample rate:':15s}  {meta.get('sample_rate', '?')} Hz")
+            preview = meta.get("preview")
+            if preview:
+                print(f"\n  Preview:\n{textwrap.indent(preview[:500], '    ')}")
+        vision = result.get("vision")
+        if vision and "description" in vision:
+            print(f"\n  {icon('vision')}  Vision description:\n{textwrap.indent(vision['description'][:1000], '    ')}")
+        if "error" in result:
+            print(f"\n  {icon('error')}  Error: {result['error']}")
+        print()
+
+
+# ===========================================================================
+# Learning engine — virgo memory  subcommands
+# ===========================================================================
+
+
+def _get_learning() -> Any:
+    """Lazy-import and return the LearningEngine singleton."""
+    from learning_engine import get_learning
+
+    return get_learning()
+
+
+def cmd_memory_list(args: argparse.Namespace) -> None:
+    """List lessons in the learning database."""
+    engine = _get_learning()
+    success: bool | None = None
+    if getattr(args, "only_fail", None):
+        success = False
+    elif getattr(args, "success", None):
+        success = True
+
+    lessons = engine.list(
+        limit=args.limit,
+        offset=args.offset,
+        task_type=args.task_type or None,
+        success=success,
+    )
+    if not lessons:
+        print(f"\n  {icon('info')}  No lessons found.\n")
+        return
+
+    print(f"\n  {icon('history')}  Lessons ({len(lessons)}):\n")
+    print(f"  {'ID':>4s}  {'Type':14s}  {'Success':8s}  {'Created':20s}  {'Goal'}")
+    print(f"  {'-'*4}  {'-'*14}  {'-'*8}  {'-'*20}  {'-'*40}")
+    for entry in lessons:
+        status = icon("ok") if entry.get("success") else icon("fail")
+        type_s = (entry.get("task_type") or "")[:14]
+        goal_s = (entry.get("goal") or "")[:60]
+        created = (entry.get("created_at_iso") or "")[:19]
+        print(
+            f"  {entry['id']:>4d}  {type_s:14s}  {status:8s}  {created:20s}  {goal_s}"
+        )
+    print(f"\n  Use: virgo memory show <id>  to see full details.\n")
+
+
+def cmd_memory_show(args: argparse.Namespace) -> None:
+    """Show a single lesson in detail."""
+    engine = _get_learning()
+    entry = engine.get(args.id)
+    if entry is None:
+        print(f"\n  {icon('error')}  Lesson #{args.id} not found.\n")
+        return
+
+    status = icon("ok") if entry.get("success") else icon("fail")
+    print(f"\n  {icon('history')}  Lesson #{entry['id']}  {status}\n")
+    print(f"  {'Task type:':20s}  {entry.get('task_type', '')}")
+    print(f"  {'Created:':20s}  {entry.get('created_at_iso', '')}")
+    print(f"  {'Session:':20s}  {entry.get('session_id', '')}")
+    print(f"  {'Success:':20s}  {str(entry.get('success', False))}")
+    print(f"  {'Goal:':20s}  {entry.get('goal', '')}")
+    print(f"  {'Approach:':20s}  {entry.get('approach', '')}")
+    print(f"  {'Outcome:':20s}  {entry.get('outcome', '')[:200] or '(none)'}")
+    print(f"  {'Lesson:':20s}  {entry.get('lesson', '')[:200] or '(none)'}")
+    tools = entry.get("tools_used", [])
+    if tools:
+        print(f"  {'Tools:':20s}  {', '.join(tools)}")
+    tags = entry.get("tags", [])
+    if tags:
+        print(f"  {'Tags:':20s}  {', '.join(tags)}")
+    expires = entry.get("expires_at_iso")
+    if expires:
+        print(f"  {'Expires:':20s}  {expires}")
+    print()
+
+
+def cmd_memory_search(args: argparse.Namespace) -> None:
+    """Full-text search across lessons."""
+    engine = _get_learning()
+    query = " ".join(args.query)
+    results = engine.search(query, limit=args.limit)
+    if not results:
+        # Fall back to keyword overlap
+        results = engine.search_by_keywords(query, limit=args.limit)
+
+    if not results:
+        print(f"\n  {icon('search')}  No results for {query!r}.\n")
+        return
+
+    print(
+        f"\n  {icon('search')}  Found {len(results)} result(s) for {query!r}:\n"
+    )
+    print(f"  {'ID':>4s}  {'Score':6s}  {'Success':8s}  {'Goal'}")
+    print(f"  {'-'*4}  {'-'*6}  {'-'*8}  {'-'*60}")
+    for entry in results:
+        status = icon("ok") if entry.get("success") else icon("fail")
+        score = entry.get("_score", 0.0)
+        goal_s = (entry.get("goal") or "")[:60]
+        print(f"  {entry['id']:>4d}  {score:.4f}  {status:8s}  {goal_s}")
+    print()
+
+
+def cmd_memory_stats(args: argparse.Namespace) -> None:
+    """Show aggregate statistics about the learning database."""
+    engine = _get_learning()
+    s = engine.stats()
+    print(f"\n  {icon('brain')}  Learning Engine Statistics\n")
+    print(f"  {'Total lessons:':30s}  {s['total']}")
+    print(f"  {'Successful:':30s}  {s['successes']}")
+    print(f"  {'Failed:':30s}  {s['failures']}")
+    print(f"  {'Success rate:':30s}  {s['success_rate']*100:.1f}%")
+    print(f"  {'Recent (7 days):':30s}  {s['recent_7d']}")
+    print(f"  {'Expired (prunable):':30s}  {s['expired']}")
+    if s["task_types"]:
+        print(f"\n  {'Per task type':30s}")
+        for ttype, info in sorted(s["task_types"].items()):
+            rate = (
+                round(info["successes"] / info["count"] * 100, 1)
+                if info["count"]
+                else 0.0
+            )
+            print(f"    {ttype:28s}  {info['count']:4d} total, {rate:5.1f}% success")
+    print()
+
+
+def cmd_memory_prune(args: argparse.Namespace) -> None:
+    """Remove old or expired lessons."""
+    engine = _get_learning()
+
+    if not args.force:
+        s = engine.stats()
+        expired = s["expired"]
+        print(
+            f"\n  {icon('warn')}  This will remove lessons older than {args.older_than} days"
+        )
+        print(f"  ({expired} already expired).")
+        answer = (
+            input("  >>> Continue? (y/N): ").strip().lower()
+        )
+        if answer not in ("y", "yes"):
+            print(f"  {icon('info')}  Prune cancelled.\n")
+            return
+
+    deleted = engine.prune(older_than_days=args.older_than)
+    print(f"\n  {icon('done')}  Pruned {deleted} lesson(s).\n")
+
+
+def cmd_memory_rebuild_fts(_args: argparse.Namespace) -> None:
+    """Rebuild the FTS search index."""
+    engine = _get_learning()
+    engine.rebuild_fts()
+    print(f"\n  {icon('refresh')}  Full-text search index rebuilt.\n")
+
+
+def cmd_memory_record(args: argparse.Namespace) -> None:
+    """Manually record a lesson (useful for testing)."""
+    engine = _get_learning()
+    success = not getattr(args, "as_fail", False)
+    entry = engine.record(
+        task_type=args.task_type,
+        goal=args.goal,
+        lesson=args.lesson,
+        success=success,
+    )
+    print(f"\n  {icon('save')}  Recorded lesson #{entry['id']}\n")
+    if entry.get("goal"):
+        print(f"  Goal:   {entry['goal'][:120]}")
+    if entry.get("lesson"):
+        print(f"  Lesson: {entry['lesson'][:120]}")
+    print()
+
+
+# ===========================================================================
 # Argument parser
 # ===========================================================================
 
@@ -1609,7 +1947,33 @@ def main() -> None:
     p_plug.add_argument(
         "--load", "-l", action="store_true", help="Load all plugins and show registered tools"
     )
+    p_plug.add_argument(
+        "--list", action="store_true", help="Show detailed metadata about all plugins"
+    )
     p_plug.set_defaults(func=cmd_plugins)
+
+    # plugin (create / install)
+    p_plugin = sub.add_parser("plugin", help="Create or install plugins")
+    pplugin_sub = p_plugin.add_subparsers(dest="plugin_command", required=True)
+
+    p_create = pplugin_sub.add_parser("create", help="Scaffold a new plugin project")
+    p_create.add_argument("name", nargs="?", default="my_plugin", help="Plugin name")
+    p_create.add_argument("--desc", "-d", default="", help="Plugin description")
+    p_create.add_argument("--author", "-a", default="", help="Plugin author")
+    p_create.add_argument("--plugin-version", "-v", default="0.1.0", help="Plugin version (default: 0.1.0)")
+    p_create.add_argument(
+        "--output", "-o", default=None, help="Output directory (default: plugins/<name>)"
+    )
+    p_create.add_argument(
+        "--interactive", "-i", action="store_true", help="Interactive mode with prompts"
+    )
+    p_create.set_defaults(func=cmd_plugin_create)
+
+    p_install = pplugin_sub.add_parser("install", help="Install a plugin from path or GitHub")
+    p_install.add_argument("source", help="Local .py file path, URL, or GitHub owner/repo")
+    p_install.add_argument("--name", "-n", default=None, help="Target filename (default: source filename)")
+    p_install.add_argument("--path", "-p", default="", help="Path within GitHub repo to plugin file")
+    p_install.set_defaults(func=cmd_plugin_install)
 
     # scaffold
     p_scaffold = sub.add_parser("scaffold", help="Generate project from a scaffold")
@@ -1744,9 +2108,82 @@ def main() -> None:
     p_cls = sub.add_parser("chat-ls", help="List saved chat sessions")
     p_cls.set_defaults(func=lambda _: _list_chats(HERE / ".virgo_memory" / "chats"))
 
+    # bot — Telegram bot control
+    p_bot = sub.add_parser("bot", help="Control the Telegram bot")
+    p_bot.add_argument(
+        "action",
+        choices=["start", "stop", "status"],
+        help="Action: start, stop, or status",
+    )
+    p_bot.set_defaults(func=cmd_bot)
+
+    # analyze — media file analysis
+    p_analyze = sub.add_parser("analyze", help="Analyze a media file (image, PDF, audio)")
+    p_analyze.add_argument("file", help="Path to the file to analyze")
+    p_analyze.add_argument(
+        "--vision", "-v", default=None, help="Prompt for LLM-based image description"
+    )
+    p_analyze.add_argument(
+        "--deep", "-d", action="store_true", help="Enable deep analysis (LLM vision)"
+    )
+    p_analyze.add_argument("--json", "-j", action="store_true", help="Output as JSON")
+    p_analyze.set_defaults(func=cmd_analyze)
+
+    # memory
+    p_mem = sub.add_parser("memory", help="Inspect and manage the learning engine memory")
+    mem_sub = p_mem.add_subparsers(dest="memory_command", required=False)
+
+    # memory list
+    p_mem_list = mem_sub.add_parser("list", help="List recent lessons")
+    p_mem_list.add_argument("--limit", "-l", type=int, default=20, help="Max rows (default: 20)")
+    p_mem_list.add_argument("--offset", "-o", type=int, default=0, help="Offset (default: 0)")
+    p_mem_list.add_argument("--task-type", "-t", default=None, help="Filter by task type")
+    p_mem_list.add_argument("--success", action="store_true", default=None, help="Only successful")
+    p_mem_list.add_argument("--fail", action="store_true", dest="only_fail", default=None, help="Only failures")
+    p_mem_list.set_defaults(memory_func=cmd_memory_list)
+
+    # memory show
+    p_mem_show = mem_sub.add_parser("show", help="Show a single lesson by ID")
+    p_mem_show.add_argument("id", type=int, help="Lesson ID")
+    p_mem_show.set_defaults(memory_func=cmd_memory_show)
+
+    # memory search
+    p_mem_search = mem_sub.add_parser("search", help="Full-text search lessons")
+    p_mem_search.add_argument("query", nargs="+", help="Search terms (FTS5 syntax: AND is default)")
+    p_mem_search.add_argument("--limit", "-l", type=int, default=10, help="Max results (default: 10)")
+    p_mem_search.set_defaults(memory_func=cmd_memory_search)
+
+    # memory stats
+    p_mem_stats = mem_sub.add_parser("stats", help="Show memory statistics")
+    p_mem_stats.set_defaults(memory_func=cmd_memory_stats)
+
+    # memory prune
+    p_mem_prune = mem_sub.add_parser("prune", help="Remove old or expired lessons")
+    p_mem_prune.add_argument("--older-than", type=int, default=90, help="Days (default: 90)")
+    p_mem_prune.add_argument("--force", action="store_true", help="Skip confirmation prompt")
+    p_mem_prune.set_defaults(memory_func=cmd_memory_prune)
+
+    # memory rebuild-fts
+    p_mem_fts = mem_sub.add_parser("rebuild-fts", help="Rebuild the full-text search index")
+    p_mem_fts.set_defaults(memory_func=cmd_memory_rebuild_fts)
+
+    # memory record (for testing / manual entry)
+    p_mem_rec = mem_sub.add_parser("record", help="Manually record a lesson")
+    p_mem_rec.add_argument("--goal", "-g", default="", help="Goal text")
+    p_mem_rec.add_argument("--lesson", "-l", default="", help="Lesson text")
+    p_mem_rec.add_argument("--task-type", "-t", default="manual", help="Task type (default: manual)")
+    p_mem_rec.add_argument("--success", action="store_true", default=True, help="Mark as success")
+    p_mem_rec.add_argument("--fail", action="store_true", dest="as_fail", default=False, help="Mark as failure")
+    p_mem_rec.set_defaults(memory_func=cmd_memory_record)
+
     args = parser.parse_args()
     if args.version:
         cmd_version(args)
+    elif args.command == "memory":
+        if hasattr(args, "memory_func") and args.memory_func:
+            args.memory_func(args)
+        else:
+            p_mem.print_help()
     elif args.command is None:
         cmd_menu(args)
     else:

@@ -2,6 +2,22 @@
 
 All notable changes to virgo-agent are documented here.
 
+## 0.7.0 (2026-07-24)
+
+### Added
+- **Agent Memory & Learning Engine** (`learning_engine.py`) — persistent SQLite-backed learning that records outcomes per task type, auto-injects relevant lessons into new runs, and improves planning/generation/fixing over time. CLI: `virgo memory list|show|search|stats|prune|record`
+- **Plugin SDK** (`virgo plugin create`) — scaffold generator for new plugins, hot-reload support, `__plugin_meta__` metadata system, plugin install command. New scaffold: `plugin`
+- **Telegram Bot** (`virgo_bot.py`, `telegram_bot_plugin.py`) — full bot with `/run`, `/chat`, `/alerts`, `/search` commands. Pure-urllib fallback mode (no deps required) or full `python-telegram-bot` backend. CLI: `virgo bot start|stop|status`
+- **Multi-modal Media Analyzer** (`virgo_media.py`) — file type detection via magic bytes, image analysis (PIL or header-based), PDF text extraction (PyMuPDF or pdftotext), audio metadata (mutagen or WAV header). CLI: `virgo analyze <file>` with `--json`, `--vision`, `--deep` flags
+- `media_analyzer` tool registered in the tool registry
+- `file_sampler` now delegates to `virgo_media` for image/PDF/audio files
+- `[bot]` and `[media]` optional dependency groups in `pyproject.toml`
+- Desktop test fix — skip PyQt6-dependent tests when PyQt6 not installed
+
+### Changed
+- Version bumped from 0.6.0 to 0.7.0
+- `setup.py` includes all new modules (`learning_engine`, `virgo_media`, `virgo_bot`, `telegram_bot_plugin`, `_rag`)
+
 ## 0.5.1 (2026-07-16)
 
 ### Added

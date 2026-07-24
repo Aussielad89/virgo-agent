@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "virgo-agent"
-version = "0.6.0"
+version = "0.7.0"
 description = "Multi-agent state machine with diagnostics, search, and auto-fix"
 readme = "README.md"
 license = "MIT"
@@ -23,6 +23,8 @@ authors = [
 web = ["fastapi", "uvicorn", "jinja2", "sse-starlette"]
 desktop = ["PyQt6>=6.6", "psutil>=5.9"]
 dev = ["pytest>=7", "pytest-cov>=4", "pytest-xdist>=3", "mypy>=1", "ruff>=0.5"]
+bot = ["python-telegram-bot>=21"]
+media = ["Pillow>=10", "PyMuPDF>=1.23", "mutagen>=1.47"]
 
 [tool.ruff]
 line-length = 100

@@ -90,6 +90,7 @@ class ToolRegistry:
         self.register(self._make_file_sampler())
         self.register(self._make_code_patcher(env))
         self.register(self._make_check_local_port())
+        self.register(self._make_media_analyzer())
         self.register(self._make_web_fetch())
         self.register(self._make_git_tool())
         self.register(self._make_db_sampler())
@@ -142,6 +143,19 @@ class ToolRegistry:
             description=(
                 "Test whether a TCP port on a given host is open and "
                 "accepting connections. Uses a 1-second timeout."
+            ),
+        )
+
+    @staticmethod
+    def _make_media_analyzer() -> Tool:
+        return Tool(
+            name="media_analyzer",
+            fn=_media_analyzer,
+            description=(
+                "Analyze a media file (image, PDF, audio, video, or binary) "
+                "and return structured metadata including type detection, "
+                "dimensions, text content, and file properties. "
+                "Usage: media_analyzer(file_path='image.png', deep=False)"
             ),
         )
 
@@ -438,6 +452,17 @@ def _file_sampler(
         return _sample_jsonl(path, sample_size, encoding)
     if ext == ".py":
         return _sample_python(path, sample_size, encoding)
+
+    # Media files — use virgo_media for rich analysis
+    if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".pdf", ".mp3", ".wav", ".flac"):
+        try:
+            from virgo_media import MediaAnalyzer
+
+            analyzer = MediaAnalyzer(enable_vision=False)
+            return analyzer.analyze(file_path)
+        except Exception as exc:
+            return _sample_text(path, sample_size, encoding) | {"media_error": str(exc)}
+
     return _sample_text(path, sample_size, encoding)
 
 
@@ -572,6 +597,18 @@ def _check_local_port(
         return f"FAILED: Port {port} on {host} is closed or unreachable."
     finally:
         sock.close()
+
+
+def _media_analyzer(
+    file_path: str,
+    deep: bool = False,
+    vision_prompt: str | None = None,
+) -> dict[str, Any]:
+    """Analyze a media file using the virgo_media module."""
+    from virgo_media import MediaAnalyzer
+
+    analyzer = MediaAnalyzer()
+    return analyzer.analyze(file_path, vision_prompt=vision_prompt, deep=deep)
 
 
 # ===========================================================================

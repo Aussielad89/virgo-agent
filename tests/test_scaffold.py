@@ -45,6 +45,7 @@ class TestListScaffolds:
         assert "flask-app" in names
         assert "python-lib" in names
         assert "agent-tool" in names
+        assert "plugin" in names
 
     def test_each_has_required_keys(self) -> None:
         for s in list_scaffolds():
@@ -153,6 +154,30 @@ class TestGenerate:
         assert Path("virgo_custom.py") in paths
         assert Path("tests/test_virgo_custom.py") in paths
 
+    def test_plugin_scaffold(self, tmp_dir: Path) -> None:
+        """Plugin scaffold generates py file, README, and test file."""
+        created = generate(
+            "plugin",
+            output_dir=str(tmp_dir),
+            name="my_test_plugin",
+            description="A test plugin",
+            author="Tester",
+            version="0.2.0",
+        )
+        paths = [p.relative_to(tmp_dir) for p in created]
+        assert Path("my_test_plugin.py") in paths
+        assert Path("README.md") in paths
+        assert Path("tests/test_my_test_plugin.py") in paths
+
+        # Verify template substitution worked
+        plugin_code = (tmp_dir / "my_test_plugin.py").read_text(encoding="utf-8")
+        assert "my_test_plugin" in plugin_code
+        assert "A test plugin" in plugin_code
+        assert "Tester" in plugin_code
+        assert "0.2.0" in plugin_code
+        assert "__plugin_meta__" in plugin_code
+        assert "def register(" in plugin_code
+
     def test_unknown_scaffold_raises(self, tmp_dir: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
             generate("unknown-scaffold", output_dir=str(tmp_dir))
@@ -198,6 +223,7 @@ class TestGeneratedCodeSanity:
             ("flask-app", {"project_name": "sanityweb", "app_title": "Test"}),
             ("python-lib", {"project_name": "sanitylib", "lib_description": "test"}),
             ("agent-tool", {"module_name": "virgo_sanity", "tool_description": "test"}),
+            ("plugin", {"name": "sanity_plugin", "description": "test", "author": "tester", "version": "0.1.0"}),
         ],
     )
     def test_generated_python_is_valid_syntax(

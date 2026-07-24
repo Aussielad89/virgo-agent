@@ -7,6 +7,10 @@ regressions without requiring a display.
 
 import importlib
 
+import pytest
+
+pytest.importorskip("PyQt6")
+
 
 def test_pages_module_imports():
     mod = importlib.import_module("virgo_desktop_pages")

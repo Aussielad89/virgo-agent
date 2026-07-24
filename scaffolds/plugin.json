@@ -1,0 +1,17 @@
+{
+  "name": "plugin",
+  "version": "0.1.0",
+  "description": "Virgo plugin — a self-contained tool plugin following the plugin SDK conventions",
+  "dependencies": [],
+  "prompts": {
+    "name": "my_plugin",
+    "description": "My custom virgo plugin",
+    "author": "Anonymous",
+    "version": "0.1.0"
+  },
+  "files": {
+    "{{name}}.py": "\"\"\"\n{{name}} — {{description}}.\n\nA Virgo plugin that registers tools with the plugin registry.\n\nUsage\n-----\nPlace in a `plugins/` directory or install with:\n    virgo plugin install ./{{name}}.py\n\nThen load with:\n    virgo plugins --load\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom typing import Any\n\n__plugin_meta__ = {\n    \"name\": \"{{name}}\",\n    \"version\": \"{{version}}\",\n    \"description\": \"{{description}}\",\n    \"author\": \"{{author}}\",\n}\n\n\ndef register(registry: Any) -> None:\n    \"\"\"Register this plugin's tools with the tool registry.\n\n    Parameters\n    ----------\n    registry : ToolRegistry\n        The virgo tool registry instance. Call ``registry.register()``\n        with ``Tool`` instances to make them available.\n    \"\"\"\n    from tools import Tool\n\n    registry.register(\n        Tool(\n            name=\"{{name}}_hello\",\n            fn=hello_world,\n            description=\"A simple hello-world tool from {{name}}\",\n        )\n    )\n\n\ndef hello_world(name: str = \"World\") -> str:\n    \"\"\"Return a friendly greeting.\"\"\"\n    return f\"Hello, {name}!\"\n",
+    "README.md": "# {{name}}\n\n## Description\n\n{{description}}\n\n## Author\n\n{{author}}\n\n## Version\n\n{{version}}\n\n## Usage\n\n1. Place `{{name}}.py` in a Virgo plugin directory (e.g. `plugins/`)\n2. Run `virgo plugins --load` to load it\n3. The registered tools become available in the tool registry\n\n## Tools\n\n| Tool Name | Description |\n|-----------|-------------|\n| `{{name}}_hello` | Returns a greeting from the plugin |\n\n## Development\n\n```bash\n# Run tests\npython -m pytest tests/test_{{name}}.py -v\n```\n",
+    "tests/test_{{name}}.py": "\"\"\"\nTests for the {{name}} plugin.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport pytest\nfrom unittest.mock import MagicMock\n\nfrom {{name}} import __plugin_meta__, hello_world, register\n\n\nclass TestPluginMeta:\n    \"\"\"Verify plugin metadata is well-formed.\"\"\"\n\n    def test_has_plugin_meta(self) -> None:\n        assert \"name\" in __plugin_meta__\n        assert \"version\" in __plugin_meta__\n        assert \"description\" in __plugin_meta__\n        assert \"author\" in __plugin_meta__\n\n    def test_name_matches(self) -> None:\n        assert __plugin_meta__[\"name\"] == \"{{name}}\"\n\n    def test_version_format(self) -> None:\n        import re\n\n        assert re.match(r\"^\\d+\\.\\d+\\.\\d+\", __plugin_meta__[\"version\"])\n\n\nclass TestRegister:\n    \"\"\"Verify the register function works correctly.\"\"\"\n\n    def test_register_adds_tool(self) -> None:\n        registry = MagicMock()\n        register(registry)\n        assert registry.register.called\n\n    def test_hello_world_default(self) -> None:\n        assert hello_world() == \"Hello, World!\"\n\n    def test_hello_world_custom(self) -> None:\n        assert hello_world(name=\"Virgo\") == \"Hello, Virgo!\"\n"
+  }
+}
