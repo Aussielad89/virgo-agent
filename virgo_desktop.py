@@ -161,14 +161,18 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     #sidebar {
         background-color: @surface@;
         border-right: 1px solid @border@;
+        border-left: 3px solid qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @accent@, stop:1 @accent2@);
     }
     #sidebarTitle {
         color: @accent@;
         padding: 0 4px;
     }
     #sidebarHeader {
-        background-color: @surface@;
-        border-bottom: 1px solid @border@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 @accent@25, stop:0.4 @surface@, stop:0.6 @surface@, stop:1 @accent2@18);
+        border-bottom: 2px solid qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 @accent@, stop:1 @accent2@);
         border-radius: 8px;
         padding: 6px;
     }
@@ -194,6 +198,9 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     #sidebar QPushButton:hover {
         background: @border@;
         color: @text@;
+        border-left: 3px solid qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @accent@, stop:1 @accent2@);
+        padding-left: 9px;
     }
     #sidebar QPushButton:checked {
         background: @sidebar_active@;
@@ -243,6 +250,8 @@ def _build_stylesheet(t: dict[str, str]) -> str:
         background: @sidebar_active@;
         color: @accent@;
         font-weight: bold;
+        border-right: 2px solid qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @accent@, stop:1 transparent);
     }
     #pageArea {
         background-color: @bg@;

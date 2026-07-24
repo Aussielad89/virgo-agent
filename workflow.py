@@ -16,6 +16,26 @@ import time
 # Pipeline graph definition
 # ===========================================================================
 
+# ANSI colour constants for phase labels
+_CY = "\033[36m"
+_BLU = "\033[34m"
+_YLW = "\033[33m"
+_MAG = "\033[35m"
+_RED = "\033[31m"
+_GRN = "\033[32m"
+_RST = "\033[0m"
+
+_PHASE_COLORS = {
+    "discover": _CY,
+    "plan": _BLU,
+    "approve": _BLU,
+    "generate": _YLW,
+    "critic": _MAG,
+    "deps": _YLW,
+    "test": _MAG,
+    "complete": _GRN,
+}
+
 PHASES = [
     ("discover", "Discover", "🔍"),
     ("plan", "Plan", "🧠"),
@@ -66,7 +86,8 @@ def render_graph(current_phase: str, passed: bool | None = None) -> str:
     for i, (key, name, icon) in enumerate(phases):
         status = _phase_status(key, current_phase, passed)
         bar = _progress_bar(i, len(phases), key, current_phase, passed, width - 10)
-        lines.append(f"   {icon}  {name:12s}  {status:12s}  {bar}")
+        colour = _PHASE_COLORS.get(key, "")
+        lines.append(f"   {colour}{icon}{_RST}  {colour}{name:12s}{_RST}  {status:12s}  {bar}")
 
     lines.append("  " + sep * (width - 4))
     lines.append("")

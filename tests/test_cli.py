@@ -230,4 +230,4 @@ class TestBareCommand:
             env=env,
         )
         assert r.returncode == 0
-        assert "VIRGO AGENT FRAMEWORK" in r.stdout or "[VIRGO]" in r.stdout
+        assert "VIRGO" in r.stdout

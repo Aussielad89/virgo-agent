@@ -227,6 +227,8 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 def cmd_serve(args: argparse.Namespace) -> None:
     """Launch the web dashboard."""
+    print_logo()
+
     from server import serve
 
     serve(host=args.host, port=args.port)

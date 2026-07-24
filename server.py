@@ -52,83 +52,261 @@ _LAYOUT = """\
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
   <style>
     {% raw %}
+    :root {
+      --bg: #1e1e2e;
+      --surface: #313244;
+      --overlay: #45475a;
+      --text: #cdd6f4;
+      --subtext: #a6adc8;
+      --accent: #89b4fa;
+      --accent2: #a6e3a1;
+      --red: #f38ba8;
+      --yellow: #f9e2af;
+      --cyan: #94e2d5;
+      --mantle: #181825;
+      --crust: #11111b;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
     * { margin:0; padding:0; box-sizing:border-box; }
     body {
-      background:#0d0d12; color:#c0c0d0; font-family:system-ui,sans-serif;
-      padding:2rem;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
     }
-    .container { max-width:960px; margin:0 auto; }
-    h1 { font-size:1.5rem; font-weight:600; color:#00ffff; margin-bottom:0.25rem; }
-    h2 { font-size:1.1rem; font-weight:500; color:#fff; margin:1.5rem 0 0.5rem; }
-    .sub { color:#888; font-size:0.85rem; margin-bottom:1.5rem; }
-    table { width:100%; border-collapse:collapse; font-size:0.85rem; }
-    th,td { text-align:left; padding:0.5rem 0.75rem; border-bottom:1px solid #1e1e2a; }
-    th { color:#00ffff; font-weight:500; }
-    tr:hover td { background:#14141e; }
+    a { color: var(--accent); text-decoration: none; transition: color 0.2s ease; }
+    a:hover { color: var(--cyan); text-decoration: underline; }
+    /* Header */
+    .header {
+      background: var(--crust);
+      border-bottom: 1px solid var(--surface);
+      padding: 0.75rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-logo { display: flex; align-items: center; }
+    .header-logo svg { height: 32px; width: auto; display: block; }
+    .header-nav {
+      display: flex;
+      gap: 0.5rem;
+      margin-left: auto;
+      align-items: center;
+    }
+    .header-nav a {
+      color: var(--subtext);
+      text-decoration: none;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.85rem;
+      border-radius: var(--radius-sm);
+      transition: all 0.2s ease;
+      font-weight: 500;
+    }
+    .header-nav a:hover {
+      color: var(--text);
+      background: var(--surface);
+      text-decoration: none;
+    }
+    /* Container */
+    .container { max-width: 960px; margin: 0 auto; padding: 2rem; }
+    h1 {
+      font-size: 1.5rem; font-weight: 700; color: var(--text);
+      margin-bottom: 0.25rem; letter-spacing: -0.02em;
+    }
+    h2 {
+      font-size: 1.1rem; font-weight: 600; color: var(--text);
+      margin: 1.5rem 0 0.75rem; letter-spacing: -0.01em;
+    }
+    .sub { color: var(--subtext); font-size: 0.85rem; margin-bottom: 1.5rem; }
+    .sub a { color: var(--accent); }
+    /* Tables */
+    table {
+      width: 100%; border-collapse: separate; border-spacing: 0;
+      font-size: 0.85rem; overflow: hidden; border-radius: var(--radius-sm);
+    }
+    th, td { text-align: left; padding: 0.65rem 0.85rem; }
+    th {
+      background: var(--mantle); color: var(--accent); font-weight: 600;
+      font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    th:first-child { border-radius: var(--radius-sm) 0 0 0; }
+    th:last-child { border-radius: 0 var(--radius-sm) 0 0; }
+    td { background: var(--surface); border-bottom: 1px solid var(--mantle); }
+    tr:last-child td:first-child { border-radius: 0 0 0 var(--radius-sm); }
+    tr:last-child td:last-child { border-radius: 0 0 var(--radius-sm) 0; }
+    tr:hover td { background: var(--overlay); transition: background 0.15s ease; }
+    /* Badges */
     .badge {
-      display:inline-block; padding:0.15rem 0.5rem; border-radius:4px;
-      font-size:0.75rem; font-weight:600;
+      display: inline-block; padding: 0.15rem 0.55rem; border-radius: 6px;
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.02em;
     }
-    .badge-pass { background:#003322; color:#00ff88; }
-    .badge-fail { background:#330011; color:#ff4466; }
-    .badge-run  { background:#002233; color:#00ccff; }
-    .badge-info { background:#222233; color:#8888ff; }
+    .badge-pass { background: rgba(166,227,161,0.15); color: var(--accent2); }
+    .badge-fail { background: rgba(243,139,168,0.15); color: var(--red); }
+    .badge-run  { background: rgba(137,180,250,0.15); color: var(--accent); }
+    .badge-info { background: rgba(148,226,213,0.15); color: var(--cyan); }
+    /* Log box */
     .log-box {
-      background:#0a0a0f; border:1px solid #1a1a2a; border-radius:6px;
-      padding:1rem; font-family:"JetBrains Mono","Fira Code",monospace;
-      font-size:0.8rem; line-height:1.5; max-height:500px; overflow-y:auto;
-      white-space:pre-wrap; margin-top:0.5rem;
+      background: var(--crust); border: 1px solid var(--surface);
+      border-radius: var(--radius-sm); padding: 1rem;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 0.78rem; line-height: 1.6; max-height: 500px;
+      overflow-y: auto; white-space: pre-wrap; margin-top: 0.5rem;
+      scrollbar-width: thin; scrollbar-color: var(--overlay) transparent;
     }
-    .log-line { color:#888; }
-    .log-line:hover { color:#fff; }
-    .log-ts { color:#555; font-size:0.7rem; }
-    a { color:#00ccff; text-decoration:none; }
-    a:hover { text-decoration:underline; }
-    .nav { display:flex; gap:1.5rem; margin-bottom:1.5rem; align-items:center; }
-    .nav a { font-size:0.9rem; }
+    .log-line { color: var(--subtext); }
+    .log-line:hover { color: var(--text); }
+    .log-ts { color: var(--overlay); font-size: 0.65rem; }
     .status-dot {
-      display:inline-block; width:8px; height:8px; border-radius:50%;
-      margin-right:0.4rem;
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      margin-right: 0.4rem; transition: all 0.2s ease;
     }
-    .dot-green { background:#00ff88; }
-    .dot-red   { background:#ff4466; }
-    .dot-blue  { background:#00ccff; }
-    .empty { color:#555; font-style:italic; }
+    .dot-green { background: var(--accent2); box-shadow: 0 0 6px rgba(166,227,161,0.4); }
+    .dot-red   { background: var(--red); box-shadow: 0 0 6px rgba(243,139,168,0.4); }
+    .dot-blue  { background: var(--accent); box-shadow: 0 0 6px rgba(137,180,250,0.4); }
+    .empty { color: var(--overlay); font-style: italic; }
+    /* Forms */
     input, button, select {
-      background:#1a1a2a; color:#c0c0d0; border:1px solid #2a2a3a;
-      padding:0.5rem 0.75rem; border-radius:4px; font-size:0.85rem;
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--overlay); padding: 0.55rem 0.85rem;
+      border-radius: var(--radius-sm); font-size: 0.85rem;
+      font-family: inherit; transition: all 0.2s ease;
     }
+    input:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(137,180,250,0.15); }
     button {
-      background:#00ccff; color:#0d0d12; font-weight:600; cursor:pointer;
-      border:none; padding:0.5rem 1rem;
+      background: var(--accent); color: var(--crust); font-weight: 600;
+      cursor: pointer; border: none; padding: 0.55rem 1.1rem;
+      border-radius: var(--radius-sm); transition: all 0.2s ease;
     }
-    button:hover { background:#00ffff; }
-    button:disabled { opacity:0.5; cursor:not-allowed; }
-    .run-form { display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap; }
-    .run-form input { flex:1; min-width:200px; }
-    .stats { display:flex; gap:1.5rem; margin:1rem 0; }
-    .stat-card { background:#14141e; border:1px solid #1e1e2a; border-radius:6px;
-                  padding:0.75rem 1rem; flex:1; }
-    .stat-card .num { font-size:1.5rem; font-weight:700; color:#00ffff; }
-    .stat-card .lbl { font-size:0.75rem; color:#888; }
+    button:hover {
+      background: var(--cyan); transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(148,226,213,0.25);
+    }
+    button:active { transform: translateY(0); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+    .run-form { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+    .run-form input { flex: 1; min-width: 200px; }
+    /* Stat cards */
+    .stats { display: flex; gap: 1rem; margin: 1rem 0; }
+    .stat-card {
+      background: var(--surface); border: 1px solid var(--overlay);
+      border-radius: var(--radius); padding: 1.1rem 1.25rem;
+      flex: 1; position: relative; overflow: hidden;
+      transition: all 0.25s ease;
+    }
+    .stat-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0;
+      height: 3px; border-radius: var(--radius) var(--radius) 0 0;
+    }
+    .stat-card:nth-child(1)::before { background: linear-gradient(90deg, var(--accent), var(--cyan)); }
+    .stat-card:nth-child(2)::before { background: linear-gradient(90deg, var(--accent2), var(--cyan)); }
+    .stat-card:nth-child(3)::before { background: linear-gradient(90deg, var(--yellow), var(--red)); }
+    .stat-card:nth-child(4)::before { background: linear-gradient(90deg, var(--cyan), var(--accent)); }
+    .stat-card:hover {
+      border-color: var(--accent); transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
+    .stat-card .num { font-size: 1.6rem; font-weight: 800; color: var(--text); letter-spacing: -0.03em; }
+    .stat-card .lbl { font-size: 0.7rem; color: var(--subtext); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 0.2rem; }
+    /* Toast */
     .toast {
-      position:fixed; bottom:2rem; right:2rem; background:#1a1a2a;
-      border:1px solid #2a2a3a; border-radius:6px; padding:0.75rem 1rem;
-      font-size:0.85rem; display:none; z-index:1000;
+      position: fixed; bottom: 2rem; right: 2rem; background: var(--surface);
+      border: 1px solid var(--overlay); border-radius: var(--radius-sm);
+      padding: 0.85rem 1.1rem; font-size: 0.85rem; display: none;
+      z-index: 1000; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     }
+    /* Quick buttons */
+    .quick-btns { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .quick-btns button {
+      background: var(--surface); color: var(--subtext);
+      border: 1px solid var(--overlay); font-weight: 500;
+      transform: none; box-shadow: none;
+    }
+    .quick-btns button:hover {
+      background: var(--overlay); color: var(--text);
+      border-color: var(--accent); transform: translateY(-1px);
+    }
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--overlay); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--subtext); }
     {% endraw %}
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="nav">
+  <div class="header">
+    <div class="header-logo">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" height="32" style="width:auto;display:block;">
+        <defs>
+          <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#00d9ff" stop-opacity="0.9"/>
+            <stop offset="100%" stop-color="#00d9ff" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="glowWhite" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.8"/>
+            <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+          </radialGradient>
+          <filter id="neon">
+            <feGaussianBlur stdDeviation="2.5" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <g transform="translate(30,50) scale(0.5)">
+          <g filter="url(#neon)" fill="none" stroke="#00d9ff" stroke-width="1.8" opacity="0.65">
+            <line x1="80" y1="80" x2="140" y2="120"/>
+            <line x1="140" y1="120" x2="200" y2="100"/>
+            <line x1="200" y1="100" x2="260" y2="140"/>
+            <line x1="260" y1="140" x2="310" y2="180"/>
+            <line x1="310" y1="180" x2="340" y2="260"/>
+            <line x1="260" y1="140" x2="230" y2="210"/>
+            <line x1="230" y1="210" x2="250" y2="290"/>
+            <line x1="230" y1="210" x2="170" y2="250"/>
+            <line x1="170" y1="250" x2="120" y2="300"/>
+            <line x1="200" y1="100" x2="160" y2="180" stroke-width="1.2" opacity="0.55"/>
+            <line x1="140" y1="120" x2="170" y2="250" stroke-width="1.2" opacity="0.55"/>
+            <line x1="310" y1="180" x2="250" y2="290" stroke-width="1.2" opacity="0.55"/>
+          </g>
+          <line x1="260" y1="140" x2="310" y2="180" stroke="#ffffff" stroke-width="2.4" opacity="0.85" filter="url(#neon)"/>
+          <circle cx="80" cy="80" r="5" fill="#ffffff" filter="url(#neon)"/>
+          <circle cx="80" cy="80" r="12" fill="url(#glowWhite)" opacity="0.3"/>
+          <circle cx="140" cy="120" r="4" fill="#00d9ff" filter="url(#neon)"/>
+          <circle cx="140" cy="120" r="10" fill="url(#glow)" opacity="0.4"/>
+          <circle cx="200" cy="100" r="5" fill="#ffffff" filter="url(#neon)"/>
+          <circle cx="200" cy="100" r="12" fill="url(#glowWhite)" opacity="0.3"/>
+          <circle cx="260" cy="140" r="7" fill="#ffffff" filter="url(#neon)"/>
+          <circle cx="260" cy="140" r="18" fill="url(#glowWhite)" opacity="0.4"/>
+          <circle cx="260" cy="140" r="4" fill="#00d9ff"/>
+          <circle cx="310" cy="180" r="4.5" fill="#00d9ff" filter="url(#neon)"/>
+          <circle cx="310" cy="180" r="11" fill="url(#glow)" opacity="0.35"/>
+          <circle cx="340" cy="260" r="4" fill="#ffffff" filter="url(#neon)"/>
+          <circle cx="340" cy="260" r="10" fill="url(#glowWhite)" opacity="0.25"/>
+          <circle cx="230" cy="210" r="3.5" fill="#00d9ff" filter="url(#neon)"/>
+          <circle cx="230" cy="210" r="9" fill="url(#glow)" opacity="0.3"/>
+          <circle cx="250" cy="290" r="4" fill="#ffffff" filter="url(#neon)"/>
+          <circle cx="250" cy="290" r="10" fill="url(#glowWhite)" opacity="0.25"/>
+          <circle cx="170" cy="250" r="3.5" fill="#00d9ff" filter="url(#neon)"/>
+          <circle cx="170" cy="250" r="9" fill="url(#glow)" opacity="0.3"/>
+          <circle cx="120" cy="300" r="4" fill="#ffffff" filter="url(#neon)"/>
+          <circle cx="120" cy="300" r="10" fill="url(#glowWhite)" opacity="0.25"/>
+          <circle cx="160" cy="180" r="3" fill="#00d9ff" filter="url(#neon)"/>
+          <circle cx="160" cy="180" r="8" fill="url(#glow)" opacity="0.2"/>
+        </g>
+        <text x="270" y="150" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="112" font-weight="800" letter-spacing="6" fill="#ffffff">VIRGO</text>
+        <rect x="274" y="170" width="360" height="5" rx="2.5" fill="#00d9ff"/>
+        <text x="276" y="212" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="30" font-weight="600" letter-spacing="2" fill="#00d9ff">multi-agent state machine</text>
+      </svg>
+    </div>
+    <div class="header-nav">
       <a href="/">&#9664; sessions</a>
       <a href="/run">&#9654; run</a>
       <a href="/status">&#9679; status</a>
-      <span style="color:#333">|</span>
-      <span style="color:#00ffff;font-weight:600;">virgo</span>
-      <span style="color:#555;font-size:0.8rem;">multi-agent state machine</span>
     </div>
+  </div>
+  <div class="container">
     {{ content|safe }}
   </div>
   <div id="toast" class="toast"></div>
@@ -136,7 +314,7 @@ _LAYOUT = """\
   <script>
     function showToast(msg, color) {
       var t = document.getElementById('toast');
-      t.style.display = 'block'; t.style.borderColor = color || '#2a2a3a';
+      t.style.display = 'block'; t.style.borderColor = color || '#45475a';
       t.innerHTML = msg;
       setTimeout(function(){ t.style.display = 'none'; }, 4000);
     }
@@ -233,8 +411,8 @@ _RUN_PAGE = """\
   <div class="log-line">output will appear here</div>
 </div>
 
-<h2 style="margin-top:2rem;">quick goals</h2>
-<div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+<h2>quick goals</h2>
+<div class="quick-btns">
   <button hx-post="/run" hx-vals='{"goal":"Scan and parse mock_logs.txt"}'
           hx-target="#run-output">parse mock_logs.txt</button>
   <button hx-post="/run" hx-vals='{"goal":"Write hello.py and run it"}'

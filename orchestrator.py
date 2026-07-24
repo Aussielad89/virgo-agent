@@ -36,6 +36,34 @@ if TYPE_CHECKING:
 
 from _console import icon  # re-export for tests / backwards compat
 
+
+# ===========================================================================
+# ANSI colour constants for pipeline phase output
+# ===========================================================================
+
+_CY = "[36m"     # cyan   — discover / goal
+_BLU = "[34m"    # blue   — plan
+_YLW = "[33m"    # yellow — generate / syntax
+_MAG = "[35m"    # magenta — test
+_RED = "[31m"    # red    — fix / fail
+_GRN = "[32m"    # green  — pass / complete
+_DIM = "[2m"     # dim    — section borders / info
+_BCY = "[1;36m"  # bold cyan — SWARM headers
+_RST = "[0m"     # reset
+
+_PHASE_COLORS = {
+    "goal": _CY,
+    "discover": _CY,
+    "plan": _BLU,
+    "generate": _YLW,
+    "test": _MAG,
+    "fix": _RED,
+    "pass": _GRN,
+    "fail": _RED,
+    "info": _DIM,
+    "syntax": _YLW,
+}
+
 _STEP_LABELS = {
     "goal": "goal",
     "discover": "discover",
@@ -50,11 +78,15 @@ _STEP_LABELS = {
 }
 
 
+
 def _step(label: str, *parts: str) -> None:
     msg = "  ".join(p for p in parts if p)
     tag = icon(_STEP_LABELS.get(label, "arrow"))
-    print(f"  {tag}  {msg}")
-
+    colour = _PHASE_COLORS.get(label, "")
+    if colour:
+        print(f"  {colour}{tag}{_RST}  {msg}")
+    else:
+        print(f"  {tag}  {msg}")
 
 # ===========================================================================
 # Data types — flow through the pipeline
@@ -277,15 +309,15 @@ class Orchestrator:
                 plan = planner(goal, state) if planner else goal
             except Exception as exc:
                 _step("fail", f"Planner crashed: {exc}")
-                print("  [!] Planner encountered an unexpected error — using goal as plan")
+                print(f"  {_RED}[!]{_RST} Planner encountered an unexpected error — using goal as plan")
                 plan = goal
             state.plan = plan
             _step("plan", f"Cycle {plan_cycles}/{max_plan_cycles}")
-            print(f"\n{'=' * 60}")
-            print("  PLAN")
-            print(f"{'=' * 60}")
+            print(f"\n{_DIM}{'=' * 60}{_RST}")
+            print(f"  {_BLU}PLAN{_RST}")
+            print(f"{_DIM}{'=' * 60}{_RST}")
             print(textwrap.indent(plan.strip(), "  "))
-            print(f"{'=' * 60}")
+            print(f"{_DIM}{'=' * 60}{_RST}")
             if auto_approve:
                 approved = True
                 _step("pass", "Plan auto-approved")
@@ -317,7 +349,7 @@ class Orchestrator:
                 files = code_gen(plan, state, self.registry, self.env)
             except Exception as exc:
                 _step("fail", f"Generator crashed: {exc}")
-                print("  [!] Generator encountered an unexpected error — skipping generation")
+                print(f"  {_RED}[!]{_RST} Generator encountered an unexpected error — skipping generation")
                 files = []
             _step("generate", f"Writing {len(files)} file(s) …")
             for fpath, content in files:
@@ -450,11 +482,11 @@ class Orchestrator:
                 print(f"  [swarm] LLM load failed: {exc}")
                 traceback.print_exc()
 
-        print(f"\n  {'=' * 58}")
-        print(f"  SWARM: {goal}")
+        print(f"\n  {_DIM}{'=' * 58}{_RST}")
+        print(f"  {_BCY}SWARM: {goal}{_RST}")
         if share:
-            print(f"  Blackboard: ON  |  Ordered: {'yes' if ordered else 'no'}")
-        print(f"  {'=' * 58}")
+            print(f"  {_DIM}Blackboard: ON  |  Ordered: {'yes' if ordered else 'no'}{_RST}")
+        print(f"  {_DIM}{'=' * 58}{_RST}")
 
         # ── Shared blackboard ────────────────────────────────────────
         bb = None
@@ -570,11 +602,11 @@ class Orchestrator:
 
         total = time.time() - t0
         passed = sum(1 for r in results if r["status"] == "success")
-        print(f"  {'=' * 58}")
-        print(f"  Swarm done: {passed}/{len(results)} agents passed in {total:.1f}s")
+        print(f"  {_DIM}{'=' * 58}{_RST}")
+        print(f"  {_GRN}Swarm done: {passed}/{len(results)} agents passed in {total:.1f}s{_RST}")
         if bb is not None:
-            print(f"  {'─' * 58}")
-            print("  Blackboard summary:")
+            print(f"  {_DIM}{'─' * 58}{_RST}")
+            print(f"  {_DIM}Blackboard summary:{_RST}")
             print(bb.summary())
         return results
 
@@ -694,7 +726,7 @@ class Orchestrator:
                             patches = fixer(log, state, self.registry, self.env)
                         except Exception as exc:
                             _step("fix", f"Fixer crashed: {exc}")
-                            print("  [!] Fixer encountered an unexpected error — skipping patch")
+                            print(f"  {_RED}[!]{_RST} Fixer encountered an unexpected error — skipping patch")
                             patches = None
                         if patches:
                             for fpath, old, new in patches:
