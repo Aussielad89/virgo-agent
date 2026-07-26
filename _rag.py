@@ -64,7 +64,7 @@ _MAX_CONTEXT_CHARS = 2600  # hard cap so we never blow the model context
 # ── Backend selection ────────────────────────────────────────────────
 # "auto" tries ollama, falls back to tfidf. Explicit values force a backend.
 _RAG_BACKEND = os.environ.get("VIRGO_RAG_BACKEND", "auto").strip().lower()
-if _RAG_BACKEND not in ("auto", "tfidf", "ollama", "cognee"):
+if _RAG_BACKEND not in ("auto", "tfidf", "ollama", "cognee", "mem0"):
     _RAG_BACKEND = "auto"
 
 _lock = threading.RLock()  # reentrant: _get_index() is called while holding the lock
@@ -325,6 +325,25 @@ def _cognee_retrieve(query: str, top_k: int) -> list[tuple[str, str]] | None:
         return None
 
 
+def _mem0_retrieve(query: str, top_k: int) -> list[tuple[str, str]] | None:
+    """Retrieve via mem0 persistent memory."""
+    try:
+        from _mem0_memory import agent_memory
+        if not agent_memory.ready:
+            return None
+        results = agent_memory.search(query, limit=top_k)
+        if not results:
+            return None
+        out: list[tuple[str, str]] = []
+        for r in results:
+            if isinstance(r, dict):
+                text = r.get("text") or r.get("memory", "") or str(r)
+                out.append(("mem0", text))
+        return out[:top_k]
+    except Exception:
+        return None
+
+
 # --------------------------------------------------------------------------
 # Backend dispatch
 # --------------------------------------------------------------------------
@@ -374,6 +393,17 @@ def _resolve_retriever() -> _Retriever:
         _mark("tfidf")
         return _tfidf_retrieve(query, top_k)
 
+    def mem0_or_fallback(query: str, top_k: int) -> list[tuple[str, str]]:
+        try:
+            res = _mem0_retrieve(query, top_k)
+            if res is not None:
+                _mark("mem0")
+                return res
+        except Exception:
+            pass
+        _mark("tfidf")
+        return _tfidf_retrieve(query, top_k)
+
     if backend == "tfidf":
         def tfidf_only(query: str, top_k: int) -> list[tuple[str, str]]:
             _mark("tfidf")
@@ -383,6 +413,8 @@ def _resolve_retriever() -> _Retriever:
         return ollama_or_fallback
     if backend == "cognee":
         return cognee_or_fallback
+    if backend == "mem0":
+        return mem0_or_fallback
     return auto_retrieve  # "auto"
 
 

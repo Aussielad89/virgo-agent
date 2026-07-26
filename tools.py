@@ -631,17 +631,59 @@ def _python_runner(
 
 
 # ===========================================================================
-# web_fetch — fetch URL content
+# web_fetch — fetch URL content (powered by crawl4ai)
 # ===========================================================================
 
 
 def _web_fetch(url: str, timeout: int = 30) -> dict[str, Any]:
-    """Fetch *url* and return its text content."""
+    """Fetch *url* and return its text content.
+
+    Uses crawl4ai for JavaScript-rendered content, markdown output,
+    and structured extraction. Falls back to urllib if crawl4ai is
+    unavailable.
+    """
+    try:
+        from crawl4ai import AsyncWebCrawler
+        from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
+        import asyncio
+
+        async def _crawl() -> dict[str, Any]:
+            browser = BrowserConfig(headless=True)
+            run = CrawlerRunConfig(
+                word_count_threshold=10,
+                extraction_strategy="NoExtractionStrategy",
+                bypass_cache=True,
+                verbose=False,
+            )
+            async with AsyncWebCrawler(config=browser) as crawler:
+                result = await crawler.arun(url=url, config=run)
+                if result.success:
+                    return {
+                        "url": url,
+                        "status": 200,
+                        "content": result.markdown[:150_000] if result.markdown else "",
+                        "title": getattr(result, "title", ""),
+                        "crawl4ai": True,
+                    }
+                return {"url": url, "error": result.error_message or "crawl failed"}
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_crawl())
+        finally:
+            loop.close()
+
+    except ImportError:
+        pass  # fall through to urllib fallback
+    except Exception as exc:
+        return {"url": url, "error": f"crawl4ai error: {exc}"}
+
+    # Fallback: plain urllib
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "virgo/1.0"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             content = resp.read().decode("utf-8", errors="replace")
-            return {"url": url, "status": resp.status, "content": content[:100_000]}
+            return {"url": url, "status": resp.status, "content": content[:100_000], "crawl4ai": False}
     except Exception as exc:
         return {"url": url, "error": str(exc)}
 
