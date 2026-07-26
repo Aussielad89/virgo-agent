@@ -526,6 +526,7 @@ from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal, qInstallMessageHandler
 from PyQt6.QtGui import QFont, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -547,12 +548,16 @@ from PyQt6.QtWidgets import (
 # ── Import virgo modules ─────────────────────────────────────────────
 from virgo_desktop_pages import (
     AboutPage,
+    ActivityFeedPage,
     AlertsPage,
     BenchmarkPage,
     ChatPage,
+    DashboardPage,
     DiagnosticsPage,
     FilesPage,
+    LeaderboardPage,
     LogsPage,
+    MascotChatPage,
     NetworkPage,
     PipelinePage,
     PluginsPage,
@@ -575,6 +580,7 @@ HEIGHT = 720
 DESKTOP_ICONS = {
     "pipeline": "\U0001f680",  # 🚀
     "chat": "\U0001f4ac",  # 💬
+    "dashboard": "\U0001f5a5",  # 🖥
     "files": "\U0001f4c1",  # 📁
     "network": "\U0001f310",  # 🌐
     "diagnostics": "\U0001f527",  # 🔧
@@ -588,11 +594,18 @@ DESKTOP_ICONS = {
     "about": "\u2139",  # ℹ
     "procs": "\U0001f4bb",  # 💻
     "bench": "\u23f1",  # ⏱
+    "mascot_chat": "\U0001f43e",  # 🐾
+    "activity_feed": "\U0001f4ca",  # 📊
+    "leaderboard": "\U0001f3c6",  # 🏆
 }
 
 SIDEBAR_ITEMS = [
     ("pipeline", "Pipeline", DESKTOP_ICONS["pipeline"]),
     ("chat", "Chat", DESKTOP_ICONS["chat"]),
+    ("dashboard", "Dashboard", DESKTOP_ICONS["dashboard"]),
+    ("mascot_chat", "Mascot Chat", DESKTOP_ICONS["mascot_chat"]),
+    ("activity_feed", "Activity Feed", DESKTOP_ICONS["activity_feed"]),
+    ("leaderboard", "Leaderboard", DESKTOP_ICONS["leaderboard"]),
     ("files", "Files", DESKTOP_ICONS["files"]),
     ("network", "Network", DESKTOP_ICONS["network"]),
     ("diagnostics", "Diagnostics", DESKTOP_ICONS["diagnostics"]),
@@ -754,6 +767,7 @@ class VirgoDesktopWindow(QMainWindow):
         self.stack.setObjectName("pageArea")
         self.pages: dict[str, QWidget] = {}
 
+        self._register(DashboardPage(), "dashboard")
         self._register(PipelinePage(), "pipeline")
         self._register(ChatPage(), "chat")
         self._register(FilesPage(), "files")
@@ -768,6 +782,9 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(ProcessMonitorPage(), "procs")
         self._register(BenchmarkPage(), "bench")
         self._register(SettingsPage(), "settings")
+        self._register(MascotChatPage(), "mascot_chat")
+        self._register(ActivityFeedPage(), "activity_feed")
+        self._register(LeaderboardPage(), "leaderboard")
         self._register(AboutPage(), "about")
 
         self.splitter.addWidget(self.stack)
@@ -780,7 +797,42 @@ class VirgoDesktopWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.status_bar.setObjectName("statusBar")
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Virgo Desktop · checking LLM…")
+        self.status_bar.showMessage("Virgo Desktop · ready")
+
+        # ── Status bar widgets ──
+        # Persona switcher
+        self._persona_combo = QComboBox()
+        self._persona_combo.setFixedWidth(140)
+        self._persona_combo.currentIndexChanged.connect(self._on_persona_changed)
+        self.status_bar.addPermanentWidget(self._persona_combo)
+        self._populate_persona_combo()
+
+        # Focus indicator
+        self._focus_indicator = QLabel("")
+        self._focus_indicator.setStyleSheet("color: #a6e3a1; font-size: 11px; padding: 0 6px;")
+        self.status_bar.addPermanentWidget(self._focus_indicator)
+
+        # Chaos toggle
+        self._chaos_btn = QPushButton("🎲")
+        self._chaos_btn.setFixedWidth(32)
+        self._chaos_btn.setToolTip("Toggle Chaos Mode")
+        self._chaos_btn.clicked.connect(self._chaos_toggle_fast)
+        self._chaos_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #313244; border-radius: 4px; }")
+        self.status_bar.addPermanentWidget(self._chaos_btn)
+
+        # Sound toggle
+        self._sound_btn = QPushButton("🔊")
+        self._sound_btn.setFixedWidth(32)
+        self._sound_btn.setToolTip("Toggle Sound Effects")
+        self._sound_btn.clicked.connect(self._sound_toggle_fast)
+        self._sound_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #313244; border-radius: 4px; }")
+        self.status_bar.addPermanentWidget(self._sound_btn)
+
+        # Status bar refresh timer
+        self._status_timer = QTimer()
+        self._status_timer.setInterval(5000)
+        self._status_timer.timeout.connect(self._refresh_status_bar)
+        self._status_timer.start()
 
         # ── System tray ──────────────────────────────────────────
         self._setup_tray()
@@ -800,6 +852,13 @@ class VirgoDesktopWindow(QMainWindow):
             QApplication.styleHints().colorSchemeChanged.connect(self.refresh_theme)
         except Exception:
             pass
+
+        # ── Auto-theme timer (switch by time of day) ─────────────
+        self._auto_theme_timer = QTimer()
+        self._auto_theme_timer.setInterval(60000)  # Check every minute
+        self._auto_theme_timer.timeout.connect(self._check_auto_theme)
+        self._auto_theme_timer.start()
+        self._check_auto_theme()
 
         # ── Restore saved geometry + sidebar width ──────────────
         self._restore_geom()
@@ -983,36 +1042,193 @@ class VirgoDesktopWindow(QMainWindow):
             self.set_status(f"{title}: {message}")
         self._toast(title, message)
 
-    def _toast(self, title: str, message: str) -> None:
-        """Show a transient in-app toast in the top-right corner."""
-        try:
-            from PyQt6.QtWidgets import QLabel as _QLabel
+    # ── Achievement / Toast system ────────────────────────────────────────
+    _toasts: list[QFrame] = []
 
+    def _toast(self, title: str, message: str, kind: str = "info") -> None:
+        """Show a transient in-app toast with stacking and slide-in."""
+        try:
             toast = QFrame(self)
             toast.setObjectName("toast")
             toast.setFrameShape(QFrame.Shape.StyledPanel)
+            toast.setMinimumWidth(280)
+            toast.setMaximumWidth(340)
+
+            # Style by kind
+            kind_styles = {
+                "achievement": {
+                    "bg": "#2a3a2a", "border": "#a6e3a1",
+                    "icon": "🏆", "title_color": "#a6e3a1",
+                },
+                "success": {
+                    "bg": "#1e3a2e", "border": "#89b4fa",
+                    "icon": "✅", "title_color": "#89b4fa",
+                },
+                "error": {
+                    "bg": "#3a1a1a", "border": "#f38ba8",
+                    "icon": "❌", "title_color": "#f38ba8",
+                },
+                "warning": {
+                    "bg": "#3a3a1a", "border": "#f9e2af",
+                    "icon": "⚠️", "title_color": "#f9e2af",
+                },
+                "info": {
+                    "bg": "#1e1e2e", "border": "#45475a",
+                    "icon": "ℹ️", "title_color": "#cdd6f4",
+                },
+            }
+            style = kind_styles.get(kind, kind_styles["info"])
+
             t_layout = QVBoxLayout(toast)
-            t_layout.setContentsMargins(12, 8, 12, 8)
-            t_layout.setSpacing(2)
-            t_title = _QLabel(f"<b>{title}</b>")
-            t_title.setStyleSheet("color: #cdd6f4;")
-            t_msg = _QLabel(message)
-            t_msg.setStyleSheet("color: #a6adc8;")
+            t_layout.setContentsMargins(14, 10, 14, 10)
+            t_layout.setSpacing(4)
+
+            # Title row with icon
+            title_row = QHBoxLayout()
+            icon_lbl = QLabel(style["icon"])
+            icon_lbl.setStyleSheet("font-size: 16px;")
+            title_row.addWidget(icon_lbl)
+            t_title = QLabel(f"<b>{title}</b>")
+            t_title.setStyleSheet(f"color: {style['title_color']}; font-size: 13px;")
+            title_row.addWidget(t_title, 1)
+            t_layout.addLayout(title_row)
+
+            t_msg = QLabel(message)
+            t_msg.setStyleSheet("color: #a6adc8; font-size: 12px;")
             t_msg.setWordWrap(True)
-            t_layout.addWidget(t_title)
             t_layout.addWidget(t_msg)
+
             toast.setStyleSheet(
-                "QFrame#toast { background: #313244; border: 1px solid #45475a; "
-                "border-radius: 8px; }"
+                f"QFrame#toast {{ background: {style['bg']}; "
+                f"border: 1px solid {style['border']}; "
+                f"border-radius: 10px; }}"
             )
             toast.adjustSize()
-            toast.setFixedWidth(min(320, toast.width() + 24))
+
+            # Stack: position based on existing toasts
+            offset = 16 + (len(self._toasts) * (toast.height() + 10))
             x = self.width() - toast.width() - 16
-            toast.move(x, 16)
+            y = offset
+            # Clamp to bottom of window
+            if y + toast.height() > self.height() - 60:
+                y = self.height() - toast.height() - 60
+            toast.move(x, y)
             toast.show()
-            QTimer.singleShot(4000, lambda: toast.deleteLater())
+            self._toasts.append(toast)
+
+            # Animate slide-in: start off-screen right, slide to position
+            toast.move(self.width(), y)
+            toast.show()
+
+            # Slide animation using a timer
+            target_x = x
+            slide_steps = 6
+            slide_interval = 20
+
+            def _slide(step: int = 0) -> None:
+                if step >= slide_steps:
+                    toast.move(target_x, toast.y())
+                    return
+                progress = (step + 1) / slide_steps
+                ease = 1 - (1 - progress) ** 2  # ease-out quad
+                current_x = self.width() - (self.width() - target_x) * ease
+                toast.move(int(current_x), toast.y())
+                QTimer.singleShot(
+                    slide_interval,
+                    lambda s=step + 1: _slide(s),
+                )
+
+            # Start slide after layout settles
+            QTimer.singleShot(10, _slide)
+
+            # Auto-dismiss and shift remaining toasts up
+            def _dismiss() -> None:
+                try:
+                    if toast in self._toasts:
+                        self._toasts.remove(toast)
+                    # Fade out by shrinking
+                    toast.setMaximumHeight(0)
+                    toast.setVisible(False)
+                    toast.deleteLater()
+                    # Shift remaining toasts up
+                    self._reposition_toasts()
+                except Exception:
+                    pass
+
+            duration = 5000 if kind == "achievement" else 3500
+            QTimer.singleShot(duration, _dismiss)
         except Exception:
             pass
+
+    def _reposition_toasts(self) -> None:
+        """Reposition all visible toasts after one is dismissed."""
+        y_offset = 16
+        for t in list(self._toasts):
+            try:
+                if t and t.isVisible():
+                    t.move(t.x(), y_offset)
+                    y_offset += t.height() + 10
+            except Exception:
+                pass
+
+    _achievement_levels = {
+        "first_pipeline": ("First Pipeline!", "Ran your first pipeline — the journey begins", "achievement"),
+        "pipeline_10": ("Pipeline Veteran", "Ran 10 pipelines total", "achievement"),
+        "pipeline_50": ("Pipeline Master", "Ran 50 pipelines — you're a machine", "achievement"),
+        "streak_3": ("On Fire!", "3-day streak", "achievement"),
+        "streak_7": ("Unstoppable", "7-day streak!", "achievement"),
+        "chat_100": ("Chatterbox", "Sent 100 chat messages", "achievement"),
+        "swarm_first": ("Swarm Commander", "Launched your first swarm", "achievement"),
+        "level_5": ("Level 5", "Reached level 5 XP", "achievement"),
+        "level_10": ("Level 10", "Reached level 10 — legend", "achievement"),
+    }
+    _achievement_counts: dict[str, int] = {}
+    _achievement_unlocked: set[str] = set()
+
+    def _achievement_check(self, source: str, data: Any = None) -> None:
+        """Check if a milestone has been reached and fire an achievement toast."""
+        try:
+            from virgo_leaderboard import get_stats
+            stats = get_stats()
+
+            total_pipelines = stats.get("total_sessions", 0)
+            current_streak = stats.get("current_streak", 0)
+            total_xp = stats.get("total_xp", 0)
+            level = (total_xp // 100) + 1
+
+            checks = []
+
+            if source == "pipeline":
+                checks.append(("first_pipeline", total_pipelines >= 1))
+                checks.append(("pipeline_10", total_pipelines >= 10))
+                checks.append(("pipeline_50", total_pipelines >= 50))
+                checks.append(("streak_3", current_streak >= 3))
+                checks.append(("streak_7", current_streak >= 7))
+                checks.append(("level_5", level >= 5))
+                checks.append(("level_10", level >= 10))
+
+            elif source == "chat":
+                self._achievement_counts["chat_messages"] = (
+                    self._achievement_counts.get("chat_messages", 0) + 1
+                )
+                checks.append(("chat_100", self._achievement_counts["chat_messages"] >= 100))
+
+            elif source == "swarm":
+                checks.append(("swarm_first", True))
+
+            for key, cond in checks:
+                if cond and key not in self._achievement_unlocked:
+                    self._achievement_unlocked.add(key)
+                    info = self._achievement_levels.get(key)
+                    if info:
+                        self._show_achievement(info[0], info[1])
+
+        except Exception:
+            pass
+
+    def _show_achievement(self, title: str, message: str) -> None:
+        """Fire an achievement-style toast."""
+        self._toast(f"🏆  {title}", message, kind="achievement")
 
     def _fuzzy_score(self, query: str, text: str) -> int:
         """Subsequence fuzzy score: higher is better, -1 means no match."""
@@ -1124,89 +1340,219 @@ class VirgoDesktopWindow(QMainWindow):
         dlg.exec()
 
     def _command_palette(self) -> None:
-        """Ctrl+Shift+P — searchable action palette (pages + commands)."""
-        t = self.themes.get(getattr(self, "_active_theme", self._theme_name), self.themes["mocha"])
+        """Ctrl+Shift+P — full-screen overlay command palette with categories."""
+        t = self.themes.get(
+            getattr(self, "_active_theme", self._theme_name), self.themes["mocha"]
+        )
 
-        # Build action list: (label, kind, callback)
-        actions: list[tuple[str, str, callable]] = []
+        # Build action list with categories
+        categories = {
+            "Navigation": [],
+            "Actions": [],
+            "Persona": [],
+            "Focus": [],
+            "Tools": [],
+        }
+
         for pid, label, emoji in SIDEBAR_ITEMS:
-            actions.append((f"{emoji}  Go to {label}", "page", lambda p=pid: self._navigate(p)))
-        # Global commands
-        actions += [
-            ("\u26a1  Toggle Theme", "cmd", lambda: self._cycle_theme()),
-            (
-                "\U0001f4be  Export Chat",
-                "cmd",
-                lambda: self._route_to_page_action("chat", "_export"),
-            ),
-            (
-                "\U0001f4c4  Files: refresh",
-                "cmd",
-                lambda: self._route_to_page_action("files", "on_activate"),
-            ),
-            (
-                "\U0001f680  Run Pipeline",
-                "cmd",
-                lambda: self._route_to_page_action("pipeline", "_run_pipeline"),
-            ),
-            ("\U0001f504  Reload UI", "cmd", lambda: self._apply_style()),
-            ("\u2699  Open Settings", "cmd", lambda: self._navigate("settings")),
-            ("\u2139  About", "cmd", lambda: self._navigate("about")),
-            ("\U0001f514  Toggle sidebar", "cmd", lambda: self._toggle_sidebar()),
-            ("\u274c  Quit", "cmd", lambda: self.close()),
+            categories["Navigation"].append(
+                (f"{emoji}  Go to {label}", "page", lambda p=pid: self._navigate(p))
+            )
+
+        nav_actions = categories["Navigation"]
+        act_actions = categories["Actions"]
+        act_actions += [
+            ("⚡  Toggle Theme", "cmd", lambda: self._cycle_theme()),
+            ("💾  Export Chat", "cmd", lambda: self._route_to_page_action("chat", "_export")),
+            ("📂  Files: refresh", "cmd", lambda: self._route_to_page_action("files", "on_activate")),
+            ("🚀  Run Pipeline", "cmd", lambda: self._route_to_page_action("pipeline", "_run_pipeline")),
+            ("🔄  Reload UI", "cmd", lambda: self._apply_style()),
+            ("⚙️  Open Settings", "cmd", lambda: self._navigate("settings")),
+            ("ℹ️  About", "cmd", lambda: self._navigate("about")),
+            ("📋  Toggle sidebar", "cmd", lambda: self._toggle_sidebar()),
+            ("📋  Prompt Library", "cmd", lambda: self._navigate("chat") or self._route_to_page_action("chat", "_show_prompt_lib")),
+            ("📊  View Leaderboard", "cmd", lambda: self._navigate("leaderboard")),
+            ("🐾  Mascot Chat", "cmd", lambda: self._navigate("mascot_chat")),
         ]
 
+        persona_actions = categories["Persona"]
+        for p_name in ("hacker", "poet", "pirate", "cybercat", "sage"):
+            persona_actions.append(
+                (f"🎨  Persona: {p_name.capitalize()}", "cmd",
+                 lambda n=p_name: self._set_persona_fast(n))
+            )
+
+        focus_actions = categories["Focus"]
+        for f_name in ("lofi", "synthwave", "ambient"):
+            focus_actions.append(
+                (f"🎧  Focus: {f_name.capitalize()}", "cmd",
+                 lambda n=f_name: self._focus_fast(n))
+            )
+        focus_actions.append(("🔇  Focus: Stop", "cmd", lambda: self._focus_stop()))
+
+        tools_actions = categories["Tools"]
+        tools_actions += [
+            ("🎲  Chaos: Toggle", "cmd", lambda: self._chaos_toggle_fast()),
+            ("🔊  Sound: Toggle", "cmd", lambda: self._sound_toggle_fast()),
+            ("🎉  Celebrate!", "cmd", lambda: self._show_celebration("success")),
+        ]
+
+        flat_actions = []
+        for cat_name, items in categories.items():
+            if items:
+                flat_actions.append((f"── {cat_name} ──", "header", None))
+                flat_actions.extend(items)
+
+        # Full-screen overlay dialog
         dlg = QDialog(self)
         dlg.setWindowTitle("Command Palette")
-        dlg.resize(420, 420)
-        dlg.setStyleSheet(f"""
-            QDialog {{ background: {t["bg"]}; }}
-            QLineEdit {{
-                background: {t["border"]}; border: 1px solid {t["border2"]};
-                border-radius: 6px; padding: 8px 12px; color: {t["text"]};
-                font-size: 15px;
-            }}
-            QListWidget {{
-                background: {t["surface"]}; border: 1px solid {t["border"]};
-                border-radius: 6px; color: {t["text"]};
-            }}
-            QListWidget::item {{ padding: 6px 12px; border-radius: 4px; }}
-            QListWidget::item:selected {{ background: {t["border2"]}; color: {t["accent"]}; }}
+        dlg.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Popup)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        dlg.resize(520, 480)
+
+        # Center on parent
+        parent_rect = self.geometry()
+        dlg.move(
+            parent_rect.center().x() - dlg.width() // 2,
+            parent_rect.center().y() - dlg.height() // 2 - 40,
+        )
+
+        overlay = QWidget(dlg)
+        overlay.setGeometry(0, 0, dlg.width(), dlg.height())
+        overlay.setStyleSheet(f"""
+            background: {t.get("bg", "#1e1e2e")};
+            border: 1px solid {t.get("border", "#313244")};
+            border-radius: 12px;
         """)
-        lo = QVBoxLayout(dlg)
+
+        lo = QVBoxLayout(overlay)
+        lo.setContentsMargins(16, 16, 16, 12)
+        lo.setSpacing(8)
+
+        # Search input (large, prominent)
         inp = QLineEdit()
-        inp.setPlaceholderText("Type a command…")
+        inp.setPlaceholderText("🔍  Type a command or page name…")
+        inp.setStyleSheet(f"""
+            QLineEdit {{
+                background: {t.get("surface", "#181825")};
+                border: 2px solid {t.get("accent", "#89b4fa")};
+                border-radius: 8px; padding: 10px 14px;
+                color: {t.get("text", "#cdd6f4")};
+                font-size: 16px;
+            }}
+            QLineEdit:focus {{ border-color: {t.get("accent2", "#a6e3a1")}; }}
+        """)
         inp.setFocus()
+        dlg.setFocusProxy(inp)
         lo.addWidget(inp)
+
+        # Results list
         lst = QListWidget()
-        lo.addWidget(lst)
+        lst.setStyleSheet(f"""
+            QListWidget {{
+                background: {t.get("surface", "#181825")};
+                border: 1px solid {t.get("border", "#313244")};
+                border-radius: 8px;
+                color: {t.get("text", "#cdd6f4")};
+                font-size: 13px;
+                padding: 4px;
+            }}
+            QListWidget::item {{
+                padding: 8px 12px;
+                border-radius: 6px;
+                margin: 1px 0;
+            }}
+            QListWidget::item:selected {{
+                background: {t.get("border2", "#45475a")};
+                color: {t.get("accent", "#89b4fa")};
+            }}
+            QListWidget::item:hover {{
+                background: {t.get("border", "#313244")};
+            }}
+        """)
+        lo.addWidget(lst, 1)
+
+        # Footer hint
+        footer = QLabel(
+            "⏎  Execute   ·   ↑↓  Navigate   ·   Esc  Close"
+        )
+        footer.setStyleSheet(f"color: {t.get('disabled', '#6c7086')}; font-size: 11px; padding: 4px 2px;")
+        lo.addWidget(footer)
 
         def _refresh(q: str) -> None:
             q = q.strip().lower()
             lst.clear()
             if not q:
-                scored = [(0, a) for a in actions]
+                # Show all with headers
+                for a in flat_actions:
+                    item = QListWidgetItem(a[0])
+                    if a[1] == "header":
+                        item.setFlags(Qt.ItemFlag.NoItemFlags)
+                        item.setForeground(QColor(t.get("disabled", "#6c7086")))
+                        f = item.font()
+                        f.setPointSize(9)
+                        f.setBold(True)
+                        item.setFont(f)
+                    else:
+                        item.setData(Qt.ItemDataRole.UserRole, a)
+                    lst.addItem(item)
             else:
-                scored = [(self._fuzzy_score(q, a[0]), a) for a in actions]
+                scored = [
+                    (self._fuzzy_score(q, a[0]), a)
+                    for a in flat_actions if a[1] != "header"
+                ]
                 scored = [(s, a) for s, a in scored if s >= 0]
                 scored.sort(key=lambda x: -x[0])
-            for _s, a in scored:
-                item = QListWidgetItem(a[0])
-                item.setData(Qt.ItemDataRole.UserRole, a)
-                lst.addItem(item)
+                for _s, a in scored:
+                    item = QListWidgetItem(a[0])
+                    item.setData(Qt.ItemDataRole.UserRole, a)
+                    lst.addItem(item)
             if lst.count():
-                lst.setCurrentRow(0)
+                # Skip headers when setting current row
+                for i in range(lst.count()):
+                    it = lst.item(i)
+                    if it and it.flags() & Qt.ItemFlag.ItemIsSelectable:
+                        lst.setCurrentRow(i)
+                        break
 
         def _run() -> None:
             cur = lst.currentItem()
             if cur:
-                _, _, cb = cur.data(Qt.ItemDataRole.UserRole)
-                dlg.accept()
-                cb()
+                data = cur.data(Qt.ItemDataRole.UserRole)
+                if data and data[1] != "header":
+                    _, _, cb = data
+                    dlg.accept()
+                    if cb:
+                        cb()
 
         inp.textChanged.connect(_refresh)
         lst.itemDoubleClicked.connect(lambda _: _run())
         inp.returnPressed.connect(_run)
+
+        # Keyboard nav: ↑↓ in list, Esc to close
+        def _key_handler(event) -> None:
+            if event.key() == Qt.Key.Key_Escape:
+                dlg.reject()
+            elif event.key() == Qt.Key.Key_Down:
+                nxt = lst.currentRow() + 1
+                while nxt < lst.count():
+                    it = lst.item(nxt)
+                    if it and it.flags() & Qt.ItemFlag.ItemIsSelectable:
+                        lst.setCurrentRow(nxt)
+                        break
+                    nxt += 1
+            elif event.key() == Qt.Key.Key_Up:
+                prv = lst.currentRow() - 1
+                while prv >= 0:
+                    it = lst.item(prv)
+                    if it and it.flags() & Qt.ItemFlag.ItemIsSelectable:
+                        lst.setCurrentRow(prv)
+                        break
+                    prv -= 1
+            else:
+                super(QLineEdit, inp).keyPressEvent(event)
+
+        inp.keyPressEvent = _key_handler  # type: ignore[assignment]
         _refresh("")
         dlg.exec()
 
@@ -1226,6 +1572,224 @@ class VirgoDesktopWindow(QMainWindow):
         self._active_theme = nxt
         self._apply_style()
         self._save_theme_pref(nxt)
+
+    # ── Status bar helpers ──────────────────────────────────────────
+
+    def _check_auto_theme(self) -> None:
+        """Auto-switch theme based on time of day."""
+        try:
+            from virgo_themes import get_suggested_theme
+            suggested = get_suggested_theme()
+            current = getattr(self, "_auto_theme_current", None)
+            theme_map = {"mocha": "Mocha", "latte": "Latte", "nord": "Nord", "gruvbox": "Gruvbox"}
+            target = theme_map.get(suggested, current)
+            if target and target != current:
+                self._auto_theme_current = target
+                theme_key = {"Mocha": "mocha", "Latte": "latte", "Nord": "nord", "Gruvbox": "gruvbox"}.get(target, "mocha")
+                self._set_theme(theme_key)
+        except Exception:
+            pass
+
+    def _populate_persona_combo(self) -> None:
+        """Fill the persona combo box from virgo_persona."""
+        try:
+            from virgo_persona import list_personas, current_persona_name
+            self._persona_combo.blockSignals(True)
+            self._persona_combo.clear()
+            for p in list_personas():
+                display = p.get("display_name", p["name"])
+                self._persona_combo.addItem(display, p["name"])
+            current = current_persona_name()
+            idx = self._persona_combo.findData(current)
+            if idx >= 0:
+                self._persona_combo.setCurrentIndex(idx)
+            self._persona_combo.blockSignals(False)
+        except Exception:
+            pass
+
+    def _on_persona_changed(self, idx: int) -> None:
+        """Handle persona combo change."""
+        name = self._persona_combo.itemData(idx)
+        if not name:
+            return
+        try:
+            from virgo_persona import set_persona
+            set_persona(name)
+            self.status_bar.showMessage(f"Persona: {name}", 3000)
+            self._update_status_bar_theme()
+        except Exception:
+            pass
+
+    def _refresh_status_bar(self) -> None:
+        """Periodic status bar refresh — focus, sound, styles."""
+        # Update focus indicator
+        try:
+            import virgo_focus as fmod
+            st = fmod.status()
+            if st.get("active"):
+                genre = st.get("genre_name", "?")
+                mins = int(st.get("elapsed_minutes", 0))
+                self._focus_indicator.setText(f"🎧 {genre} ({mins}m)")
+            else:
+                self._focus_indicator.setText("")
+        except Exception:
+            pass
+
+        # Update sound button icon
+        try:
+            import virgo_soundpack as sp
+            p = sp.get_pack()
+            self._sound_btn.setText("🔇" if not p.get("active") else "🔊")
+        except Exception:
+            pass
+
+        # Update chaos button
+        try:
+            import virgo_chaos as ch
+            self._chaos_btn.setText("🎲" if ch.is_chaos_enabled() else "🎲")
+            self._chaos_btn.setStyleSheet(
+                "QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #313244; border-radius: 4px; }"
+            )
+        except Exception:
+            pass
+
+    def _update_status_bar_theme(self) -> None:
+        """Update persona combo styling to match current persona."""
+        try:
+            from virgo_persona import get_persona
+            p = get_persona()
+            colors = p.get("theme_colors", {})
+            primary = colors.get("primary", "cyan")
+            style_map = {
+                "green": "#a6e3a1", "cyan": "#89b4fa", "magenta": "#f5c2e7",
+                "purple": "#cba6f7", "blue": "#89b4fa", "pink": "#f5c2e7",
+                "gold": "#f9e2af", "orange": "#fab387", "yellow": "#f9e2af",
+                "bright_magenta": "#f5c2e7", "bright_cyan": "#89dceb",
+                "lime": "#a6e3a1", "white": "#cdd6f4",
+            }
+            accent = style_map.get(primary, "#89b4fa")
+            self._persona_combo.setStyleSheet(
+                f"QComboBox {{ background: #313244; border: 1px solid {accent}; "
+                f"border-radius: 4px; padding: 2px 6px; color: {accent}; "
+                f"font-size: 11px; }}"
+            )
+        except Exception:
+            pass
+
+    # ── Quick actions ────────────────────────────────────────────
+
+    def _set_persona_fast(self, name: str) -> None:
+        """Set persona from command palette."""
+        try:
+            from virgo_persona import set_persona, current_persona_name
+            if current_persona_name() != name:
+                set_persona(name)
+                self._populate_persona_combo()
+                self.status_bar.showMessage(f"Persona: {name}", 3000)
+        except Exception:
+            pass
+
+    def _focus_fast(self, genre: str) -> None:
+        """Start focus mode from command palette."""
+        try:
+            import virgo_focus as fmod
+            fmod.start(genre)
+            self._refresh_status_bar()
+        except Exception:
+            pass
+
+    def _focus_stop(self) -> None:
+        """Stop focus mode from command palette."""
+        try:
+            import virgo_focus as fmod
+            fmod.stop()
+            self._refresh_status_bar()
+        except Exception:
+            pass
+
+    def _chaos_toggle_fast(self) -> None:
+        """Toggle chaos mode."""
+        try:
+            import virgo_chaos as ch
+            ch.toggle_chaos()
+            enabled = ch.is_chaos_enabled()
+            self._chaos_btn.setText("🎲" if enabled else "🎲")
+            self.status_bar.showMessage(f"Chaos: {'ON' if enabled else 'OFF'}", 2000)
+        except Exception:
+            pass
+
+    def _sound_toggle_fast(self) -> None:
+        """Toggle sound effects."""
+        try:
+            import virgo_soundpack as sp
+            st = sp.toggle()
+            self._sound_btn.setText("🔇" if st.get("status") == "muted" else "🔊")
+            self.status_bar.showMessage(f"Sound: {st['status'].upper()}", 2000)
+        except Exception:
+            pass
+
+    def _show_celebration(self, style: str = "success") -> None:
+        """Show a celebration overlay."""
+        try:
+            from virgo_celebrate import firework, banner, cheer_text
+            text = cheer_text(style)
+            art = firework(style)
+            msg = f"<h2 style='color: #f9e2af;'>{text}</h2><pre style='color: #a6e3a1; font-size: 12px;'>{art}</pre>"
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("🎉")
+            dlg.resize(400, 300)
+            dlg.setStyleSheet("background: #1e1e2e;")
+            lo = QVBoxLayout(dlg)
+            lbl = QLabel(msg)
+            lbl.setWordWrap(True)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lo.addWidget(lbl)
+            btn = QPushButton("Close")
+            btn.clicked.connect(dlg.accept)
+            btn.setStyleSheet("QPushButton { background: #313244; border: 1px solid #45475a; border-radius: 6px; padding: 8px 24px; color: #cdd6f4; } QPushButton:hover { border-color: #89b4fa; }")
+            lo.addWidget(btn, 0, Qt.AlignmentFlag.AlignCenter)
+            dlg.exec()
+        except Exception:
+            pass
+
+    # ── Achievement Toasts ───────────────────────────────────────
+
+    def _show_achievement_toast(self, title: str, desc: str, xp: int) -> None:
+        """Show a slide-in achievement toast notification."""
+        try:
+            dlg = QDialog(self)
+            dlg.setWindowTitle("")
+            dlg.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+            dlg.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+            dlg.setStyleSheet("""
+                QDialog { background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #313244, stop:1 #45475a);
+                    border: 1px solid #f9e2af; border-radius: 8px; }
+            """)
+            lo = QHBoxLayout(dlg)
+            lo.setContentsMargins(12, 8, 12, 8)
+            icon_lbl = QLabel("🏆")
+            icon_lbl.setStyleSheet("font-size: 24px;")
+            text_lbl = QLabel(f"<b style='color: #f9e2af;'>{title}</b><br>"
+                              f"<span style='color: #a6adc8;'>{desc}</span>"
+                              f"<br><span style='color: #a6e3a1;'>+{xp} XP</span>")
+            text_lbl.setWordWrap(True)
+            lo.addWidget(icon_lbl)
+            lo.addWidget(text_lbl, 1)
+
+            # Position in top-right of main window
+            parent_rect = self.geometry()
+            dlg.adjustSize()
+            x = parent_rect.right() - dlg.width() - 20
+            y = parent_rect.top() + 60
+            dlg.move(x, y)
+            dlg.show()
+
+            # Auto close after 4 seconds
+            QTimer.singleShot(4000, dlg.close)
+        except Exception:
+            pass
 
     def _show_shortcuts_overlay(self) -> None:
         """Show a dialog listing all keyboard shortcuts."""

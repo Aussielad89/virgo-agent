@@ -1,5 +1,5 @@
 {
-  "title": "VIRGO AGENT FRAMEWORK - MASTER CONTROL",
+  "title": "VIRGO CYBERPUNK - MASTER CONTROL",
   "exit_key": "X",
   "categories": [
     {
@@ -58,6 +58,16 @@
         { "key": "20", "label": "Generate Flask Web App", "action": "scaffold_gen", "scaffold": "flask-app", "default_name": "mywebapp", "var_name": "project_name" },
         { "key": "21", "label": "Generate Python Library", "action": "scaffold_gen", "scaffold": "python-lib", "default_name": "mylib", "var_name": "project_name" },
         { "key": "22", "label": "Generate Agent Tool Module", "action": "scaffold_gen", "scaffold": "agent-tool", "default_name": "virgo_mytool", "var_name": "module_name" }
+      ]
+    },
+    {
+      "heading": "FUN STUFF",
+      "start": 22,
+      "entries": [
+        { "key": "23", "label": "Change Persona (current: hacker)", "action": "custom", "custom_action": "persona_menu" },
+        { "key": "24", "label": "Show Achievements & Stats", "action": "custom", "custom_action": "achievements_menu" },
+        { "key": "25", "label": "Toggle Mascot Sidekick", "action": "custom", "custom_action": "mascot_menu" },
+        { "key": "26", "label": "Focus Mode (Ambient Audio)", "action": "custom", "custom_action": "focus_menu" }
       ]
     }
   ]

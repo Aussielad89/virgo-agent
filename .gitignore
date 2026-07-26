@@ -35,6 +35,13 @@ _test_*.json
 _test_*.txt
 test_output.txt
 
+# Runtime state files
+.virgo_chaos.json
+.virgo_mascot.json
+.virgo_persona.json
+.virgo_soundpack.json
+.virgo_focus.json
+
 # Scratch / dev files (not for distribution)
 _verify_*.py
 _verify_*.md
@@ -53,6 +60,7 @@ docs-test-html/
 docs-recursive-test/
 
 # Scratch / agent test stubs
+BUILD_PLAN*.md
 agent_*.py
 alpha.py
 beta.py

@@ -1731,6 +1731,260 @@ def cmd_memory_record(args: argparse.Namespace) -> None:
     print()
 
 
+# ── Persona commands ────────────────────────────────────────────────────
+
+
+def cmd_persona_list(_args: argparse.Namespace) -> None:
+    """List all available personas."""
+    try:
+        from virgo_persona import list_personas, current_persona_name, get_persona, catchphrase
+    except ImportError:
+        print("[virgo] Persona module not available.")
+        return
+    personas = list_personas()
+    current = current_persona_name()
+    print(f"\n  {icon('virgo')} Persona System")
+    print(f"  {'─' * 50}")
+    for p in personas:
+        name = p.get("name", "?")
+        display = p.get("display_name", name)
+        style = p.get("response_style", "")
+        marker = " ◀" if name == current else ""
+        # Try also to show theme colour
+        colors = p.get("theme_colors", {})
+        primary = colors.get("primary", "?")
+        print(f"  [{name:12s}] {display:22s}  style={style:10s}  color={primary}{marker}")
+    print(f"\n  Current: *{current}*")
+    print(f"  > {catchphrase()}")
+    print()
+
+
+def cmd_persona_set(args: argparse.Namespace) -> None:
+    """Set the active persona."""
+    try:
+        from virgo_persona import set_persona, list_personas
+    except ImportError:
+        print("[virgo] Persona module not available.")
+        return
+    try:
+        persona = set_persona(args.name)
+        display = persona.get('display_name', args.name)
+        print(f"\n  {icon('virgo')} Persona set to: *{display}*")
+    except KeyError:
+        available = ", ".join(p["name"] for p in list_personas())
+        print(f"[virgo] Unknown persona '{args.name}'. Available: {available}")
+    except Exception as exc:
+        print(f"[virgo] Persona error: {exc}")
+
+
+def cmd_persona_show(_args: argparse.Namespace) -> None:
+    """Show current persona details."""
+    try:
+        from virgo_persona import get_persona, current_persona_name, persona_banner, catchphrase
+    except ImportError:
+        print("[virgo] Persona module not available.")
+        return
+    name = current_persona_name()
+    p = get_persona()
+    display = p.get("display_name", name)
+    style = p.get("response_style", "")
+    colors = p.get("theme_colors", {})
+    print(f"\n  {icon('virgo')} Active Persona: *{display}*")
+    print(f"  {'─' * 50}")
+    banner = persona_banner()
+    if banner:
+        for line in banner.split("\n"):
+            print(f"  {line}")
+    print(f"\n  Style:  {style}")
+    print(f"  Theme:  {', '.join(f'{k}={v}' for k, v in colors.items())}")
+    print(f"\n  {catchphrase()}")
+    print()
+
+
+# ── Achievement commands ────────────────────────────────────────────────
+
+
+def cmd_achievements(_args: argparse.Namespace) -> None:
+    """Show all achievements with unlock status."""
+    try:
+        from virgo_achievements import get_achievements
+    except ImportError:
+        print("[virgo] Achievements module not available.")
+        return
+    try:
+        system = get_achievements()
+    except Exception as exc:
+        print(f"[virgo] Failed to load achievements: {exc}")
+        return
+
+    prog = system.get_all_progress()
+    stats = system.get_stats()
+    recent = system.get_recent(limit=5)
+
+    level = stats.get("level", 1)
+    xp = stats.get("total_xp", 0)
+    unlocked = stats.get("unlocked", 0)
+    total = stats.get("total", len(prog))
+
+    print(f"\n  {icon('brain')} Achievements — Level {level}  |  {xp} XP  |  {unlocked}/{total} unlocked")
+    print(f"  {'─' * 60}")
+    if recent:
+        print(f"  Recent: {', '.join(a.get('name', '?') for a in recent)}")
+        print()
+    for p in prog:
+        mark = "✅" if p.get("unlocked") else "○"
+        print(f"  {mark} {p.get('icon', '?')}  {p.get('name', '?'):30s}  "
+              f"+{p.get('xp', 0):3d} XP  {p.get('description', '')}")
+    print()
+
+
+def cmd_achievements_recent(_args: argparse.Namespace) -> None:
+    """Show recently unlocked achievements."""
+    try:
+        from virgo_achievements import get_achievements
+    except ImportError:
+        print("[virgo] Achievements module not available.")
+        return
+    try:
+        system = get_achievements()
+    except Exception as exc:
+        print(f"[virgo] Failed to load achievements: {exc}")
+        return
+    recent = system.get_recent(limit=20)
+    if not recent:
+        print(f"\n  {icon('arrow')} No achievements unlocked yet.")
+        return
+    print(f"\n  {icon('history')} Recent Achievements")
+    print(f"  {'─' * 50}")
+    for a in recent:
+        print(f"  {a.get('icon', '🏆')}  {a.get('name', '?'):30s}  +{a.get('xp', 0)} XP")
+    print()
+
+
+def cmd_achievements_stats(_args: argparse.Namespace) -> None:
+    """Show achievement stats (XP, level, progress)."""
+    try:
+        from virgo_achievements import get_achievements
+    except ImportError:
+        print("[virgo] Achievements module not available.")
+        return
+    try:
+        system = get_achievements()
+    except Exception as exc:
+        print(f"[virgo] Failed to load achievements: {exc}")
+        return
+    stats = system.get_stats()
+    level = stats.get("level", 1)
+    xp = stats.get("total_xp", 0)
+    unlocked = stats.get("unlocked", 0)
+    total = stats.get("total", 0)
+    xp_next = stats.get("xp_for_next", 0)
+    print(f"\n  {icon('brain')} Achievement Statistics")
+    print(f"  {'─' * 50}")
+    print(f"  Level:    {level}")
+    print(f"  XP:       {xp}")
+    print(f"  Unlocked: {unlocked}/{total}")
+    print(f"  Next:     {xp_next} XP needed for level {level + 1}")
+    print()
+
+
+# ── Mascot commands ─────────────────────────────────────────────────────
+
+
+def cmd_mascot_list(_args: argparse.Namespace) -> None:
+    """List all available mascots."""
+    try:
+        from virgo_mascot import list_mascots, current_mascot_name
+    except ImportError:
+        print("[virgo] Mascot module not available.")
+        return
+    mascots = list_mascots()
+    current = current_mascot_name()
+    print(f"\n  {icon('virgo')} Mascot Sidekicks")
+    print(f"  {'─' * 50}")
+    for m in mascots:
+        tag = m.get("tag", "?")
+        display = m.get("display", tag)
+        marker = " ◀" if tag == current else ""
+        print(f"  [{tag:14s}] {display}{marker}")
+    print()
+
+
+def cmd_mascot_set(args: argparse.Namespace) -> None:
+    """Set the active mascot."""
+    try:
+        from virgo_mascot import set_mascot, list_mascots, speak
+    except ImportError:
+        print("[virgo] Mascot module not available.")
+        return
+    try:
+        mascot = set_mascot(args.name)
+        print(f"\n  {icon('virgo')} Mascot set to: {mascot.get('display', args.name)}")
+        try:
+            print(f"  {speak('At your service!')}")
+        except Exception:
+            pass
+    except KeyError:
+        available = ", ".join(m["tag"] for m in list_mascots())
+        print(f"[virgo] Unknown mascot '{args.name}'. Available: {available}")
+    except Exception as exc:
+        print(f"[virgo] Mascot error: {exc}")
+
+
+def cmd_mascot_show(_args: argparse.Namespace) -> None:
+    """Show current mascot."""
+    try:
+        from virgo_mascot import get_mascot, current_mascot_name, mascot_ascii, idle_action
+    except ImportError:
+        print("[virgo] Mascot module not available.")
+        return
+    name = current_mascot_name()
+    m = get_mascot()
+    display = m.get("display", name)
+    print(f"\n  {icon('virgo')} Active Mascot: {display}")
+    ascii_art = mascot_ascii()
+    if ascii_art:
+        for line in ascii_art.split("\n"):
+            print(f"  {line}")
+    print(f"  * {idle_action()} *")
+    print()
+
+
+def cmd_mascot_speak(args: argparse.Namespace) -> None:
+    """Make the mascot say something."""
+    try:
+        from virgo_mascot import speak, current_mascot_name
+    except ImportError:
+        print("[virgo] Mascot module not available.")
+        return
+    text = " ".join(args.text) if args.text else "Hello!"
+    print(f"\n  {speak(text)}")
+    print()
+
+
+# ── Focus commands ──────────────────────────────────────────────────────
+
+
+def cmd_focus(args: argparse.Namespace) -> None:
+    """Control focus mode (ambient audio)."""
+    try:
+        import virgo_focus as focus
+    except ImportError:
+        print("[virgo] Focus mode module not available.")
+        return
+
+    if args.focus_command == "on":
+        focus.cmd_focus_on(args)
+    elif args.focus_command == "off":
+        focus.cmd_focus_off(args)
+    elif args.focus_command == "status":
+        focus.cmd_focus_status(args)
+    elif args.focus_command == "genre":
+        focus.cmd_focus_genre(args)
+    else:
+        print("[virgo] Unknown focus subcommand. Use: on, off, status, genre")
+
+
 # ===========================================================================
 # Argument parser
 # ===========================================================================
@@ -2176,6 +2430,57 @@ def main() -> None:
     p_mem_rec.add_argument("--fail", action="store_true", dest="as_fail", default=False, help="Mark as failure")
     p_mem_rec.set_defaults(memory_func=cmd_memory_record)
 
+    # ── Persona ──
+    p_persona = sub.add_parser("persona", help="Manage AI personas")
+    persona_sub = p_persona.add_subparsers(dest="persona_command", required=False)
+    p_persona_list = persona_sub.add_parser("list", help="List available personas")
+    p_persona_list.set_defaults(persona_func=cmd_persona_list)
+    p_persona_set = persona_sub.add_parser("set", help="Set active persona")
+    p_persona_set.add_argument("name", help="Persona name")
+    p_persona_set.set_defaults(persona_func=cmd_persona_set)
+    p_persona_show = persona_sub.add_parser("show", help="Show current persona")
+    p_persona_show.set_defaults(persona_func=cmd_persona_show)
+
+    # ── Achievements ──
+    p_ach = sub.add_parser("achievements", help="Show achievements and stats",
+                           aliases=["ach", "achievement"])
+    ach_sub = p_ach.add_subparsers(dest="achievement_command", required=False)
+    p_ach_list = ach_sub.add_parser("list", help="List all achievements")
+    p_ach_list.set_defaults(achievement_func=cmd_achievements)
+    p_ach_recent = ach_sub.add_parser("recent", help="Show recent unlocks")
+    p_ach_recent.set_defaults(achievement_func=cmd_achievements_recent)
+    p_ach_stats = ach_sub.add_parser("stats", help="Show XP and level stats")
+    p_ach_stats.set_defaults(achievement_func=cmd_achievements_stats)
+
+    # ── Mascot ──
+    p_mascot = sub.add_parser("mascot", help="Manage mascot sidekick")
+    mascot_sub = p_mascot.add_subparsers(dest="mascot_command", required=False)
+    p_mascot_list = mascot_sub.add_parser("list", help="List available mascots")
+    p_mascot_list.set_defaults(mascot_func=cmd_mascot_list)
+    p_mascot_set = mascot_sub.add_parser("set", help="Set active mascot")
+    p_mascot_set.add_argument("name", help="Mascot name")
+    p_mascot_set.set_defaults(mascot_func=cmd_mascot_set)
+    p_mascot_show = mascot_sub.add_parser("show", help="Show current mascot")
+    p_mascot_show.set_defaults(mascot_func=cmd_mascot_show)
+    p_mascot_speak = mascot_sub.add_parser("speak", help="Make mascot speak")
+    p_mascot_speak.add_argument("text", nargs="*", help="Text to say")
+    p_mascot_speak.set_defaults(mascot_func=cmd_mascot_speak)
+
+    # ── Focus ──
+    p_focus = sub.add_parser("focus", help="Control focus mode (ambient audio)")
+    focus_sub = p_focus.add_subparsers(dest="focus_command", required=False)
+    p_focus_on = focus_sub.add_parser("on", help="Start focus mode")
+    p_focus_on.add_argument("--genre", "-g", default="lofi",
+                            choices=["lofi", "synthwave", "ambient", "silence"],
+                            help="Audio genre (default: lofi)")
+    p_focus_on.set_defaults(focus_func=cmd_focus)
+    p_focus_off = focus_sub.add_parser("off", help="Stop focus mode")
+    p_focus_off.set_defaults(focus_func=cmd_focus)
+    p_focus_status = focus_sub.add_parser("status", help="Show focus status")
+    p_focus_status.set_defaults(focus_func=cmd_focus)
+    p_focus_genre = focus_sub.add_parser("genre", help="List available genres")
+    p_focus_genre.set_defaults(focus_func=cmd_focus)
+
     args = parser.parse_args()
     if args.version:
         cmd_version(args)
@@ -2184,6 +2489,26 @@ def main() -> None:
             args.memory_func(args)
         else:
             p_mem.print_help()
+    elif args.command == "persona":
+        if hasattr(args, "persona_func") and args.persona_func:
+            args.persona_func(args)
+        else:
+            p_persona.print_help()
+    elif args.command in ("achievements", "ach", "achievement"):
+        if hasattr(args, "achievement_func") and args.achievement_func:
+            args.achievement_func(args)
+        else:
+            cmd_achievements(args)
+    elif args.command == "mascot":
+        if hasattr(args, "mascot_func") and args.mascot_func:
+            args.mascot_func(args)
+        else:
+            p_mascot.print_help()
+    elif args.command == "focus":
+        if hasattr(args, "focus_func") and args.focus_func:
+            args.focus_func(args)
+        else:
+            p_focus.print_help()
     elif args.command is None:
         cmd_menu(args)
     else:

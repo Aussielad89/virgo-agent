@@ -26,6 +26,14 @@ def test_pages_module_imports():
         "LogsPage",
         "SettingsPage",
         "AboutPage",
+        "MascotChatPage",
+        "ActivityFeedPage",
+        "LeaderboardPage",
+        "ProcessMonitorPage",
+        "BenchmarkPage",
+        "PluginsPage",
+        "FilesPage",
+        "DashboardPage",
         "_StopStream",
     ):
         assert hasattr(mod, name), f"missing {name}"
