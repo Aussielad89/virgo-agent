@@ -21,6 +21,7 @@ from PyQt6.QtCore import (
     QMetaObject,
     QModelIndex,
     QObject,
+    QPointF,
     QSize,
     Qt,
     QTimer,
@@ -33,7 +34,10 @@ from PyQt6.QtGui import (
     QFileSystemModel,
     QFont,
     QKeySequence,
+    QPainter,
     QPen,
+    QPixmap,
+    QPolygonF,
     QShortcut,
     QTextDocument,
 )
@@ -44,6 +48,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QGraphicsEllipseItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsTextItem,
@@ -463,7 +468,7 @@ class PipelinePage(PageWidget):
 
             # Node rect
             rect = QGraphicsRectItem(x, y, node_w, node_h)
-            rect.setBrush(QBrush(QColor(fill_colors[phase.split("_")[0]] if "_" not in phase else "#45475a")))
+            rect.setBrush(QBrush(QColor(fill_colors["idle"])))
             rect.setPen(QPen(QColor("#1e1e2e"), 2))
             rect.setFlags(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable)
             rect.setData(0, phase)
@@ -488,11 +493,11 @@ class PipelinePage(PageWidget):
                 )
                 # Arrowhead
                 head = self._dag_scene.addPolygon(
-                    [
+                    QPolygonF([
                         QPointF(ax + gap - 4, y + node_h / 2 - 5),
                         QPointF(ax + gap - 4, y + node_h / 2 + 5),
                         QPointF(ax + gap + 4, y + node_h / 2),
-                    ],
+                    ]),
                     QPen(Qt.PenStyle.NoPen),
                     QBrush(QColor("#6c7086")),
                 )
