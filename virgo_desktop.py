@@ -864,6 +864,22 @@ class VirgoDesktopWindow(QMainWindow):
         self._restore_geom()
         self._apply_sidebar_collapsed()
 
+        # ── Ambient Mode (animated background overlay) ──
+        self._ambient_widget: QWidget | None = None
+        self._ambient_active = False
+        self._ambient_timer: QTimer | None = None
+
+        # ── Performance overlay (Ctrl+Shift+I) ──
+        self._perf_overlay: QWidget | None = None
+        self._perf_timer: QTimer | None = None
+
+        # ── Soundscape mode ──
+        self._soundscape_active = False
+        self._soundscape_volume = 50
+
+        # ── Animated boot screen ──
+        self._show_boot_screen()
+
     # ────────────────────────────────────────────────────────────────
 
     def _register(self, page: QWidget, name: str) -> None:
@@ -992,6 +1008,9 @@ class VirgoDesktopWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+B"), self).activated.connect(self._toggle_sidebar)
         # ? shortcuts overlay
         QShortcut(QKeySequence("?"), self).activated.connect(self._show_shortcuts_overlay)
+
+        # Ctrl+Shift+I toggles the performance overlay
+        QShortcut(QKeySequence("Ctrl+Shift+I"), self).activated.connect(self._toggle_perf_overlay)
 
     def _setup_tray(self) -> None:
         """Create system tray icon."""
@@ -2007,6 +2026,284 @@ class VirgoDesktopWindow(QMainWindow):
             if not found_mode:
                 lines.append(f"VIRGO_THEME_MODE={self._theme_mode}")
             env_path.write_text("\n".join(lines) + "\n")
+        except Exception:
+            pass
+
+
+    # ── Animated Boot Screen (#10) ──────────────────────────────────────
+
+    def _show_boot_screen(self) -> None:
+        """Display a brief animated splash with the Virgo constellation logo."""
+        try:
+            import math
+            splash = QFrame(self)
+            splash.setObjectName("bootSplash")
+            splash.setGeometry(0, 0, self.width(), self.height())
+            splash.setStyleSheet(
+                "QFrame#bootSplash { background: #11111b; }"
+            )
+            splash.raise_()
+            splash.show()
+
+            # Constellation geometry (matching _make_logo.py)
+            stars = [
+                (200, 100), (240, 80), (280, 110), (260, 150), (210, 140),
+                (170, 170), (220, 200), (300, 130), (330, 170), (310, 210),
+                (270, 220), (230, 250), (290, 270), (350, 190),
+            ]
+            cx, cy = self.width() // 2 - 175, self.height() // 2 - 135
+            connections = [
+                (0, 1), (1, 2), (2, 3), (3, 4), (4, 0),
+                (4, 5), (5, 6), (6, 3), (2, 7), (7, 8),
+                (8, 9), (9, 10), (10, 6), (10, 11), (11, 12), (12, 13),
+            ]
+
+            scene = QGraphicsScene()
+            view = QGraphicsView(scene, splash)
+            view.setGeometry(0, 0, self.width(), self.height())
+            view.setStyleSheet("background: transparent; border: none;")
+            view.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            # Draw constellation
+            pen = QPen(QColor("#89b4fa"), 1.5)
+            for i, j in connections:
+                x1, y1 = stars[i]; x2, y2 = stars[j]
+                scene.addLine(cx + x1, cy + y1, cx + x2, cy + y2, pen)
+
+            # Draw stars as circles
+            for sx, sy in stars:
+                dot = scene.addEllipse(
+                    cx + sx - 4, cy + sy - 4, 8, 8,
+                    QPen(QColor("#89b4fa"), 2), QBrush(QColor("#89b4fa")),
+                )
+
+            # VIRGO text
+            txt = scene.addText("VIRGO")
+            txt.setDefaultTextColor(QColor("#cdd6f4"))
+            font = QFont("Segoe UI", 32, QFont.Weight.Bold)
+            txt.setFont(font)
+            txt.setPos(cx + 50, cy + 300)
+
+            # Version
+            ver = scene.addText(f"v{APP_VERSION}")
+            ver.setDefaultTextColor(QColor("#6c7086"))
+            vfont = QFont("Segoe UI", 12)
+            ver.setFont(vfont)
+            ver.setPos(cx + 150, cy + 350)
+
+            # Fade out and close
+            def _fade(step: int = 0) -> None:
+                if step >= 10:
+                    splash.deleteLater()
+                    return
+                op = max(0.0, 1.0 - (step + 1) / 10.0)
+                splash.setWindowOpacity(op)
+                QTimer.singleShot(60, lambda s=step + 1: _fade(s))
+
+            QTimer.singleShot(1500, lambda: _fade(0))
+        except Exception:
+            pass  # Non-critical; boot proceeds without splash
+
+    # ── Ambient Mode (#8) ──────────────────────────────────────────────
+
+    def _toggle_ambient(self) -> None:
+        """Toggle ambient animated background (Matrix rain / starfield)."""
+        self._ambient_active = not self._ambient_active
+        if self._ambient_active:
+            self._start_ambient()
+        else:
+            self._stop_ambient()
+
+    def _start_ambient(self) -> None:
+        """Create the ambient particle overlay."""
+        try:
+            if self._ambient_widget:
+                self._ambient_widget.deleteLater()
+            self._ambient_widget = QWidget(self.stack)
+            self._ambient_widget.setGeometry(self.stack.rect())
+            self._ambient_widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            self._ambient_widget.setStyleSheet("background: transparent;")
+            self._ambient_widget.lower()  # Behind page content
+            self._ambient_widget.show()
+
+            self._ambient_particles: list[dict] = []
+            import random, math
+            for _ in range(60):
+                self._ambient_particles.append({
+                    "x": random.randint(0, self._ambient_widget.width()),
+                    "y": random.randint(-200, self._ambient_widget.height()),
+                    "speed": random.uniform(1.0, 3.0),
+                    "size": random.randint(1, 3),
+                    "alpha": random.randint(30, 150),
+                    "char": random.choice("0123456789ABCDEF"),
+                })
+
+            self._ambient_timer = QTimer()
+            self._ambient_timer.setInterval(50)
+            self._ambient_timer.timeout.connect(self._tick_ambient)
+            self._ambient_timer.start()
+        except Exception:
+            pass
+
+    def _tick_ambient(self) -> None:
+        """Animate one frame of the Matrix rain particles."""
+        w = self._ambient_widget
+        if not w or not w.isVisible():
+            return
+        try:
+            pm = QPixmap(w.size())
+            pm.fill(Qt.GlobalColor.transparent)
+            p = QPainter(pm)
+            p.setFont(QFont("Courier New", 11))
+            for pt in self._ambient_particles:
+                pt["y"] += pt["speed"]
+                if pt["y"] > w.height() + 20:
+                    pt["y"] = -20
+                    pt["x"] = __import__("random").randint(0, w.width())
+                color = QColor(137, 180, 250, pt["alpha"])
+                p.setPen(color)
+                p.drawText(int(pt["x"]), int(pt["y"]), pt["char"])
+            p.end()
+            w.setPixmap(pm)
+        except Exception:
+            pass
+
+    def _stop_ambient(self) -> None:
+        if self._ambient_timer:
+            self._ambient_timer.stop()
+        if self._ambient_widget:
+            self._ambient_widget.deleteLater()
+            self._ambient_widget = None
+
+    def resizeEvent(self, event) -> None:
+        """Keep ambient overlay sized to the stack widget."""
+        super().resizeEvent(event)
+        if self._ambient_widget:
+            self._ambient_widget.setGeometry(self.stack.rect())
+
+    # ── Performance Overlay (#15) ───────────────────────────────────────
+
+    def _toggle_perf_overlay(self) -> None:
+        """Ctrl+Shift+I toggle translucent performance HUD."""
+        if self._perf_overlay and self._perf_overlay.isVisible():
+            self._perf_overlay.hide()
+            if self._perf_timer:
+                self._perf_timer.stop()
+            return
+
+        if not self._perf_overlay:
+            self._perf_overlay = QFrame(self)
+            self._perf_overlay.setObjectName("perfOverlay")
+            self._perf_overlay.setStyleSheet(
+                "QFrame#perfOverlay { background: rgba(17, 17, 27, 200); "
+                "border: 1px solid #313244; border-radius: 8px; }"
+            )
+            lo = QVBoxLayout(self._perf_overlay)
+            lo.setContentsMargins(12, 8, 12, 8)
+            lo.setSpacing(4)
+
+            self._perf_labels: dict[str, QLabel] = {}
+            for key, label in [
+                ("fps", "FPS"), ("ram", "RAM (MB)"), ("cpu", "CPU %"),
+                ("tokens", "Token speed"), ("uptime", "Uptime"),
+            ]:
+                row = QHBoxLayout()
+                row.addWidget(QLabel(f"{label}:"))
+                val = QLabel("—")
+                val.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+                row.addWidget(val, 1)
+                lo.addLayout(row)
+                self._perf_labels[key] = val
+
+            lo.addWidget(QLabel("Ctrl+Shift+I to hide"))
+            self._perf_overlay.adjustSize()
+
+        self._perf_overlay.setFixedWidth(220)
+        x = self.width() - self._perf_overlay.width() - 16
+        y = 60
+        self._perf_overlay.move(x, y)
+        self._perf_overlay.show()
+        self._perf_overlay.raise_()
+
+        self._perf_timer = QTimer()
+        self._perf_timer.setInterval(1000)
+        self._perf_timer.timeout.connect(self._update_perf)
+        self._perf_timer.start()
+        self._update_perf()
+
+    def _update_perf(self) -> None:
+        """Refresh performance stats."""
+        try:
+            import psutil, time
+            proc = psutil.Process()
+            mem = proc.memory_info().rss / 1024 / 1024
+            cpu = proc.cpu_percent(interval=0)
+            uptime_sec = time.time() - psutil.boot_time()
+            days, rem = divmod(int(uptime_sec), 86400)
+            hours, rem = divmod(rem, 3600)
+            mins = rem // 60
+            uptime_str = f"{days}d {hours}h {mins}m"
+
+            # Estimate FPS from refresh rate
+            fps = self._perf_timer.interval() if self._perf_timer else 0
+            if fps > 0:
+                fps_str = f"{1000 / fps:.0f} (1s update)"
+            else:
+                fps_str = "—"
+
+            self._perf_labels["fps"].setText(fps_str)
+            self._perf_labels["ram"].setText(f"{mem:.1f}")
+            self._perf_labels["cpu"].setText(f"{cpu:.1f}")
+            self._perf_labels["tokens"].setText("N/A (pipeline)")
+            self._perf_labels["uptime"].setText(uptime_str)
+        except Exception:
+            pass
+
+    # ── Soundscape Mode (#11) ──────────────────────────────────────────
+
+    def _toggle_soundscape(self) -> None:
+        """Toggle ambient soundscape (looping nature/synth sounds)."""
+        self._soundscape_active = not self._soundscape_active
+        if self._soundscape_active:
+            self._start_soundscape()
+        else:
+            self._stop_soundscape()
+        self._update_sound_btn()
+
+    def _start_soundscape(self) -> None:
+        """Play ambient soundscape using winsound.Beep tones (no deps)."""
+        try:
+            self._soundscape_thread_running = True
+            import threading
+            self._sound_thread = threading.Thread(target=self._soundscape_loop, daemon=True)
+            self._sound_thread.start()
+        except Exception:
+            pass
+
+    def _soundscape_loop(self) -> None:
+        """Generate a gentle ambient tone pattern via winsound."""
+        import time, winsound, random
+        base_freq = 220
+        while getattr(self, "_soundscape_thread_running", False) and self._soundscape_active:
+            try:
+                freq = base_freq + random.randint(-30, 30)
+                dur = random.randint(300, 800)
+                winsound.Beep(freq, dur)
+                time.sleep(random.uniform(0.5, 2.0))
+            except Exception:
+                time.sleep(1)
+
+    def _stop_soundscape(self) -> None:
+        self._soundscape_thread_running = False
+
+    def _update_sound_btn(self) -> None:
+        try:
+            if self._soundscape_active:
+                self._sound_btn.setText("🌿")
+                self._sound_btn.setToolTip("Soundscape ON — click to stop")
+            else:
+                self._sound_btn.setText("🔊")
+                self._sound_btn.setToolTip("Toggle Sound Effects")
         except Exception:
             pass
 

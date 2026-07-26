@@ -41,6 +41,7 @@ test_output.txt
 .virgo_persona.json
 .virgo_soundpack.json
 .virgo_focus.json
+*.backup
 
 # Scratch / dev files (not for distribution)
 _verify_*.py

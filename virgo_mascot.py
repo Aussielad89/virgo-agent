@@ -407,6 +407,108 @@ def cmd_mascot_show(args: list[str] | None = None) -> None:
 _active_name = _load_mascot_name()
 if _active_name not in _MASCOTS:
     _active_name = "cybercat"
-    _save_mascot_name(_active_name)
+
+# ── Personality Engine (#19) ─────────────────────────────────────────────
+
+_MOOD_STORE = HERE / ".virgo_mascot_mood.json"
+_MOODS = ["happy", "neutral", "sleepy", "excited", "sad", "playful"]
+_MOOD_EMOJIS = {
+    "happy": "😊", "neutral": "😐", "sleepy": "😴",
+    "excited": "🤩", "sad": "😢", "playful": "😜",
+}
+
+
+def _load_mood() -> str:
+    """Load saved mascot mood."""
+    try:
+        if _MOOD_STORE.exists():
+            data = json.loads(_MOOD_STORE.read_text())
+            return data.get("mood", "neutral")
+    except Exception:
+        pass
+    return "neutral"
+
+
+def _save_mood(mood: str) -> None:
+    """Persist mascot mood."""
+    try:
+        _MOOD_STORE.write_text(json.dumps({"mood": mood, "name": _active_name}))
+    except Exception:
+        pass
+
+
+def current_mood() -> str:
+    """Get the current mascot mood."""
+    return _load_mood()
+
+
+def set_mood(mood: str) -> str:
+    """Set mascot mood. Returns the mood name."""
+    if mood not in _MOODS:
+        mood = "neutral"
+    _save_mood(mood)
+    return mood
+
+
+def react_to_event(event: str, success: bool = True) -> str:
+    """Change mascot mood based on an event and return a reaction message."""
+    mood_changes = {
+        "pipeline_success": "excited",
+        "pipeline_fail": "sad",
+        "chat_long": "playful",
+        "scan_complete": "happy",
+        "idle_long": "sleepy",
+        "achievement": "excited",
+        "startup": "neutral",
+    }
+    new_mood = mood_changes.get(event, "neutral")
+    if not success:
+        new_mood = "sad"
+    set_mood(new_mood)
+
+    reactions = {
+        "excited": [
+            "That was AMAZING! 🎉", "Wooohooo! You rock!",
+            "I'm so pumped right now!",
+        ],
+        "happy": [
+            "*purrs contentedly*", "Everything's going great!",
+            "Nice work, partner!",
+        ],
+        "playful": [
+            "*boops your nose*", "Hehe, that was fun!",
+            "Let's do that again!",
+        ],
+        "sleepy": [
+            "*yawns* zzz...", "Is it nap time yet?",
+            "Five more minutes... 😴",
+        ],
+        "sad": [
+            "*ears droop* Aww...", "It's okay, we'll get it next time.",
+            "*gives you a gentle headbutt*",
+        ],
+        "neutral": [
+            "Ready when you are.", "I'm here.", "What's next?",
+        ],
+    }
+    return random.choice(reactions.get(new_mood, reactions["neutral"]))
+
+
+def mood_ascii(mood: str | None = None) -> str:
+    """Return a mood indicator string for the current mascot."""
+    if mood is None:
+        mood = current_mood()
+    emoji = _MOOD_EMOJIS.get(mood, "😐")
+    return f"{emoji}  {mood.capitalize()}"
+
+
+# Auto-export key functions for public API
+__all__ = [
+    "current_mascot_name", "get_mascot", "list_mascots",
+    "set_mascot", "mascot_ascii", "idle_action", "colored_ascii",
+    "react", "speak", "cheer",
+    "current_mood", "set_mood", "react_to_event", "mood_ascii",
+]
+_save_mascot_name(_active_name)
 
 log.debug("Active mascot: %s", _active_name)

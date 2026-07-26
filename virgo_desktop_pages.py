@@ -336,6 +336,38 @@ class PipelinePage(PageWidget):
         )
         export_btn.clicked.connect(self._export_dag)
         stats_layout.addWidget(export_btn)
+
+        # ── Recipe Book (#13) ──
+        stats_layout.addSpacing(6)
+        recipe_label = QLabel("📖  Recipes")
+        recipe_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #f9e2af;")
+        stats_layout.addWidget(recipe_label)
+        recipe_row = QHBoxLayout()
+        self._recipe_combo = QComboBox()
+        self._recipe_combo.setStyleSheet(
+            "QComboBox { background: #181825; border: 1px solid #313244; "
+            "border-radius: 4px; padding: 3px 6px; color: #cdd6f4; font-size: 11px; }"
+        )
+        self._recipe_combo.currentIndexChanged.connect(self._load_recipe)
+        recipe_row.addWidget(self._recipe_combo, 1)
+        save_recipe_btn = QPushButton("💾 Save")
+        save_recipe_btn.setStyleSheet(
+            "QPushButton { background: #313244; border: 1px solid #45475a; "
+            "border-radius: 4px; padding: 3px 8px; color: #cdd6f4; font-size: 10px; }"
+            "QPushButton:hover { border-color: #f9e2af; }"
+        )
+        save_recipe_btn.clicked.connect(self._save_recipe)
+        recipe_row.addWidget(save_recipe_btn)
+        del_recipe_btn = QPushButton("✕")
+        del_recipe_btn.setFixedWidth(24)
+        del_recipe_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #f38ba8; font-size: 12px; }"
+        )
+        del_recipe_btn.clicked.connect(self._delete_recipe)
+        recipe_row.addWidget(del_recipe_btn)
+        stats_layout.addLayout(recipe_row)
+        self._refresh_recipes()
+
         stats_layout.addStretch()
 
         self._splitter.addWidget(stats_widget)
@@ -664,6 +696,134 @@ class PipelinePage(PageWidget):
         self._elapsed += 1
         mins, secs = divmod(int(self._elapsed), 60)
         self._stat_labels["elapsed"].setText(f"{mins:02d}:{secs:02d}")
+
+    # ── Recipe Book (#13) ───────────────────────────────────────────────
+    _RECIPES_DIR = Path(__file__).parent / ".virgo_recipes"
+
+    def _refresh_recipes(self) -> None:
+        """Reload pipeline recipes into the combo box."""
+        self._RECIPES_DIR.mkdir(exist_ok=True)
+        self._recipe_combo.blockSignals(True)
+        self._recipe_combo.clear()
+        self._recipe_combo.addItem("(select recipe)")
+        self._recipe_combo.addItem("💾  Save current as…")
+        for pf in sorted(self._RECIPES_DIR.glob("*.json")):
+            try:
+                data = json.loads(pf.read_text(encoding="utf-8"))
+                name = data.get("name", pf.stem)
+                tags = data.get("tags", "")
+                label = f"{name}" + (f"  [{tags}]" if tags else "")
+                self._recipe_combo.addItem(label)
+                self._recipe_combo.setItemData(
+                    self._recipe_combo.count() - 1, str(pf), Qt.ItemDataRole.UserRole,
+                )
+            except Exception:
+                pass
+        self._recipe_combo.blockSignals(False)
+
+    def _load_recipe(self, idx: int) -> None:
+        """Load a recipe into the pipeline inputs."""
+        if idx <= 0:
+            return
+        if idx == 1:
+            # "Save current as…" selected
+            self._save_recipe_dialog()
+            return
+        path = self._recipe_combo.itemData(idx, Qt.ItemDataRole.UserRole)
+        if not path:
+            return
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+            self.goal_input.setText(data.get("goal", ""))
+            self.iter_input.setText(str(data.get("iterations", 5)))
+            self.use_llm.setChecked(data.get("use_llm", True))
+            self.output.appendPlainText(f"📖  Loaded recipe: {data.get('name', 'Unnamed')}")
+        except Exception:
+            pass
+        # Reset combo to first item
+        self._recipe_combo.blockSignals(True)
+        self._recipe_combo.setCurrentIndex(0)
+        self._recipe_combo.blockSignals(False)
+
+    def _save_recipe(self) -> None:
+        """Quick-save from the Save button."""
+        self._save_recipe_dialog()
+
+    def _save_recipe_dialog(self) -> None:
+        """Dialog to save current pipeline config as a recipe."""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Save Pipeline Recipe")
+        dlg.resize(360, 200)
+        dlg.setStyleSheet("QDialog { background: #1e1e2e; }")
+        lo = QVBoxLayout(dlg)
+        lo.setSpacing(10)
+
+        name_inp = QLineEdit()
+        name_inp.setPlaceholderText("Recipe name…")
+        name_inp.setStyleSheet(
+            "QLineEdit { background: #181825; border: 1px solid #313244; "
+            "border-radius: 6px; padding: 6px 10px; color: #cdd6f4; }"
+        )
+        lo.addWidget(QLabel("Name:"))
+        lo.addWidget(name_inp)
+
+        tags_inp = QLineEdit()
+        tags_inp.setPlaceholderText("Tags (comma-separated, e.g. web,api)")
+        tags_inp.setStyleSheet(
+            "QLineEdit { background: #181825; border: 1px solid #313244; "
+            "border-radius: 6px; padding: 6px 10px; color: #cdd6f4; }"
+        )
+        lo.addWidget(QLabel("Tags:"))
+        lo.addWidget(tags_inp)
+
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("Save")
+        ok_btn.setStyleSheet(
+            "QPushButton { background: #a6e3a1; color: #1e1e2e; font-weight: bold; "
+            "border: none; border-radius: 6px; padding: 6px 16px; }"
+        )
+        ok_btn.clicked.connect(dlg.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: #313244; border: 1px solid #45475a; "
+            "border-radius: 6px; padding: 6px 16px; color: #cdd6f4; }"
+        )
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        lo.addLayout(btn_row)
+
+        if not dlg.exec():
+            return
+        name = name_inp.text().strip()
+        if not name:
+            return
+        tags = tags_inp.text().strip()
+        slug = name.lower().replace(" ", "_").replace("/", "_")
+        payload = {
+            "name": name,
+            "goal": self.goal_input.text().strip(),
+            "iterations": int(self.iter_input.text() or "5"),
+            "use_llm": self.use_llm.isChecked(),
+            "tags": tags,
+        }
+        dest = self._RECIPES_DIR / f"{slug}.json"
+        dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._refresh_recipes()
+        self.output.appendPlainText(f"📖  Saved recipe: {name}")
+
+    def _delete_recipe(self) -> None:
+        """Delete the currently selected recipe."""
+        idx = self._recipe_combo.currentIndex()
+        if idx <= 1:
+            return
+        path = self._recipe_combo.itemData(idx, Qt.ItemDataRole.UserRole)
+        if path:
+            Path(path).unlink(missing_ok=True)
+            self._refresh_recipes()
+            self.output.appendPlainText(f"🗑️  Deleted recipe")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -2560,58 +2720,159 @@ class _GuiStream:
 
 
 class NetworkPage(PageWidget):
-    """Network discovery and device scanning."""
+    """Recon Dashboard + Attack Surface Map — device discovery, port scan, topology."""
 
     def __init__(self) -> None:
         super().__init__(
-            "Network",
-            "Discover devices on your local subnet.",
+            "Recon",
+            "Device discovery, port scanning & attack surface visualization.",
         )
 
-        target_row = QHBoxLayout()
-        target_row.addWidget(QLabel(f"{icon('info')} Subnet:"))
+        # ── Controls ──
+        ctrl_row = QHBoxLayout()
+        ctrl_row.addWidget(QLabel("Target:"))
         self.subnet_input = QLineEdit("192.168.1.0/24")
-        self.subnet_input.setFixedWidth(160)
-        target_row.addWidget(self.subnet_input)
-        self.scan_btn = QPushButton(f"{icon('run')}  Scan")
+        self.subnet_input.setStyleSheet(
+            "QLineEdit { background: #181825; border: 1px solid #313244; "
+            "border-radius: 6px; padding: 5px 8px; color: #cdd6f4; }"
+        )
+        self.subnet_input.setFixedWidth(150)
+        ctrl_row.addWidget(self.subnet_input)
+        self.scan_btn = QPushButton("🔍  Scan")
+        self.scan_btn.setStyleSheet(
+            "QPushButton { background: #313244; border: 1px solid #45475a; "
+            "border-radius: 6px; padding: 5px 14px; color: #cdd6f4; }"
+            "QPushButton:hover { border-color: #89b4fa; }"
+        )
         self.scan_btn.clicked.connect(self._scan)
-        target_row.addWidget(self.scan_btn)
+        ctrl_row.addWidget(self.scan_btn)
         self.auto_cb = QCheckBox("Auto (30s)")
+        self.auto_cb.setStyleSheet("color: #a6adc8;")
         self.auto_cb.toggled.connect(self._toggle_auto)
-        target_row.addWidget(self.auto_cb)
-        self.export_btn = QPushButton(f"{icon('save')}  Export CSV")
+        ctrl_row.addWidget(self.auto_cb)
+        self.export_btn = QPushButton("💾  Export")
+        self.export_btn.setStyleSheet(
+            "QPushButton { background: #313244; border: 1px solid #45475a; "
+            "border-radius: 6px; padding: 5px 10px; color: #cdd6f4; font-size: 11px; }"
+        )
         self.export_btn.clicked.connect(self._export)
-        target_row.addWidget(self.export_btn)
-        target_row.addStretch()
-        self.content.addLayout(target_row)
+        ctrl_row.addWidget(self.export_btn)
+        ctrl_row.addStretch()
+        self.content.addLayout(ctrl_row)
 
-        self.results_list = QListWidget()
-        self._add(self.results_list)
+        # ── Tab widget: Devices | Topology | Port Scanner ──
+        self._tabs = QTabWidget()
+        self._tabs.setStyleSheet(
+            "QTabWidget::pane { border: 1px solid #313244; border-radius: 6px; "
+            "background: #1e1e2e; }"
+            "QTabBar::tab { background: #181825; border: 1px solid #313244; "
+            "border-bottom: none; border-top-left-radius: 6px; border-top-right-radius: 6px; "
+            "padding: 6px 14px; margin-right: 2px; color: #6c7086; }"
+            "QTabBar::tab:selected { background: #313244; color: #89b4fa; font-weight: bold; }"
+            "QTabBar::tab:hover { color: #cdd6f4; }"
+        )
 
-        self.status = QLabel("Ready")
-        self._add(self.status)
+        # ── Tab 1: Recon Dashboard (device cards / table) ──
+        dev_tab = QWidget()
+        dev_lo = QVBoxLayout(dev_tab)
+        dev_lo.setContentsMargins(8, 8, 8, 8)
 
-        # ── Port scanner ──
-        port_group = self._section("Port scanner")
+        self._device_table = QTableWidget(0, 5)
+        self._device_table.setHorizontalHeaderLabels(["IP", "Hostname", "MAC", "Vendor", "Status"])
+        self._device_table.setAlternatingRowColors(True)
+        self._device_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._device_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._device_table.verticalHeader().setVisible(False)
+        self._device_table.horizontalHeader().setStretchLastSection(True)
+        self._device_table.setColumnWidth(0, 130)
+        self._device_table.setColumnWidth(1, 150)
+        self._device_table.setColumnWidth(2, 140)
+        self._device_table.setStyleSheet(
+            "QTableWidget { background: #1e1e2e; border: none; border-radius: 6px; "
+            "color: #cdd6f4; gridline-color: #313244; font-size: 12px; }"
+            "QTableWidget::item { padding: 4px 8px; }"
+            "QHeaderView::section { background: #181825; border: 1px solid #313244; "
+            "padding: 6px; color: #a6adc8; font-weight: bold; }"
+        )
+        dev_lo.addWidget(self._device_table)
+
+        self._device_count = QLabel("0 devices")
+        self._device_count.setStyleSheet("color: #a6adc8; font-size: 12px; padding: 2px;")
+        dev_lo.addWidget(self._device_count)
+        self._tabs.addTab(dev_tab, "📋  Devices")
+
+        # ── Tab 2: Attack Surface Map (topology graph) ──
+        topo_tab = QWidget()
+        topo_lo = QVBoxLayout(topo_tab)
+        topo_lo.setContentsMargins(8, 8, 8, 8)
+
+        self._topo_scene = QGraphicsScene()
+        self._topo_view = QGraphicsView(self._topo_scene)
+        self._topo_view.setMinimumHeight(300)
+        self._topo_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._topo_view.setStyleSheet("background: #11111b; border: none; border-radius: 6px;")
+        topo_lo.addWidget(self._topo_view)
+
+        topo_info = QLabel("Devices discovered by scan appear as nodes. Edges show connectivity.")
+        topo_info.setStyleSheet("color: #6c7086; font-size: 11px; padding: 2px;")
+        topo_lo.addWidget(topo_info)
+        self._tabs.addTab(topo_tab, "🗺️  Topology")
+
+        # ── Tab 3: Port Scanner ──
+        port_tab = QWidget()
+        port_lo = QVBoxLayout(port_tab)
+        port_lo.setContentsMargins(8, 8, 8, 8)
+
         port_row = QHBoxLayout()
         port_row.addWidget(QLabel("Host:"))
         self.port_host = QLineEdit("localhost")
-        self.port_host.setFixedWidth(160)
+        self.port_host.setStyleSheet(
+            "QLineEdit { background: #181825; border: 1px solid #313244; "
+            "border-radius: 6px; padding: 5px 8px; color: #cdd6f4; }"
+        )
+        self.port_host.setFixedWidth(150)
         port_row.addWidget(self.port_host)
         port_row.addWidget(QLabel("Ports:"))
-        self.port_range = QLineEdit("11434,8080,80,443,22,5432")
+        self.port_range = QLineEdit("80,443,22,8080,11434,5432,3306")
+        self.port_range.setStyleSheet(
+            "QLineEdit { background: #181825; border: 1px solid #313244; "
+            "border-radius: 6px; padding: 5px 8px; color: #cdd6f4; }"
+        )
         port_row.addWidget(self.port_range, 1)
-        self.port_scan_btn = QPushButton(f"{icon('run')}  Scan ports")
+
+        self.port_scan_btn = QPushButton("🔍  Scan ports")
+        self.port_scan_btn.setStyleSheet(
+            "QPushButton { background: #313244; border: 1px solid #45475a; "
+            "border-radius: 6px; padding: 5px 14px; color: #cdd6f4; }"
+            "QPushButton:hover { border-color: #f38ba8; }"
+        )
         self.port_scan_btn.clicked.connect(self._scan_ports)
         port_row.addWidget(self.port_scan_btn)
-        port_group.layout().addLayout(port_row)  # type: ignore
-        self.port_results = QListWidget()
-        port_group.layout().addWidget(self.port_results)  # type: ignore
-        self._add(port_group)
+        port_lo.addLayout(port_row)
 
+        self.port_results = QListWidget()
+        self.port_results.setStyleSheet(
+            "QListWidget { background: #1e1e2e; border: 1px solid #313244; "
+            "border-radius: 6px; color: #cdd6f4; }"
+            "QListWidget::item { padding: 4px 8px; }"
+        )
+        port_lo.addWidget(self.port_results, 1)
+        self._tabs.addTab(port_tab, "🔌  Ports")
+
+        self._add(self._tabs)
+
+        # ── Status bar ──
+        self._status = QLabel("Ready. Enter a subnet and scan.")
+        self._status.setStyleSheet("color: #6c7086; font-size: 12px;")
+        self.content.addWidget(self._status)
+
+        # ── State ──
+        self._devices: list[dict] = []
         self._timer = QTimer()
         self._timer.setInterval(30000)
         self._timer.timeout.connect(self._scan)
+
+    # ── Recon scan ──────────────────────────────────────────────────────
 
     def _toggle_auto(self, on: bool) -> None:
         if on:
@@ -2621,35 +2882,110 @@ class NetworkPage(PageWidget):
             self._timer.stop()
 
     def _scan(self) -> None:
-        self.status.setText("Scanning...")
+        self._status.setText("Scanning...")
         self.scan_btn.setEnabled(False)
 
         def _run() -> None:
-            text = ""
+            devices = []
             try:
                 from virgo_network_scanner import scan_subnet
-
-                devices = scan_subnet(self.subnet_input.text())
-                text = "\n".join(str(d) for d in (devices or []))
+                raw = scan_subnet(self.subnet_input.text())
+                for d in (raw or []):
+                    if hasattr(d, "_asdict"):
+                        devices.append(d._asdict())
+                    elif isinstance(d, dict):
+                        devices.append(d)
+                    else:
+                        devices.append({"ip": str(d), "hostname": "", "mac": "", "vendor": "", "status": "up"})
             except Exception as exc:
-                text = f"Error: {exc}"
+                devices = [{"ip": f"Error: {exc}", "hostname": "", "mac": "", "vendor": "", "status": "error"}]
             QMetaObject.invokeMethod(
-                self,
-                "_show_results",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, text),
+                self, "_show_results", Qt.ConnectionType.QueuedConnection,
+                Q_ARG(list, devices),
             )
 
         threading.Thread(target=_run, daemon=True).start()
 
-    @pyqtSlot(str)
-    def _show_results(self, text: str) -> None:
-        self.results_list.clear()
-        for line in text.strip().split("\n"):
-            if line:
-                self.results_list.addItem(line)
-        self.status.setText(f"{self.results_list.count()} device(s)")
+    @pyqtSlot(list)
+    def _show_results(self, devices: list[dict]) -> None:
+        self._devices = devices
+        self._device_table.setRowCount(len(devices))
+        for row, d in enumerate(devices):
+            ip = d.get("ip", "?")
+            host = d.get("hostname", "") or d.get("host", "")
+            mac = d.get("mac", "")
+            vendor = d.get("vendor", "")
+            status = d.get("status", "up")
+
+            ip_item = QTableWidgetItem(ip)
+            ip_item.setForeground(QColor("#89b4fa"))
+            self._device_table.setItem(row, 0, ip_item)
+            self._device_table.setItem(row, 1, QTableWidgetItem(host))
+            self._device_table.setItem(row, 2, QTableWidgetItem(mac))
+            self._device_table.setItem(row, 3, QTableWidgetItem(vendor))
+
+            st_item = QTableWidgetItem(status)
+            st_item.setForeground(QColor("#a6e3a1" if status == "up" else "#f38ba8"))
+            self._device_table.setItem(row, 4, st_item)
+
+        self._device_count.setText(f"{len(devices)} device(s)")
+        self._status.setText(f"Found {len(devices)} device(s)")
         self.scan_btn.setEnabled(True)
+        self._build_topology()
+
+    # ── Attack Surface Map (topology) ──────────────────────────────────
+
+    def _build_topology(self) -> None:
+        """Render discovered devices as a visual network graph."""
+        self._topo_scene.clear()
+        if not self._devices:
+            txt = self._topo_scene.addText("No devices — run a scan first")
+            txt.setDefaultTextColor(QColor("#6c7086"))
+            return
+
+        import math
+        n = len(self._devices)
+        cx, cy, radius = 250, 180, 140
+        node_w, node_h = 100, 36
+
+        self._topo_nodes: list[dict] = []
+        for i, d in enumerate(self._devices):
+            angle = (2 * math.pi * i) / n - math.pi / 2
+            x = cx + radius * math.cos(angle) - node_w // 2
+            y = cy + radius * math.sin(angle) - node_h // 2
+
+            # Node rect
+            ip = d.get("ip", f"device_{i}")
+            rect = QGraphicsRectItem(x, y, node_w, node_h)
+            rect.setBrush(QBrush(QColor("#181825")))
+            rect.setPen(QPen(QColor("#89b4fa"), 1.5))
+            rect.setFlags(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable)
+            self._topo_scene.addItem(rect)
+
+            # IP label
+            label = QGraphicsTextItem(ip, rect)
+            label.setPos(x + 6, y + 8)
+            label.setDefaultTextColor(QColor("#cdd6f4"))
+            f = QFont("Segoe UI", 8, QFont.Weight.Bold)
+            label.setFont(f)
+
+            self._topo_nodes.append({"rect": rect, "ip": ip})
+
+        # Draw edges between consecutive devices (star topology)
+        for i in range(n - 1):
+            n1 = self._topo_nodes[i]
+            n2 = self._topo_nodes[i + 1]
+            r1 = n1["rect"]
+            r2 = n2["rect"]
+            x1 = r1.rect().center().x() + r1.pos().x()
+            y1 = r1.rect().center().y() + r1.pos().y()
+            x2 = r2.rect().center().x() + r2.pos().x()
+            y2 = r2.rect().center().y() + r2.pos().y()
+            self._topo_scene.addLine(x1, y1, x2, y2, QPen(QColor("#45475a"), 1, Qt.PenStyle.DashLine))
+
+        self._topo_scene.setSceneRect(0, 0, 500, 400)
+
+    # ── Port scanner ────────────────────────────────────────────────────
 
     def _scan_ports(self) -> None:
         host = self.port_host.text().strip()
@@ -2668,7 +3004,6 @@ class NetworkPage(PageWidget):
 
         def _run() -> None:
             import socket
-
             open_ports: list[int] = []
             for port in ports:
                 try:
@@ -2679,11 +3014,8 @@ class NetworkPage(PageWidget):
                 except Exception:
                     pass
             QMetaObject.invokeMethod(
-                self,
-                "_show_ports",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(list, open_ports),
-                Q_ARG(list, ports),
+                self, "_show_ports", Qt.ConnectionType.QueuedConnection,
+                Q_ARG(list, open_ports), Q_ARG(list, ports),
             )
 
         threading.Thread(target=_run, daemon=True).start()
@@ -2692,25 +3024,31 @@ class NetworkPage(PageWidget):
     def _show_ports(self, open_ports: list, all_ports: list) -> None:
         self.port_results.clear()
         for port in all_ports:
-            state = "OPEN" if port in open_ports else "closed"
-            item = QListWidgetItem(f"{port}: {state}")
-            if port in open_ports:
+            is_open = int(port) in open_ports
+            item = QListWidgetItem(f"  {'🔓' if is_open else '🔒'}  Port {port}  {'OPEN' if is_open else 'closed'}")
+            if is_open:
                 item.setForeground(QColor("#a6e3a1"))
+            else:
+                item.setForeground(QColor("#6c7086"))
             self.port_results.addItem(item)
         self.port_scan_btn.setEnabled(True)
+        self._status.setText(f"Port scan: {len(open_ports)}/{len(all_ports)} open")
 
     def _export(self) -> None:
-        if self.results_list.count() == 0:
-            self.status.setText("Nothing to export yet.")
+        if not self._devices:
+            self._status.setText("Nothing to export yet.")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Export devices", "network-scan.csv", "CSV (*.csv)"
         )
         if not path:
             return
-        rows = [self.results_list.item(i).text() for i in range(self.results_list.count())]
-        Path(path).write_text("\n".join(rows), encoding="utf-8")
-        self.status.setText(f"Exported {len(rows)} device(s)")
+        import csv
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["ip", "hostname", "mac", "vendor", "status"])
+            w.writeheader()
+            w.writerows(self._devices)
+        self._status.setText(f"Exported {len(self._devices)} device(s)")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -4430,13 +4768,45 @@ class DashboardPage(PageWidget):
         self._timer.setInterval(3000)
         self._timer.timeout.connect(self._refresh)
 
+        # ── Widget selector (#18) ──
+        self._widget_toggles: dict[str, QPushButton] = {}
+        self._widget_visible: dict[str, bool] = {
+            "persona": True, "system": True, "mascot": True,
+            "achievements": True, "activity": True, "actions": True,
+        }
+        widget_row = QHBoxLayout()
+        widget_row.setSpacing(4)
+        for w_id, w_label, w_emoji in [
+            ("persona", "Badge", "🎭"), ("system", "System", "⚡"),
+            ("mascot", "Mascot", "🐾"), ("achievements", "XP", "🏆"),
+            ("activity", "Activity", "📋"), ("actions", "Actions", "🚀"),
+        ]:
+            btn = QPushButton(w_emoji if len(w_emoji) > 1 else w_label)
+            btn.setCheckable(True)
+            btn.setChecked(True)
+            btn.setFixedHeight(26)
+            btn.setStyleSheet(
+                "QPushButton { background: #181825; border: 1px solid #313244; "
+                "border-radius: 4px; padding: 2px 8px; color: #6c7086; font-size: 10px; }"
+                "QPushButton:checked { background: #313244; color: #89b4fa; border-color: #89b4fa; }"
+            )
+            btn.clicked.connect(lambda checked=False, wid=w_id: self._toggle_widget(wid))
+            widget_row.addWidget(btn)
+            self._widget_toggles[w_id] = btn
+        widget_row.addStretch()
+        self.content.addLayout(widget_row)
+
+        self._all_widgets: dict[str, QWidget] = {}
+
         # ── Persona badge ──
         self._persona_badge = QLabel("Persona: Hacker")
+        self._persona_badge.setObjectName("dw_persona")
         self._persona_badge.setStyleSheet("font-size: 14px; font-weight: bold; color: #89b4fa; padding: 4px;")
         self._add(self._persona_badge)
 
         # ── System stats row ──
         stats_group = self._section("System")
+        stats_group.setObjectName("dw_system")
         self._stats_labels = {}
         for name, icon_c in [("CPU", "⚡"), ("RAM", "🅂"), ("DISK", "💾")]:
             row = QHBoxLayout()
@@ -4463,6 +4833,7 @@ class DashboardPage(PageWidget):
 
         # Mascot panel
         mascot_group = self._section("Sidekick")
+        mascot_group.setObjectName("dw_mascot")
         self._mascot_art = QLabel("(mascot ascii)")
         self._mascot_art.setStyleSheet("font-family: 'Courier New', monospace; font-size: 12px; color: #f5c2e7; padding: 8px; background: #181825; border-radius: 6px;")
         self._mascot_name = QLabel("")
@@ -4478,6 +4849,7 @@ class DashboardPage(PageWidget):
 
         # Achievements panel
         ach_group = self._section("Achievements")
+        ach_group.setObjectName("dw_achievements")
         self._ach_level = QLabel("Level 1")
         self._ach_level.setStyleSheet("font-size: 14px; font-weight: bold; color: #f9e2af;")
         self._ach_xp = QLabel("0 XP")
@@ -4505,6 +4877,7 @@ class DashboardPage(PageWidget):
 
         # ── Activity feed ──
         activity_group = self._section("Recent Activity")
+        activity_group.setObjectName("dw_activity")
         self._activity_log = QTextEdit()
         self._activity_log.setReadOnly(True)
         self._activity_log.setMaximumHeight(120)
@@ -4514,6 +4887,7 @@ class DashboardPage(PageWidget):
 
         # ── Quick actions ──
         actions_group = self._section("Quick Actions")
+        actions_group.setObjectName("dw_actions")
         actions_row = QHBoxLayout()
         actions_row.setSpacing(8)
         for label_text, callback in [
@@ -4591,71 +4965,20 @@ class DashboardPage(PageWidget):
             pass
 
     def _refresh_mascot(self) -> None:
-        """Update mascot ASCII art and name display."""
-        try:
-            import queue
-            import concurrent.futures
-            import time
-            
-            result_queue = queue.Queue()
-            
-            def _load_mascot():
-                try:
-                    from virgo_mascot import (
-                        current_mascot_name,
-                        get_mascot,
-                        idle_action,
-                        mascot_ascii,
-                    )
-                    name = current_mascot_name()
-                    m = get_mascot()
-                    display = m.get("display", name)
-                    ascii_str = mascot_ascii(name) or ""
-                    action = idle_action()
-                    result_queue.put(("success", (ascii_str, display, action)))
-                except Exception as e:
-                    result_queue.put(("error", str(e)))
-            
-            # Run in thread with timeout
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_load_mascot)
-                try:
-                    # Wait for result with timeout
-                    future.result(timeout=1.0)
-                except concurrent.futures.TimeoutError:
-                    result_queue.put(("timeout", "Operation timed out"))
-                except Exception:
-                    result_queue.put(("error", "Unexpected error"))
-                
-                # Get result
-                if not result_queue.empty():
-                    status, data = result_queue.get()
-                    if status == "success":
-                        ascii_str, display, action = data
-                        self._mascot_art.setText(ascii_str)
-                        self._mascot_name.setText(f"✦  {display}  —  {action}")
-                    else:
-                        raise Exception(data)
-                else:
-                    raise Exception("No result received")
-                    
-        except Exception:
-            self._mascot_art.setText("(mascot module not available)")
-            self._mascot_name.setText("")
-            self._mascot_action.setText("")
         """Update mascot display."""
         try:
-            from virgo_mascot import get_mascot, current_mascot_name, mascot_ascii, idle_action
+            from virgo_mascot import (
+                current_mascot_name, get_mascot, idle_action, mascot_ascii,
+            )
             name = current_mascot_name()
             m = get_mascot()
             display = m.get("display", name)
             ascii_str = mascot_ascii(name) or ""
             action = idle_action()
             self._mascot_art.setText(ascii_str)
-            self._mascot_name.setText(f"✦  {display}")
-            self._mascot_action.setText(action)
+            self._mascot_name.setText(f"✦  {display}  —  {action}")
         except Exception:
-            self._mascot_art.setText("(no mascot)")
+            self._mascot_art.setText("(mascot not available)")
             self._mascot_name.setText("")
             self._mascot_action.setText("")
 
@@ -4746,6 +5069,22 @@ class DashboardPage(PageWidget):
             self._refresh_focus()
         except Exception:
             pass
+
+    # ── Widget toggle (#18) ──
+
+    def _toggle_widget(self, widget_id: str) -> None:
+        """Show/hide a dashboard widget section."""
+        self._widget_visible[widget_id] = not self._widget_visible.get(widget_id, True)
+        # Find the widget by scrolling through children
+        for child in self.findChildren(QWidget):
+            obj_name = child.objectName()
+            if obj_name == f"dw_{widget_id}":
+                child.setVisible(self._widget_visible[widget_id])
+                break
+        # Update toggle button
+        btn = self._widget_toggles.get(widget_id)
+        if btn:
+            btn.setChecked(self._widget_visible[widget_id])
 
 
 def _xp_for_level(level: int) -> int:
@@ -5283,6 +5622,36 @@ class LeaderboardPage(PageWidget):
         stats_group.layout().addWidget(self._xp_bar)
         self._add(stats_group)
 
+        # ── Daily Quests (#20) ──
+        quests_group = self._section("Daily Quests")
+        quests_group.setStyleSheet(
+            "QGroupBox { background-color: #181825; border: 1px solid #313244; "
+            "border-radius: 8px; margin-top: 16px; padding: 14px 12px 10px; "
+            "font-weight: bold; color: #f9e2af; }"
+        )
+        self._quest_layout = QVBoxLayout()
+        self._quest_labels: list[tuple[QLabel, QLabel, QLabel]] = []
+        for quest in self._load_quests():
+            row = QHBoxLayout()
+            icon = QLabel(quest.get("icon", "📋"))
+            icon.setFixedWidth(24)
+            name_lbl = QLabel(quest["name"])
+            name_lbl.setStyleSheet("color: #cdd6f4; font-size: 12px;")
+            prog_lbl = QLabel(f"0/{quest['target']}")
+            prog_lbl.setStyleSheet("color: #a6adc8; font-size: 11px;")
+            xp_lbl = QLabel(f"+{quest['xp']} XP")
+            xp_lbl.setStyleSheet("color: #a6e3a1; font-size: 11px; font-weight: bold;")
+            row.addWidget(icon)
+            row.addWidget(name_lbl, 1)
+            row.addWidget(prog_lbl)
+            row.addSpacing(8)
+            row.addWidget(xp_lbl)
+            self._quest_layout.addLayout(row)
+            self._quest_labels.append((name_lbl, prog_lbl, xp_lbl))
+        self._quest_layout.addStretch()
+        quests_group.layout().addLayout(self._quest_layout)
+        self._add(quests_group)
+
         # ── Recent Sessions section ──
         history_group = self._section("Recent Sessions")
         self._history_table = QTableWidget()
@@ -5378,6 +5747,7 @@ class LeaderboardPage(PageWidget):
             self._update_stats(stats)
             self._update_history(history)
             self._update_daily(stats)
+            self._update_quests(stats)
         except Exception:
             self._level_label.setText("Level: — (module unavailable)")
             self._history_table.setRowCount(0)
@@ -5478,3 +5848,62 @@ class LeaderboardPage(PageWidget):
             self._timer.start()
         else:
             self._timer.stop()
+
+    # ── Daily Quests (#20) ──────────────────────────────────────────────
+    _QUESTS_CACHE: list[dict] | None = None
+
+    def _load_quests(self) -> list[dict]:
+        """Load daily quest definitions (cached)."""
+        if self._QUESTS_CACHE is not None:
+            return self._QUESTS_CACHE
+        quests = [
+            {"id": "run_pipeline", "name": "Run a Pipeline", "icon": "🚀",
+             "target": 1, "xp": 25},
+            {"id": "scan_network", "name": "Scan a Subnet", "icon": "🌐",
+             "target": 1, "xp": 20},
+            {"id": "chat_messages", "name": "Send 5 Chat Messages", "icon": "💬",
+             "target": 5, "xp": 15},
+            {"id": "earn_xp", "name": "Earn 100 XP", "icon": "⭐",
+             "target": 100, "xp": 50},
+            {"id": "check_achievements", "name": "View Achievements", "icon": "🏆",
+             "target": 1, "xp": 10},
+        ]
+        # Load any user-defined quests from disk
+        quests_dir = Path(__file__).parent / ".virgo_quests"
+        quests_dir.mkdir(exist_ok=True)
+        for pf in sorted(quests_dir.glob("*.json")):
+            try:
+                data = json.loads(pf.read_text(encoding="utf-8"))
+                quests.append(data)
+            except Exception:
+                pass
+        self._QUESTS_CACHE = quests
+        return quests
+
+    def _update_quests(self, stats: dict) -> None:
+        """Refresh daily quest progress from current stats."""
+        total_xp = stats.get("total_xp", 0)
+        total_sessions = stats.get("total_sessions", 0)
+        # Reset daily progress at midnight tracking
+        quests = self._load_quests()
+        for i, quest in enumerate(quests):
+            if i >= len(self._quest_labels):
+                break
+            name_lbl, prog_lbl, xp_lbl = self._quest_labels[i]
+            qid = quest["id"]
+            target = quest["target"]
+            # Map quest IDs to progress
+            if qid == "run_pipeline":
+                progress = min(total_sessions, target)
+            elif qid == "earn_xp":
+                progress = min(total_xp, target)
+            else:
+                progress = 0  # Tracked externally
+            completed = progress >= target
+            prog_lbl.setText(f"{progress}/{target}")
+            if completed:
+                name_lbl.setStyleSheet("color: #a6e3a1; font-size: 12px; text-decoration: line-through;")
+                prog_lbl.setStyleSheet("color: #a6e3a1; font-size: 11px;")
+            else:
+                name_lbl.setStyleSheet("color: #cdd6f4; font-size: 12px;")
+                prog_lbl.setStyleSheet("color: #a6adc8; font-size: 11px;")
