@@ -36,11 +36,9 @@ _test_*.txt
 test_output.txt
 
 # Runtime state files
-.virgo_chaos.json
-.virgo_mascot.json
-.virgo_persona.json
-.virgo_soundpack.json
-.virgo_focus.json
+.virgo_*.json
+.virgo_recipes/
+.virgo_quests/
 *.backup
 
 # Scratch / dev files (not for distribution)

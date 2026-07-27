@@ -717,10 +717,23 @@ class VirgoDesktopWindow(QMainWindow):
         self._sidebar_collapsed = bool(self._config.get("sidebar_collapsed", False))
         default_order = [pid for pid, _l, _e in SIDEBAR_ITEMS]
         saved_order = self._config.get("sidebar_order", default_order)
+        # Merge saved order with default order: keep saved positions for known
+        # items, insert any new items (not in saved) at their default position.
+        saved_set = set(saved_order)
         self.nav_order = [p for p in saved_order if p in default_order]
+        inserted = set(self.nav_order)
         for p in default_order:
-            if p not in self.nav_order:
-                self.nav_order.append(p)
+            if p not in inserted:
+                # Insert at the correct default position
+                default_idx = default_order.index(p)
+                # Find where to insert: after all previously inserted items
+                # that come before this one in the default order
+                pos = 0
+                for i, existing in enumerate(self.nav_order):
+                    if default_order.index(existing) < default_idx:
+                        pos = i + 1
+                self.nav_order.insert(pos, p)
+                inserted.add(p)
         self._nav_items: dict[str, QListWidgetItem] = {}
         self._popped: dict[str, PopOutWindow] = {}
         self.current_page = ""
@@ -832,6 +845,11 @@ class VirgoDesktopWindow(QMainWindow):
         self._focus_indicator.setStyleSheet("color: #a6e3a1; font-size: 11px; padding: 0 6px;")
         self.status_bar.addPermanentWidget(self._focus_indicator)
 
+        # Theme indicator
+        self._theme_indicator = QLabel("")
+        self._theme_indicator.setStyleSheet("color: #6c7086; font-size: 11px; padding: 0 6px;")
+        self.status_bar.addPermanentWidget(self._theme_indicator)
+
         # Chaos toggle
         self._chaos_btn = QPushButton("🎲")
         self._chaos_btn.setFixedWidth(32)
@@ -898,8 +916,7 @@ class VirgoDesktopWindow(QMainWindow):
         self._soundscape_volume = 50
 
         # ── Animated boot screen ──
-        # Disabled for now — causing blank-window issues on some systems
-        # self._show_boot_screen()
+        self._show_boot_screen()
 
     # ────────────────────────────────────────────────────────────────
 
@@ -1839,9 +1856,15 @@ class VirgoDesktopWindow(QMainWindow):
             ("", ""),
             ("1 – 9, 0", "Navigate sidebar pages (in order)"),
             ("Ctrl+P", "Quick page switcher (fuzzy)"),
+            ("Ctrl+Shift+P", "Command palette (actions + pages)"),
+            ("Ctrl+Shift+L", "Prompt library panel"),
+            ("Ctrl+Shift+I", "Performance overlay"),
             ("Ctrl+B", "Collapse / expand sidebar"),
+            ("Ctrl+F", "Search within chat log"),
+            ("Ctrl+Return", "Send chat message"),
+            ("Ctrl++ / Ctrl+-", "Zoom chat font"),
             ("?", "Show this help overlay"),
-            ("Escape", "Close dialogs"),
+            ("Escape", "Close dialogs / overlays"),
             ("", ""),
             ("Drag sidebar items", "Reorder pages"),
             ("Drag sidebar edge", "Resize sidebar"),
@@ -1969,6 +1992,11 @@ class VirgoDesktopWindow(QMainWindow):
         if getattr(self, "_custom_css", ""):
             ss += "\n" + self._custom_css
         self.setStyleSheet(ss)
+        # Update theme indicator
+        if hasattr(self, "_theme_indicator"):
+            theme_name = t.get("name", "Mocha")
+            icon = "🌙" if self._active_theme in ("mocha", "nord", "gruvbox") else "☀️"
+            self._theme_indicator.setText(f"{icon} {theme_name}")
         # Live-apply to any popped-out windows too.
         for win in getattr(self, "_popped", {}).values():
             try:
@@ -2054,78 +2082,36 @@ class VirgoDesktopWindow(QMainWindow):
     # ── Animated Boot Screen (#10) ──────────────────────────────────────
 
     def _show_boot_screen(self) -> None:
-        """Display a brief animated splash with the Virgo constellation logo."""
+        """Display a brief centered splash with Virgo logo text (no QGraphicsView)."""
         try:
-            splash = QFrame(self)
+            splash = QLabel(self)
             splash.setObjectName("bootSplash")
-            splash.setGeometry(0, 0, self.width(), self.height())
-            splash.setStyleSheet(
-                "QFrame#bootSplash { background: #11111b; }"
+            splash.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            splash.setText(
+                "<div style='text-align: center;'>"
+                "<span style='font-size: 48px; color: #89b4fa;'>✦</span><br><br>"
+                "<span style='font-size: 32px; font-weight: bold; color: #cdd6f4;'>VIRGO</span><br>"
+                f"<span style='font-size: 14px; color: #6c7086;'>v{APP_VERSION}</span><br><br>"
+                "<span style='font-size: 13px; color: #45475a;'>loading...</span>"
+                "</div>"
             )
+            splash.setStyleSheet(
+                "QLabel { background: #11111b; border: none; }"
+            )
+            splash.setGeometry(0, 0, self.width(), self.height())
             splash.raise_()
             splash.show()
 
-            # Constellation geometry (matching _make_logo.py)
-            stars = [
-                (200, 100), (240, 80), (280, 110), (260, 150), (210, 140),
-                (170, 170), (220, 200), (300, 130), (330, 170), (310, 210),
-                (270, 220), (230, 250), (290, 270), (350, 190),
-            ]
-            cx, cy = self.width() // 2 - 175, self.height() // 2 - 135
-            connections = [
-                (0, 1), (1, 2), (2, 3), (3, 4), (4, 0),
-                (4, 5), (5, 6), (6, 3), (2, 7), (7, 8),
-                (8, 9), (9, 10), (10, 6), (10, 11), (11, 12), (12, 13),
-            ]
-
-            scene = QGraphicsScene()
-            view = QGraphicsView(scene, splash)
-            view.setGeometry(0, 0, self.width(), self.height())
-            view.setStyleSheet("background: transparent; border: none;")
-            view.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-            # Draw constellation
-            pen = QPen(QColor("#89b4fa"), 1.5)
-            for i, j in connections:
-                x1, y1 = stars[i]; x2, y2 = stars[j]
-                scene.addLine(cx + x1, cy + y1, cx + x2, cy + y2, pen)
-
-            # Draw stars as circles
-            for sx, sy in stars:
-                scene.addEllipse(
-                    cx + sx - 4, cy + sy - 4, 8, 8,
-                    QPen(QColor("#89b4fa"), 2), QBrush(QColor("#89b4fa")),
-                )
-
-            # VIRGO text
-            txt = scene.addText("VIRGO")
-            txt.setDefaultTextColor(QColor("#cdd6f4"))
-            font = QFont("Segoe UI", 32, QFont.Weight.Bold)
-            txt.setFont(font)
-            txt.setPos(cx + 50, cy + 300)
-
-            # Version
-            ver = scene.addText(f"v{APP_VERSION}")
-            ver.setDefaultTextColor(QColor("#6c7086"))
-            vfont = QFont("Segoe UI", 12)
-            ver.setFont(vfont)
-            ver.setPos(cx + 150, cy + 350)
-
-            # Simply delete the splash after a delay
             def _dismiss() -> None:
                 try:
                     splash.hide()
                     splash.deleteLater()
-                    # Force the main window to repaint what was underneath
-                    self.update()
-                    self.repaint()
-                    self.stack.update()
                 except Exception:
                     pass
 
-            QTimer.singleShot(2500, _dismiss)
+            QTimer.singleShot(1500, _dismiss)
         except Exception:
-            pass  # Non-critical; boot proceeds without splash
+            pass
 
     # ── Ambient Mode (#8) ──────────────────────────────────────────────
 

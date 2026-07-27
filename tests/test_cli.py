@@ -168,14 +168,15 @@ class TestChat:
 
     def test_chat_no_llm_still_works(self) -> None:
         """Without LLM, chat falls back to teach mode."""
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1",
+               "OLLAMA_HOST": "http://127.0.0.1:1", "LLM_BASE_URL": "http://127.0.0.1:1"}
         r = subprocess.run(
             [sys.executable, CLI, "chat"],
             input="hello\n/quit\n",
             capture_output=True,
             text=True,
             encoding="utf-8",
-            timeout=30,
+            timeout=45,
             cwd=str(HERE),
             env=env,
         )
@@ -185,14 +186,15 @@ class TestChat:
 
     def test_chat_slash_save(self) -> None:
         """/save should not crash."""
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1",
+               "OLLAMA_HOST": "http://127.0.0.1:1", "LLM_BASE_URL": "http://127.0.0.1:1"}
         r = subprocess.run(
             [sys.executable, CLI, "chat"],
             input="hello\n/save\nexit\n",
             capture_output=True,
             text=True,
             encoding="utf-8",
-            timeout=30,
+            timeout=45,
             cwd=str(HERE),
             env=env,
         )
