@@ -2385,6 +2385,9 @@ def main() -> None:
     app.setOrganizationName("Virgo")
     window = VirgoDesktopWindow()
     window.show()
+    window.raise_()
+    window.activateWindow()
+    app.processEvents()  # ensure layout and paint events are flushed
     sys.exit(app.exec())
 
 
