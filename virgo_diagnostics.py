@@ -1,9 +1,9 @@
 """
-virgo_diagnostics — full system diagnostics suite.
+virgo_diagnostics — live system health for the Virgo agent environment.
 
-Collects network recon (local ports), system health info (OS, storage),
-and parses mock_logs.txt for known error patterns. Writes a consolidated
-report to virgo_full_report.json.
+Reports CPU/memory/disk usage, running processes, network interfaces,
+Ollama/service status, and GPU (if available). Used by the desktop
+DiagnosticsPage for real-time monitoring.
 """
 
 from __future__ import annotations
@@ -11,87 +11,182 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import socket
-import subprocess
 import sys
+import time
+from datetime import datetime
+from pathlib import Path
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+HERE = Path(__file__).parent
+sys.path.insert(0, str(HERE))
 
-from _console import icon
 from _log import OUTDIR
 
-REPORT_FILE = str(OUTDIR / "virgo_full_report.json")
+REPORT_FILE = OUTDIR / "virgo_diagnostics.json"
 
 
-def run_full_diagnostics() -> None:
-    report: dict = {
-        "1_network_recon": {},
-        "2_system_health": {},
-        "3_log_analysis": [],
+def get_system_stats() -> dict:
+    """Return a dict of current system health metrics."""
+    stats: dict = {
+        "timestamp": datetime.now().isoformat(),
+        "os": f"{platform.system()} {platform.release()}",
+        "hostname": platform.node(),
+        "cpu": {},
+        "memory": {},
+        "disk": {},
+        "network": [],
+        "services": {},
+        "processes": [],
+        "ollama": {},
     }
 
-    print(f"{icon('sat')} Starting Virgo Diagnostics Suite...")
+    # CPU
+    try:
+        import psutil
+        stats["cpu"]["percent"] = psutil.cpu_percent(interval=0.5)
+        stats["cpu"]["count"] = psutil.cpu_count()
+        stats["cpu"]["freq_mhz"] = round(psutil.cpu_freq().current, 1) if psutil.cpu_freq() else None
+    except Exception:
+        stats["cpu"]["error"] = "psutil not available"
 
-    # --- 1. NETWORK RECON (Common local ports) ---
-    target_ports = [11434, 8000, 8080]
-    for port in target_ports:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1)
-        result = sock.connect_ex(("127.0.0.1", port))
-        report["1_network_recon"][f"port_{port}"] = "OPEN" if result == 0 else "CLOSED"
-        sock.close()
+    # Memory
+    try:
+        mem = psutil.virtual_memory()
+        stats["memory"]["total_gb"] = round(mem.total / 1024**3, 1)
+        stats["memory"]["used_gb"] = round(mem.used / 1024**3, 1)
+        stats["memory"]["percent"] = mem.percent
+    except Exception:
+        pass
 
-    # --- 2. SYSTEM HEALTH ---
-    report["2_system_health"]["os"] = platform.system()
-    report["2_system_health"]["os_release"] = platform.release()
+    # Disk
+    try:
+        for part in psutil.disk_partitions():
+            if part.fstype:
+                try:
+                    usage = psutil.disk_usage(part.mountpoint)
+                    stats["disk"].append({
+                        "mount": part.mountpoint,
+                        "fstype": part.fstype,
+                        "total_gb": round(usage.total / 1024**3, 1),
+                        "used_gb": round(usage.used / 1024**3, 1),
+                        "percent": usage.percent,
+                    })
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
-    # Quick disk check via powershell if on Windows
-    if platform.system() == "Windows":
-        try:
-            cmd = "Get-PSDrive C | Select-Object Used, Free"
-            res = subprocess.run(["powershell", "-Command", cmd], capture_output=True, text=True)
-            report["2_system_health"]["storage_info"] = res.stdout.strip().split("\n")[-1]
-        except Exception:
-            report["2_system_health"]["storage_info"] = "Could not retrieve storage metrics."
+    # Network interfaces
+    try:
+        addrs = psutil.net_if_addrs()
+        for name, addr_list in addrs.items():
+            for addr in addr_list:
+                if addr.family == socket.AF_INET:  # IPv4
+                    stats["network"].append({"interface": name, "ip": addr.address})
+    except Exception:
+        pass
 
-    # --- 3. LOG ANALYSIS & ERROR RECONCILIATION ---
-    error_lookup = {
-        "error 30": (
-            "CRITICAL: Device harness communication timeout. "
-            "Check your 48v controller wiring connections and main harness pins."
-        ),
-        "database": (
-            "WARNING: Local database connection refused. "
-            "Verify your database background service is currently active."
-        ),
+    # Top processes by memory
+    try:
+        for proc in sorted(psutil.process_iter(["pid", "name", "memory_percent", "cpu_percent"]),
+                           key=lambda p: p.info.get("memory_percent", 0) or 0, reverse=True)[:10]:
+            stats["processes"].append({
+                "pid": proc.info["pid"],
+                "name": proc.info["name"],
+                "mem_pct": round(proc.info.get("memory_percent", 0) or 0, 1),
+                "cpu_pct": round(proc.info.get("cpu_percent", 0) or 0, 1),
+            })
+    except Exception:
+        pass
+
+    # Services: check if key processes are running
+    service_ports = {
+        "Ollama": 11434,
+        "Virgo Pipeline": None,  # check process
     }
+    for svc_name, port in service_ports.items():
+        if port:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            try:
+                result = sock.connect_ex(("127.0.0.1", port))
+                stats["services"][svc_name] = "running" if result == 0 else "stopped"
+            except Exception:
+                stats["services"][svc_name] = "error"
+            finally:
+                sock.close()
+        else:
+            stats["services"][svc_name] = "checking"
 
-    log_path = os.path.join(HERE, "mock_logs.txt")
-    if os.path.exists(log_path):
-        with open(log_path) as f:
-            for line in f:
-                if "ERROR" in line or "CRITICAL" in line:
-                    matched_fix = "No specific match found in local knowledge base."
-                    for key, fix in error_lookup.items():
-                        if key in line.lower():
-                            matched_fix = fix
-                            break
-                    report["3_log_analysis"].append(
-                        {
-                            "raw_log": line.strip(),
-                            "suggested_action": matched_fix,
-                        }
-                    )
+    # Ollama model list
+    try:
+        import urllib.request
+        raw = urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3).read()
+        data = json.loads(raw)
+        models = [m["name"] for m in data.get("models", [])]
+        stats["ollama"]["models"] = models
+        stats["ollama"]["model_count"] = len(models)
+    except Exception:
+        stats["ollama"]["error"] = "unreachable"
+
+    return stats
+
+
+def format_report(stats: dict) -> str:
+    """Format stats as a human-readable report string."""
+    lines = [
+        f"═══ System Health Report ═══",
+        f"Host: {stats['hostname']}  |  OS: {stats['os']}",
+        f"Time: {stats['timestamp']}",
+        "",
+    ]
+
+    # CPU
+    cpu = stats.get("cpu", {})
+    if "error" not in cpu:
+        freq = f" @ {cpu['freq_mhz']}MHz" if cpu.get("freq_mhz") else ""
+        lines.append(f"CPU: {cpu.get('percent', '?')}%  ({cpu.get('count', '?')} cores{freq})")
     else:
-        report["3_log_analysis"].append("mock_logs.txt missing. Skipping text analysis.")
+        lines.append(f"CPU: {cpu['error']}")
 
-    # --- SAVE CONSOLIDATED DIAGNOSTIC REPORT ---
-    with open(REPORT_FILE, "w") as f:
-        json.dump(report, f, indent=2)
-    print(f"{icon('done')} Full diagnostic check completed successfully!")
-    print("Saved comprehensive summary report to: " + REPORT_FILE)
+    # Memory
+    mem = stats.get("memory", {})
+    if mem:
+        lines.append(f"RAM: {mem['percent']}%  ({mem['used_gb']} / {mem['total_gb']} GB)")
 
+    # Disk
+    for disk in stats.get("disk", []):
+        lines.append(f"DISK {disk['mount']}: {disk['percent']}%  ({disk['used_gb']} / {disk['total_gb']} GB)")
 
-if __name__ == "__main__":
-    run_full_diagnostics()
+    # Network
+    lines.append("")
+    lines.append("─── Network ───")
+    for iface in stats.get("network", []):
+        lines.append(f"  {iface['interface']}: {iface['ip']}")
+    if not stats.get("network"):
+        lines.append("  (none)")
+
+    # Services
+    lines.append("")
+    lines.append("─── Services ───")
+    for svc, status in stats.get("services", {}).items():
+        icon = "🟢" if status == "running" else "🔴"
+        lines.append(f"  {icon} {svc}: {status}")
+
+    # Ollama
+    ollama = stats.get("ollama", {})
+    if "error" not in ollama:
+        lines.append(f"  🟢 Ollama: {ollama.get('model_count', 0)} models pulled")
+    else:
+        lines.append(f"  🔴 Ollama: {ollama['error']}")
+
+    # Top processes
+    lines.append("")
+    lines.append("─── Top Processes (by memory) ───")
+    for p in stats.get("processes", [])[:8]:
+        lines.append(f"  {p['pid']:>6}  {p['name']:<20}  mem={p['mem_pct']}%  cpu={p['cpu_pct']}%")
+    if not stats.get("processes"):
+        lines.append("  (psutil not available)")
+
+    return "\n".join(lines)

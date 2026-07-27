@@ -3062,88 +3062,196 @@ class NetworkPage(PageWidget):
 
 
 class DiagnosticsPage(PageWidget):
-    """System health diagnostics."""
+    """Live system health — CPU, RAM, disk, network, services, processes."""
 
     def __init__(self) -> None:
         super().__init__(
-            "Diagnostics",
-            "CPU, memory, disk, and service health checks.",
+            "System Health",
+            "Live CPU, memory, disk, network & service monitoring.",
         )
-
-        self._add_row(
-            QPushButton(f"{icon('run')}  Run Full Diagnostics", clicked=self._run_diag),
-            QPushButton(f"{icon('save')}  Export JSON", clicked=self._export),
-        )
-        self.auto_cb = QCheckBox("Auto (60s)")
-        self.auto_cb.toggled.connect(self._toggle_auto)
-        self._add_row(self.auto_cb)
-
-        self.output = QPlainTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setMaximumBlockCount(500)
-        self._add(self.output)
 
         self._timer = QTimer()
-        self._timer.setInterval(60000)
-        self._timer.timeout.connect(self._run_diag)
+        self._timer.setInterval(5000)
+        self._timer.timeout.connect(self._refresh)
+
+        # ── Controls ──
+        ctrl_row = QHBoxLayout()
+        refresh_btn = QPushButton("🔄  Refresh")
+        refresh_btn.setStyleSheet(
+            "QPushButton { background: #313244; border: 1px solid #45475a; "
+            "border-radius: 6px; padding: 6px 14px; color: #cdd6f4; }"
+            "QPushButton:hover { border-color: #89b4fa; }"
+        )
+        refresh_btn.clicked.connect(self._refresh)
+        ctrl_row.addWidget(refresh_btn)
+        self._auto_cb = QCheckBox("Auto (5s)")
+        self._auto_cb.setStyleSheet("color: #a6adc8;")
+        self._auto_cb.toggled.connect(self._toggle_auto)
+        ctrl_row.addWidget(self._auto_cb)
+        ctrl_row.addStretch()
+        self.content.addLayout(ctrl_row)
+
+        # ── Stats grid: CPU, RAM, DISK ──
+        gauges = QHBoxLayout()
+        gauges.setSpacing(16)
+        self._gauges: dict[str, QProgressBar] = {}
+        for name, icon, color in [
+            ("CPU", "⚡", "#89b4fa"),
+            ("RAM", "🅂", "#a6e3a1"),
+            ("DISK C:", "💾", "#f9e2af"),
+        ]:
+            box = QWidget()
+            box.setStyleSheet(
+                "background: #181825; border: 1px solid #313244; "
+                "border-radius: 8px; padding: 12px;"
+            )
+            bl = QVBoxLayout(box)
+            bl.setSpacing(6)
+            bl.addWidget(QLabel(f"{icon}  {name}"))
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setTextVisible(True)
+            bar.setFixedHeight(22)
+            bar.setStyleSheet(f"""
+                QProgressBar {{ background: #11111b; border: none; border-radius: 4px;
+                    text-align: center; color: #cdd6f4; font-size: 11px; }}
+                QProgressBar::chunk {{ background: {color}; border-radius: 4px; }}
+            """)
+            bl.addWidget(bar)
+            gauges.addWidget(box, 1)
+            self._gauges[name] = bar
+        self.content.addLayout(gauges)
+
+        # ── Network + Services row ──
+        info_row = QHBoxLayout()
+        info_row.setSpacing(16)
+
+        # Network panel
+        net_group = self._section("Network")
+        self._net_labels: list[QLabel] = []
+        self._net_container = QVBoxLayout()
+        net_group.layout().addLayout(self._net_container)  # type: ignore
+        info_row.addWidget(net_group, 1)
+
+        # Services panel
+        svc_group = self._section("Services")
+        self._svc_labels: dict[str, QLabel] = {}
+        for svc in ["Ollama", "Ollama Models"]:
+            row = QHBoxLayout()
+            lbl = QLabel(f"  ○  {svc}")
+            lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
+            row.addWidget(lbl)
+            self._svc_labels[svc] = lbl
+            svc_group.layout().addLayout(row)  # type: ignore
+        info_row.addWidget(svc_group, 1)
+        self.content.addLayout(info_row)
+
+        # ── Process table ──
+        proc_group = self._section("Top Processes")
+        self._proc_table = QTableWidget(0, 4)
+        self._proc_table.setHorizontalHeaderLabels(["PID", "Name", "Mem %", "CPU %"])
+        self._proc_table.setAlternatingRowColors(True)
+        self._proc_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._proc_table.verticalHeader().setVisible(False)
+        self._proc_table.horizontalHeader().setStretchLastSection(True)
+        self._proc_table.setStyleSheet(
+            "QTableWidget { background: #1e1e2e; border: none; border-radius: 6px; "
+            "color: #cdd6f4; gridline-color: #313244; font-size: 11px; }"
+            "QTableWidget::item { padding: 2px 6px; }"
+            "QHeaderView::section { background: #181825; border: 1px solid #313244; "
+            "padding: 4px; color: #a6adc8; font-weight: bold; }"
+        )
+        self._proc_table.setMinimumHeight(200)
+        proc_group.layout().addWidget(self._proc_table)  # type: ignore
+        self._add(proc_group)
+
+        # ── Last update timestamp ──
+        self._ts_label = QLabel("")
+        self._ts_label.setStyleSheet("color: #6c7086; font-size: 11px;")
+        self.content.addWidget(self._ts_label)
+
+        self._refresh()
+
+    def on_activate(self) -> None:
+        if self._auto_cb.isChecked():
+            self._timer.start()
 
     def _toggle_auto(self, on: bool) -> None:
         if on:
-            self._run_diag()
+            self._refresh()
             self._timer.start()
         else:
             self._timer.stop()
 
-    def _run_diag(self) -> None:
-        self.output.clear()
-        self.output.appendPlainText("Running system diagnostics...\n")
-
-        def _run() -> None:
-            import io
-
-            try:
-                from virgo_diagnostics import run_full_diagnostics
-
-                buf = io.StringIO()
-                old = sys.stdout
-                sys.stdout = buf
-                try:
-                    run_full_diagnostics()
-                finally:
-                    sys.stdout = old
-                text = buf.getvalue()
-            except Exception as exc:
-                text = f"Error: {exc}"
-            QMetaObject.invokeMethod(
-                self,
-                "_append_diag",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, text),
-            )
-
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _export(self) -> None:
-        text = self.output.toPlainText().strip()
-        if not text:
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export diagnostics", "diagnostics.json", "JSON (*.json)"
-        )
-        if not path:
-            return
-        import re as _re
-
-        # Best-effort: store the raw log; attempt to parse key/value lines.
+    def _refresh(self) -> None:
+        """Fetch latest stats and update all widgets."""
         try:
-            data = dict(_re.findall(r"^([\w\s]+):\s*(.+)$", text, _re.MULTILINE))
-        except Exception:
-            data = {"raw": text}
-        Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
+            from virgo_diagnostics import get_system_stats
+            stats = get_system_stats()
 
-    @pyqtSlot(str)
-    def _append_diag(self, text: str) -> None:
-        self.output.appendPlainText(text)
+            # CPU gauge
+            cpu_pct = stats.get("cpu", {}).get("percent", 0) or 0
+            self._gauges["CPU"].setValue(int(cpu_pct))
+            freq = stats.get("cpu", {}).get("freq_mhz")
+            freq_str = f" @ {freq}MHz" if freq else ""
+            self._gauges["CPU"].setFormat(f"CPU  {cpu_pct:.0f}%  ({stats['cpu'].get('count', '?')} cores{freq_str})")
+
+            # RAM gauge
+            mem = stats.get("memory", {})
+            if mem:
+                self._gauges["RAM"].setValue(int(mem["percent"]))
+                self._gauges["RAM"].setFormat(f"RAM  {mem['percent']:.0f}%  ({mem['used_gb']}/{mem['total_gb']} GB)")
+
+            # Disk gauge
+            disks = stats.get("disk", [])
+            if disks:
+                d = disks[0]
+                self._gauges["DISK C:"].setValue(int(d["percent"]))
+                self._gauges["DISK C:"].setFormat(f"{d['mount']}  {d['percent']:.0f}%  ({d['used_gb']}/{d['total_gb']} GB)")
+
+            # Network
+            for i in reversed(range(self._net_container.count())):
+                w = self._net_container.itemAt(i)
+                if w and w.widget():
+                    w.widget().deleteLater()
+            for iface in stats.get("network", [])[:5]:
+                lbl = QLabel(f"  🌐  {iface['interface']}:  {iface['ip']}")
+                lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
+                self._net_container.addWidget(lbl)
+            if not stats.get("network"):
+                self._net_container.addWidget(QLabel("  (no network info)"))
+
+            # Services
+            services = stats.get("services", {})
+            for svc, lbl in self._svc_labels.items():
+                if svc == "Ollama":
+                    status = services.get("Ollama", "unknown")
+                    icon = "🟢" if status == "running" else ("🟡" if status == "checking" else "🔴")
+                    lbl.setText(f"  {icon}  Ollama: {status}")
+                elif svc == "Ollama Models":
+                    models = stats.get("ollama", {}).get("models", [])
+                    count = stats.get("ollama", {}).get("model_count", 0)
+                    lbl.setText(f"  🧠  {count} model(s): {', '.join(models[:3])}{'...' if count > 3 else ''}")
+
+            # Processes
+            self._proc_table.setRowCount(0)
+            for proc in stats.get("processes", [])[:10]:
+                r = self._proc_table.rowCount()
+                self._proc_table.insertRow(r)
+                self._proc_table.setItem(r, 0, QTableWidgetItem(str(proc["pid"])))
+                self._proc_table.setItem(r, 1, QTableWidgetItem(proc["name"]))
+                mt = QTableWidgetItem(f"{proc['mem_pct']:.1f}")
+                mt.setForeground(QColor("#a6e3a1"))
+                self._proc_table.setItem(r, 2, mt)
+                ct = QTableWidgetItem(f"{proc['cpu_pct']:.1f}")
+                ct.setForeground(QColor("#89b4fa"))
+                self._proc_table.setItem(r, 3, ct)
+
+            self._ts_label.setText(f"Last updated: {stats['timestamp']}")
+
+        except Exception as exc:
+            self._ts_label.setText(f"Error: {exc}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
