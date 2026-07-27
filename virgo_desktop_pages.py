@@ -123,10 +123,17 @@ class PageWidget(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         inner = QWidget()
-        inner.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Preferred (NOT Expanding): with setWidgetResizable(True), an
+        # Expanding policy makes the scroll area pin the inner widget to the
+        # viewport height and never show a scrollbar, clipping tall pages.
+        inner.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.content = QVBoxLayout(inner)
         self.content.setSpacing(12)
         self.content.setContentsMargins(0, 0, 0, 0)
+        # Force the inner widget's minimum size to grow with its content so the
+        # QScrollArea always offers a vertical scrollbar when the page is taller
+        # than the viewport (e.g. the Settings page).
+        self.content.setSizeConstraint(QVBoxLayout.SizeConstraint.SetMinimumSize)
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
 
