@@ -57,6 +57,39 @@ def _step(label: str, *parts: str) -> None:
 
 
 # ===========================================================================
+# Structured event channel — machine-readable status for UIs (Virgo Desktop
+# live DAG). Emitted as a single JSON line prefixed with VIRGO_EVENT: so it
+# round-trips through subprocess stdout without breaking legacy line parsing.
+# A callable set on Orchestrator.emit_hook receives the raw dict too, so an
+# in-process UI can subscribe without scraping stdout.
+# ===========================================================================
+def _emit_event(event: str, **payload: Any) -> None:
+    """Emit a structured pipeline event (idempotent, never raises)."""
+    import json as _json
+    record = {"event": event, **payload}
+    try:
+        print("VIRGO_EVENT:" + _json.dumps(record, default=str), flush=True)
+    except Exception:
+        pass
+
+
+# Phase display names used by the live DAG. Maps internal phase -> node id.
+_PHASE_MAP = {
+    "discovering": "discover",
+    "planning": "plan",
+    "generating": "generate",
+    "reviewing": "review",
+    "dependencies": "deps",
+    "testing": "test",
+    "fixing": "fix",
+    "complete": "done",
+    "aborted": "aborted",
+}
+# Full ordered node list (incl. optional phases) for the DAG layout.
+DAG_NODES = ["discover", "plan", "generate", "review", "deps", "test", "fix", "done"]
+
+
+# ===========================================================================
 # Data types — flow through the pipeline
 # ===========================================================================
 
@@ -201,6 +234,16 @@ class Orchestrator:
 
         # Populated by .run()
         self.state: WorkspaceState | None = None
+        # Optional UI hook: if set, receives every structured event dict.
+        self.emit_hook: Optional[Callable[[dict[str, Any]], None]] | None = None
+
+    def _emit(self, event: str, **payload: Any) -> None:
+        _emit_event(event, **payload)
+        if self.emit_hook is not None:
+            try:
+                self.emit_hook({"event": event, **payload})
+            except Exception:
+                pass
 
     # ======================================================================
     # Public entry point
@@ -263,11 +306,15 @@ class Orchestrator:
 
         # ---- Phase 1: Discover -------------------------------------------
         state.phase = "discovering"
+        self._emit("pipeline_start", goal=goal, max_iterations=max_iterations,
+                   nodes=DAG_NODES)
+        self._emit("phase_enter", phase="discover")
         _step("goal", goal)
         self._discover(state)
 
         # ---- Phase 2-3: Plan → Human approval → (revise or generate) ----
         state.phase = "planning"
+        self._emit("phase_enter", phase="plan")
         plan_cycles = 0
         approved = False
 
@@ -312,6 +359,7 @@ class Orchestrator:
 
         # ---- Phase 4: Generate (was Phase 3) -----------------------------
         state.phase = "generating"
+        self._emit("phase_enter", phase="generate")
         if code_gen:
             try:
                 files = code_gen(plan, state, self.registry, self.env)
@@ -331,10 +379,13 @@ class Orchestrator:
                 syntax = result.get("syntax_check", "")
                 extra = f"syntax:{syntax}" if syntax else ""
                 _step("generate", fpath, extra)
+            self._emit("phase_exit", phase="generate",
+                       files=[g.path for g in state.generated_files])
 
         # ---- Phase 4a: Critic (optional) -----------------------------------
         if run_critic and state.generated_files:
             state.phase = "reviewing"
+            self._emit("phase_enter", phase="review")
             _step("syntax", "Running code critic …")
             paths = [str(self.base_path / gf.path) for gf in state.generated_files]
             try:
@@ -344,14 +395,19 @@ class Orchestrator:
                 print(f"\n{report}")
                 if not report.passed:
                     _step("fail", f"Critic found {len(report.errors)} error(s)")
+                    self._emit("phase_exit", phase="review", passed=False,
+                               errors=len(report.errors))
                 else:
                     _step("pass", "Critic passed")
+                    self._emit("phase_exit", phase="review", passed=True)
             except Exception as exc:
                 _step("info", f"Critic skipped: {exc}")
+                self._emit("phase_exit", phase="review", skipped=True)
 
         # ---- Phase 4b: Auto-dependency install (optional) -------------------
         if auto_depend and state.generated_files:
             state.phase = "dependencies"
+            self._emit("phase_enter", phase="deps")
             _step("syntax", "Checking dependencies …")
             for gf in state.generated_files:
                 try:
@@ -362,12 +418,20 @@ class Orchestrator:
                         _step("info", f"  Installed: {', '.join(installed)}")
                 except Exception as exc:
                     _step("info", f"  Dep check skipped: {exc}")
+            self._emit("phase_exit", phase="deps")
 
         # ---- Phase 5: Write-Test-Fix loop --------------------------------
         state.phase = "testing"
+        self._emit("phase_enter", phase="test")
         self._wtf_loop(fixer, max_iterations)
 
         state.phase = "complete"
+        self._emit("phase_exit", phase="test",
+                   loop_passed=state.loop_passed,
+                   iterations=state.iteration)
+        self._emit("pipeline_end", loop_passed=state.loop_passed,
+                   files=[g.path for g in state.generated_files],
+                   iterations=state.iteration)
         return state
 
     # ======================================================================
@@ -668,6 +732,9 @@ class Orchestrator:
             elapsed = time.time() - _wtf_start
             elapsed_str = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
             _step("test", f"Cycle {state.iteration}/{max_iterations}  [{elapsed_str}]")
+            if self._emit is not None:
+                self._emit("wtf_cycle", cycle=state.iteration,
+                           max_iterations=max_iterations)
 
             all_passed = True
 

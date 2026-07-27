@@ -240,15 +240,25 @@ class PipelinePage(PageWidget):
         # ── DAG visualizer ──
         dag_group = self._section("Pipeline Graph")
         self.status_label = QLabel("Idle")
-        self._phases = ["discover", "plan", "generate", "test", "fix"]
+        self.status_label.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        # Full node list (matches orchestrator.DAG_NODES)
+        self._phases = ["discover", "plan", "generate", "review",
+                        "deps", "test", "fix", "done"]
         self._phase_status: dict[str, str] = dict.fromkeys(self._phases, "idle")
+        self._phase_extra: dict[str, str] = dict.fromkeys(self._phases, "")
         self._dag_scene = QGraphicsScene()
         self._dag_view = QGraphicsView(self._dag_scene)
-        self._dag_view.setMinimumHeight(140)
+        self._dag_view.setMinimumHeight(150)
         self._dag_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._dag_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._dag_view.setStyleSheet("border: 1px solid #313244; border-radius: 6px;")
         dag_group.layout().addWidget(self._dag_view)  # type: ignore
         self._build_dag()
+        # Pulse animation for the active node
+        self._pulse = QTimer()
+        self._pulse.setInterval(600)
+        self._pulse.timeout.connect(self._tick_pulse)
+        self._pulse_on = False
         self._dag_view.mousePressEvent = self._dag_clicked  # type: ignore
         dag_group.layout().addWidget(self.status_label)  # type: ignore
         # Export graph button
@@ -317,52 +327,93 @@ class PipelinePage(PageWidget):
             pass
 
     def _build_dag(self) -> None:
-        """Draw the 5 pipeline phase nodes + connecting arrows."""
+        """Draw the 8 pipeline phase nodes + connecting arrows."""
         self._dag_scene.clear()
         self._dag_nodes: dict[str, QGraphicsRectItem] = {}
         self._dag_text: dict[str, QGraphicsTextItem] = {}
+        self._dag_badge: dict[str, QGraphicsTextItem] = {}
         n = len(self._phases)
-        node_w, node_h, gap = 120, 50, 40
+        node_w, node_h, gap = 96, 54, 18
         total_w = n * node_w + (n - 1) * gap
-        y = 30
-        x0 = 20
-        colors = {
-            "idle": "#45475a",
-            "running": "#f9e2af",
-            "done": "#a6e3a1",
-            "failed": "#f38ba8",
-        }
+        y = 36
+        x0 = 16
         for i, phase in enumerate(self._phases):
             x = x0 + i * (node_w + gap)
             rect = QGraphicsRectItem(x, y, node_w, node_h)
-            rect.setBrush(QBrush(QColor(colors["idle"])))
+            rect.setBrush(QBrush(QColor("#45475a")))
             rect.setPen(QPen(QColor("#1e1e2e"), 2))
             rect.setFlags(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable)
             rect.setData(0, phase)
             self._dag_scene.addItem(rect)
             self._dag_nodes[phase] = rect
             txt = QGraphicsTextItem(phase.upper(), rect)
-            txt.setPos(x + 10, y + 15)
+            txt.setDefaultTextColor(QColor("#cdd6f4"))
+            txt.setPos(x + 8, y + 8)
             self._dag_text[phase] = txt
+            badge = QGraphicsTextItem("", rect)
+            badge.setDefaultTextColor(QColor("#a6adc8"))
+            badge.setPos(x + 8, y + 30)
+            self._dag_badge[phase] = badge
             if i < n - 1:
-                ax = x + node_w + 4
+                ax = x + node_w + 2
                 self._dag_scene.addLine(
-                    ax, y + node_h / 2, ax + gap - 8, y + node_h / 2, QPen(QColor("#6c7086"), 2)
+                    ax, y + node_h / 2, ax + gap - 6, y + node_h / 2,
+                    QPen(QColor("#6c7086"), 2),
                 )
                 arrow = QGraphicsTextItem("→")
                 arrow.setPos(ax + gap / 2 - 6, y + node_h / 2 - 14)
-        self._dag_scene.setSceneRect(0, 0, total_w + 40, 110)
-        self._dag_view.setSceneRect(0, 0, total_w + 40, 110)
+                arrow.setDefaultTextColor(QColor("#6c7086"))
+        self._dag_scene.setSceneRect(0, 0, total_w + 32, 120)
+        self._dag_view.setSceneRect(0, 0, total_w + 32, 120)
         self._dag_view.fitInView(self._dag_scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    def _update_dag(self, phase: str, status: str) -> None:
+    _STATUS_COLORS = {
+        "idle": "#45475a",
+        "running": "#f9e2af",
+        "done": "#a6e3a1",
+        "failed": "#f38ba8",
+        "skipped": "#6c7086",
+    }
+
+    def _update_dag(self, phase: str, status: str, extra: str = "") -> None:
         if phase not in self._phase_status:
             return
         self._phase_status[phase] = status
-        colors = {"idle": "#45475a", "running": "#f9e2af", "done": "#a6e3a1", "failed": "#f38ba8"}
+        if extra is not None:
+            self._phase_extra[phase] = extra
         node = self._dag_nodes.get(phase)
         if node:
-            node.setBrush(QBrush(QColor(colors.get(status, "#45475a"))))
+            node.setBrush(QBrush(QColor(self._STATUS_COLORS.get(status, "#45475a"))))
+        badge = self._dag_badge.get(phase)
+        if badge:
+            badge.setPlainText(self._phase_extra.get(phase, ""))
+        # Color the node label text for contrast on bright fills
+        txt = self._dag_text.get(phase)
+        if txt:
+            txt.setDefaultTextColor(
+                QColor("#1e1e2e") if status in ("running", "done") else QColor("#cdd6f4")
+            )
+
+    def _tick_pulse(self) -> None:
+        """Pulse the currently-running node's border for a live feel."""
+        self._pulse_on = not self._pulse_on
+        for phase, status in self._phase_status.items():
+            node = self._dag_nodes.get(phase)
+            if node is None:
+                continue
+            if status == "running":
+                node.setPen(QPen(
+                    QColor("#f9e2af" if self._pulse_on else "#89b4fa"),
+                    3 if self._pulse_on else 2,
+                ))
+            else:
+                node.setPen(QPen(QColor("#1e1e2e"), 2))
+
+    def _active_phase(self) -> str | None:
+        for p in self._phases:
+            if self._phase_status.get(p) == "running":
+                return p
+        return None
 
     def _dag_clicked(self, event) -> None:  # type: ignore[override]
         """Click a phase node to re-run just that phase."""
@@ -430,34 +481,88 @@ class PipelinePage(PageWidget):
         except Exception as exc:
             self.output.appendPlainText(f"{icon('error')} Export failed: {exc}")
 
-    def _phase_from_line(self, line: str) -> str | None:
-        low = line.lower()
+    def _handle_event(self, ev: dict[str, Any]) -> None:
+        """Apply a structured VIRGO_EVENT dict to the live DAG."""
+        etype = ev.get("event")
+        if etype == "pipeline_start":
+            self.status_label.setText("Pipeline running…")
+            self._pulse.start()
+        elif etype == "phase_enter":
+            ph = ev.get("phase")
+            if ph in self._phase_status:
+                self._update_dag(ph, "running")
+                self.status_label.setText(f"Phase: {ph}")
+        elif etype == "wtf_cycle":
+            cyc = ev.get("cycle", 0)
+            mx = ev.get("max_iterations", 0)
+            self._update_dag("test", "running", f"cycle {cyc}/{mx}" if mx else f"cycle {cyc}")
+            if self._phase_status.get("fix") == "running":
+                self._update_dag("fix", "running", f"cycle {cyc}")
+        elif etype == "phase_exit":
+            ph = ev.get("phase")
+            if ph not in self._phase_status:
+                return
+            if ph == "test":
+                passed = ev.get("loop_passed", False)
+                it = ev.get("iterations", 0)
+                self._update_dag("test", "done", f"{it} cycle(s)")
+                if not passed and self._phase_status.get("fix") in ("running", "done"):
+                    self._update_dag("fix", "failed", "max cycles")
+            else:
+                if ev.get("passed") is False:
+                    self._update_dag(ph, "failed")
+                elif ev.get("skipped"):
+                    self._update_dag(ph, "skipped")
+                else:
+                    self._update_dag(ph, "done")
+                if ph == "generate" and ev.get("files"):
+                    self._update_dag("generate", "done", f"{len(ev['files'])} file(s)")
+        elif etype == "pipeline_end":
+            self._pulse.stop()
+            if ev.get("loop_passed"):
+                self._update_dag("done", "done", "PASS")
+                self.status_label.setText("Pipeline complete — PASS")
+                _beep("done")
+            else:
+                self._update_dag("done", "failed", "FAIL")
+                self.status_label.setText("Pipeline complete — FAIL")
+                _beep("error")
+            for p in self._phases:
+                if self._phase_status.get(p) == "running":
+                    self._update_dag(p, "done")
+
+    def _parse_line(self, line: str) -> None:
+        """Parse one stdout line: structured events win, else text fallback."""
+        s = line.strip()
+        if s.startswith("VIRGO_EVENT:"):
+            try:
+                self._handle_event(json.loads(s[len("VIRGO_EVENT:"):]))
+            except Exception:
+                pass
+            return
+        low = s.lower()
         for kw, phase in (
             ("discover", "discover"),
             ("plan", "plan"),
             ("generat", "generate"),
+            ("review", "review"),
+            ("depend", "deps"),
             ("test", "test"),
             ("fix", "fix"),
         ):
-            if kw in low and (
-                "phase" in low
-                or "→" in low
-                or "running" in low
-                or "starting" in low
-                or kw == low.strip()
-            ):
-                return phase
-        return None
+            if kw in low and self._phase_status.get(phase) == "idle":
+                self._update_dag(phase, "running")
+                break
 
     def _run_pipeline(self) -> None:
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)  # indeterminate
-        self.status_label.setText("Running...")
-        # Reset DAG
+        self.status_label.setText("Starting…")
         for p in self._phases:
-            self._update_dag(p, "idle")
+            self._update_dag(p, "idle", "")
+        self._pulse.stop()
 
         args = [
             sys.executable,
@@ -489,6 +594,7 @@ class PipelinePage(PageWidget):
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress.setVisible(False)
+        self._pulse.stop()
         self.status_label.setText("Stopped")
 
     def _poll_process(self) -> None:
@@ -499,31 +605,30 @@ class PipelinePage(PageWidget):
             line = self._process.stdout.readline()
             if line:
                 self.output.appendPlainText(line.rstrip())
-                # Light up DAG nodes from phase markers
-                ph = self._phase_from_line(line)
-                if ph:
-                    self._update_dag(ph, "running")
+                self._parse_line(line)
         if self._process.poll() is not None:
-            # Drain remaining output
             if self._process.stdout:
                 for line in self._process.stdout:
                     self.output.appendPlainText(line.rstrip())
+                    self._parse_line(line)
             self._timer.stop()
             self._running = False
             self.run_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
             self.progress.setVisible(False)
+            self._pulse.stop()
             rc = self._process.returncode
-            self.status_label.setText(f"Finished (exit code {rc})")
-            # Mark all running nodes done (or failed if rc != 0)
-            final = "failed" if rc not in (0, None) else "done"
-            for p in self._phases:
-                if self._phase_status.get(p) == "running":
-                    self._update_dag(p, final)
-                elif self._phase_status.get(p) == "idle":
-                    self._update_dag(p, "done" if final == "done" else "idle")
+            if self._phase_status.get("done") == "idle":
+                if rc in (0, None):
+                    self._update_dag("done", "done", "PASS")
+                    self.status_label.setText("Pipeline complete — PASS")
+                else:
+                    self._update_dag("done", "failed", "FAIL")
+                    self.status_label.setText("Pipeline complete — FAIL")
+                for p in self._phases:
+                    if self._phase_status.get(p) == "running":
+                        self._update_dag(p, "done")
             self._process = None
-            # Desktop notification
             w = self.window()
             if hasattr(w, "notify"):
                 w.notify("Pipeline", f"Exit code {rc} — {self.goal_input.text()[:60]}")
