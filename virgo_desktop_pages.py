@@ -1067,6 +1067,13 @@ class ChatPage(PageWidget):
         self.chat_log = QTextEdit()
         self.chat_log.setReadOnly(True)
         self.chat_log.setPlaceholderText("Start a conversation...")
+        # Larger, readable chat font (was default ~13px)
+        _chat_font = QFont("Segoe UI", 15)
+        self.chat_log.setFont(_chat_font)
+        self.chat_log.document().setDefaultStyleSheet(
+            "body{font-family:'Segoe UI';font-size:15px;color:#cdd6f4;}"
+            "b{color:#89b4fa;} i{color:#a6adc8;}"
+        )
         self.chat_log.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.chat_log.customContextMenuRequested.connect(self._chat_context_menu)
         self._drop_handler = _ImageDropHandler(self.chat_log, self._handle_image_drop)
@@ -1083,6 +1090,8 @@ class ChatPage(PageWidget):
         input_row.addWidget(self.attach_btn)
         self.msg_input = QLineEdit()
         self.msg_input.setPlaceholderText("Message Virgo, or /help for commands...")
+        self.msg_input.setFont(QFont("Segoe UI", 14))
+        self.msg_input.setMinimumHeight(34)
         self.msg_input.returnPressed.connect(self._send)
         self._slash_commands = [
             ("/help", "Show available commands"),
