@@ -95,3 +95,6 @@ Thumbs.db
 .DS_Store
 _test_render.png
 _test_pyqt6.py
+_test_*.png
+_render_test.py
+_test_virgo_structure.py
