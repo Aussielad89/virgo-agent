@@ -2035,7 +2035,6 @@ class VirgoDesktopWindow(QMainWindow):
     def _show_boot_screen(self) -> None:
         """Display a brief animated splash with the Virgo constellation logo."""
         try:
-            import math
             splash = QFrame(self)
             splash.setObjectName("bootSplash")
             splash.setGeometry(0, 0, self.width(), self.height())
@@ -2072,7 +2071,7 @@ class VirgoDesktopWindow(QMainWindow):
 
             # Draw stars as circles
             for sx, sy in stars:
-                dot = scene.addEllipse(
+                scene.addEllipse(
                     cx + sx - 4, cy + sy - 4, 8, 8,
                     QPen(QColor("#89b4fa"), 2), QBrush(QColor("#89b4fa")),
                 )
@@ -2091,16 +2090,16 @@ class VirgoDesktopWindow(QMainWindow):
             ver.setFont(vfont)
             ver.setPos(cx + 150, cy + 350)
 
-            # Fade out and close
-            def _fade(step: int = 0) -> None:
-                if step >= 10:
+            # Simply delete the splash after a delay (setWindowOpacity
+            # doesn't work on child widgets, so we just hide it directly).
+            def _dismiss() -> None:
+                try:
+                    splash.hide()
                     splash.deleteLater()
-                    return
-                op = max(0.0, 1.0 - (step + 1) / 10.0)
-                splash.setWindowOpacity(op)
-                QTimer.singleShot(60, lambda s=step + 1: _fade(s))
+                except Exception:
+                    pass
 
-            QTimer.singleShot(1500, lambda: _fade(0))
+            QTimer.singleShot(2000, _dismiss)
         except Exception:
             pass  # Non-critical; boot proceeds without splash
 
