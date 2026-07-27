@@ -167,8 +167,16 @@ class TestChat:
         assert r.returncode == 0
 
     def test_chat_no_llm_still_works(self) -> None:
-        """Without LLM, chat falls back to teach mode."""
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        """Without LLM, chat falls back to teach mode.
+
+        Force the no-LLM path by pointing LLM_BASE_URL at a dead endpoint so
+        the test is deterministic and never blocks on live model latency.
+        """
+        env = {
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "LLM_BASE_URL": "http://127.0.0.1:9/v1",  # unreachable
+        }
         r = subprocess.run(
             [sys.executable, CLI, "chat"],
             input="hello\n/quit\n",
@@ -184,8 +192,16 @@ class TestChat:
         assert "You said:" in r.stdout or "LLM connected" in r.stdout or "No LLM" in r.stdout
 
     def test_chat_slash_save(self) -> None:
-        """/save should not crash."""
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+        """"/save should not crash.
+
+        Force the no-LLM path via a dead LLM_BASE_URL so the chat never
+        blocks on a live model call before the /save command runs.
+        """
+        env = {
+            **os.environ,
+            "PYTHONIOENCODING": "utf-8",
+            "LLM_BASE_URL": "http://127.0.0.1:9/v1",  # unreachable
+        }
         r = subprocess.run(
             [sys.executable, CLI, "chat"],
             input="hello\n/save\nexit\n",
