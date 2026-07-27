@@ -34,7 +34,7 @@ def get_system_stats() -> dict:
         "hostname": platform.node(),
         "cpu": {},
         "memory": {},
-        "disk": {},
+        "disk": [],
         "network": [],
         "services": {},
         "processes": [],
@@ -44,9 +44,12 @@ def get_system_stats() -> dict:
     # CPU
     try:
         import psutil
-        stats["cpu"]["percent"] = psutil.cpu_percent(interval=0.5)
+        # Warm-up: first call to cpu_percent returns 0 on some systems
+        psutil.cpu_percent(interval=0)
+        stats["cpu"]["percent"] = psutil.cpu_percent(interval=0.3)
         stats["cpu"]["count"] = psutil.cpu_count()
-        stats["cpu"]["freq_mhz"] = round(psutil.cpu_freq().current, 1) if psutil.cpu_freq() else None
+        freq = psutil.cpu_freq()
+        stats["cpu"]["freq_mhz"] = round(freq.current, 1) if freq else None
     except Exception:
         stats["cpu"]["error"] = "psutil not available"
 
