@@ -307,6 +307,14 @@ class LLMClient:
                                 sys.stdout.write(delta)
                                 sys.stdout.flush()
                                 full_text += delta
+                                # Surface structured token events for UIs
+                                # (Virgo Desktop live thought-stream) when the
+                                # caller asked for streaming.
+                                if STREAM_OUTPUT:
+                                    sys.stdout.write(
+                                        f"\nVIRGO_EVENT:{json.dumps({'event':'token','role':role,'text':delta})}\n"
+                                    )
+                                    sys.stdout.flush()
                         except (KeyError, json.JSONDecodeError):
                             pass
         except urllib.error.HTTPError as exc:

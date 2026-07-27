@@ -234,6 +234,16 @@ class PipelinePage(PageWidget):
         self.iter_input = QLineEdit("5")
         self.iter_input.setFixedWidth(50)
         opt_row.addWidget(self.iter_input)
+
+        self.bg_run = QPushButton(f"{icon('sat')}  Background")
+        self.bg_run.setCheckable(True)
+        self.bg_run.setChecked(False)
+        self.bg_run.setToolTip("Run in background and minimize to tray; toast on completion")
+        opt_row.addWidget(self.bg_run)
+
+        self.min_btn = QPushButton(f"{icon('virgo')}  To Tray")
+        self.min_btn.clicked.connect(self._minimize_to_tray)
+        opt_row.addWidget(self.min_btn)
         opt_row.addStretch()
         goal_group.layout().addLayout(opt_row)  # type: ignore
 
@@ -275,15 +285,41 @@ class PipelinePage(PageWidget):
         self.progress.setVisible(False)
         self._add(self.progress)
 
-        # Splitter: log output only
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        self._splitter = splitter
+        # ── Lower area: tabbed Output / Thought-Stream / Live Diff ──
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
 
+        # Output log
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setPlaceholderText("Pipeline output will appear here...")
-        splitter.addWidget(self.output)
-        self._add(splitter)
+        tabs.addTab(self.output, f"{icon('history')}  Output")
+
+        # Live LLM thought-stream (tokens streamed in real time)
+        self.stream = QPlainTextEdit()
+        self.stream.setReadOnly(True)
+        self.stream.setPlaceholderText("LLM planner/generator/fixer output streams here live…")
+        self.stream.setStyleSheet("background: #11111b; color: #cdd6f4;")
+        tabs.addTab(self.stream, f"{icon('brain')}  Thought-Stream")
+        self._stream_role: str | None = None
+
+        # Live diff viewer (generated code before → after, per iteration)
+        diff_widget = QWidget()
+        diff_layout = QVBoxLayout(diff_widget)
+        diff_layout.setContentsMargins(0, 0, 0, 0)
+        self.diff_file = QComboBox()
+        self.diff_file.setMinimumHeight(28)
+        self.diff_file.currentTextChanged.connect(self._show_diff_for)
+        diff_layout.addWidget(self.diff_file)
+        self.diff_view = QTextEdit()
+        self.diff_view.setReadOnly(True)
+        self.diff_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.diff_view.setStyleSheet("background: #11111b; color: #cdd6f4; font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12px;")
+        diff_layout.addWidget(self.diff_view)
+        tabs.addTab(diff_widget, f"{icon('compare')}  Live Diff")
+        self._diffs: dict[str, list[tuple[str, str]]] = {}  # path -> [(before,after)...]
+
+        self._add(tabs)
         self._restore_splitter()
 
         # Timer for polling subprocess
@@ -298,33 +334,12 @@ class PipelinePage(PageWidget):
         self.use_llm.setText(f"{icon('llm')}  LLM: {'ON' if self.use_llm.isChecked() else 'OFF'}")
 
     def _restore_splitter(self) -> None:
-        try:
-            import json
-
-            p = HERE / ".virgo_pipeline_ui.json"
-            if p.exists():
-                d = json.loads(p.read_text())
-                sizes = d.get("splitter")
-                if sizes and len(sizes) == self._splitter.count():
-                    self._splitter.setSizes([int(s) for s in sizes])
-        except Exception:
-            pass
+        """UI layout is now tab-based; no splitter to restore."""
+        return
 
     def _save_splitter(self) -> None:
-        try:
-            import json
-
-            p = HERE / ".virgo_pipeline_ui.json"
-            d = {}
-            if p.exists():
-                try:
-                    d = json.loads(p.read_text())
-                except Exception:
-                    d = {}
-            d["splitter"] = list(self._splitter.sizes())
-            p.write_text(json.dumps(d))
-        except Exception:
-            pass
+        """UI layout is now tab-based; no splitter to persist."""
+        return
 
     def _build_dag(self) -> None:
         """Draw the 8 pipeline phase nodes + connecting arrows."""
@@ -530,6 +545,65 @@ class PipelinePage(PageWidget):
             for p in self._phases:
                 if self._phase_status.get(p) == "running":
                     self._update_dag(p, "done")
+            # Desktop toast on completion
+            w = self.window()
+            if hasattr(w, "_toast"):
+                w._toast("Pipeline finished",
+                         "PASS" if ev.get("loop_passed") else "FAIL")
+        elif etype == "token":
+            role = ev.get("role", "generator")
+            text = ev.get("text", "")
+            if text:
+                if role != self._stream_role:
+                    self._stream_role = role
+                    self.stream.appendPlainText(f"\n▶ {role.upper()}\n")
+                self.stream.insertPlainText(text)
+                self.stream.verticalScrollBar().setValue(
+                    self.stream.verticalScrollBar().maximum())
+        elif etype == "file_written":
+            self._record_diff(ev.get("path", ""), ev.get("content", ""),
+                              ev.get("action", "created"),
+                              ev.get("iteration", 0))
+
+    def _record_diff(self, path: str, content: str, action: str, iteration: int) -> None:
+        """Store a generated-file snapshot and refresh the live diff viewer."""
+        if not path:
+            return
+        hist = self._diffs.setdefault(path, [])
+        before = hist[-1][1] if hist else ""
+        hist.append((before, content))
+        if self.diff_file.findText(path) == -1:
+            self.diff_file.addItem(path)
+        if self.diff_file.currentText() == path or self.diff_file.count() == 1:
+            self._show_diff_for(path)
+
+    def _show_diff_for(self, path: str) -> None:
+        hist = self._diffs.get(path)
+        if not hist:
+            self.diff_view.setPlainText("")
+            return
+        before, after = hist[-1]
+        import difflib
+        b_lines = before.splitlines()
+        a_lines = after.splitlines()
+        diff = difflib.unified_diff(
+            b_lines, a_lines, fromfile=f"{path} (before)",
+            tofile=f"{path} (after, iter {len(hist)})", lineterm="")
+        html_lines = []
+        for line in diff:
+            esc = (line.replace("&", "&amp;").replace("<", "&lt;")
+                   .replace(">", "&gt;"))
+            if line.startswith("+") and not line.startswith("+++"):
+                html_lines.append(f'<span style="color:#a6e3a1">{esc}</span>')
+            elif line.startswith("-") and not line.startswith("---"):
+                html_lines.append(f'<span style="color:#f38ba8">{esc}</span>')
+            elif line.startswith("@@"):
+                html_lines.append(f'<span style="color:#89b4fa">{esc}</span>')
+            else:
+                html_lines.append(f'<span style="color:#a6adc8">{esc}</span>')
+        self.diff_view.setHtml(
+            '<pre style="font-family:\'Cascadia Code\',Consolas,monospace;'
+            'font-size:12px;margin:0">' + "<br>".join(html_lines) + "</pre>")
 
     def _parse_line(self, line: str) -> None:
         """Parse one stdout line: structured events win, else text fallback."""
@@ -554,6 +628,13 @@ class PipelinePage(PageWidget):
                 self._update_dag(phase, "running")
                 break
 
+    def _minimize_to_tray(self) -> None:
+        w = self.window()
+        if hasattr(w, "tray") and getattr(w, "tray", None) is not None:
+            w.hide()
+        else:
+            w.showMinimized() if w else None
+
     def _run_pipeline(self) -> None:
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -563,6 +644,11 @@ class PipelinePage(PageWidget):
         for p in self._phases:
             self._update_dag(p, "idle", "")
         self._pulse.stop()
+        self.stream.clear()
+        self.diff_file.clear()
+        self._diffs.clear()
+        self.diff_view.clear()
+        self._stream_role = None
 
         args = [
             sys.executable,
@@ -570,11 +656,13 @@ class PipelinePage(PageWidget):
             "run",
             "--goal",
             self.goal_input.text().strip(),
-            "--max-iterations",
+            "--iterations",
             self.iter_input.text() or "5",
         ]
         if self.use_llm.isChecked():
             args.append("--llm")
+            # Token streaming requires --stream so main.py emits VIRGO_EVENT:token
+            args.append("--stream")
 
         self._process = subprocess.Popen(
             args,
@@ -585,6 +673,10 @@ class PipelinePage(PageWidget):
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
         self._timer.start()
+
+        # Background mode: drop to tray immediately
+        if self.bg_run.isChecked():
+            self._minimize_to_tray()
 
     def _stop_pipeline(self) -> None:
         if self._process:
@@ -3957,3 +4049,127 @@ class FilesPage(PageWidget):
                 self.preview.append(f"\n\n[... truncated — file is {path.stat().st_size:,} bytes]")
         except Exception as e:
             self.preview.setPlainText(f"Error reading {path.name}: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Models / Router page — pick a different local model per pipeline role
+# ═══════════════════════════════════════════════════════════════════════
+
+_ROUTER_FILE = HERE / "router.json"
+
+
+class ModelsPage(PageWidget):
+    """Assign a model per pipeline role (planner / generator / fixer)."""
+
+    def __init__(self) -> None:
+        super().__init__("Models", "Per-role model routing for the LLM pipeline.")
+        self._roles = ("planner", "generator", "fixer")
+        self._combos: dict[str, QComboBox] = {}
+        self._current: dict[str, str] = {}
+
+        info = QLabel(
+            "Pick which local Ollama model drives each pipeline role. "
+            "Selections persist to router.json and apply to the next run."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        self._add(info)
+
+        for role in self._roles:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(role.capitalize()))
+            combo = QComboBox()
+            combo.setMinimumHeight(28)
+            combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            row.addWidget(combo, 1)
+            self._combos[role] = combo
+            self.content.addLayout(row)
+
+        btn_row = QHBoxLayout()
+        refresh_btn = QPushButton(f"{icon('refresh')}  Refresh models")
+        refresh_btn.clicked.connect(self._load_models)
+        apply_btn = QPushButton(f"{icon('ok')}  Apply")
+        apply_btn.clicked.connect(self._apply)
+        btn_row.addWidget(refresh_btn)
+        btn_row.addWidget(apply_btn)
+        btn_row.addStretch()
+        self.content.addLayout(btn_row)
+
+        self.status = QLabel("")
+        self.status.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        self._add(self.status)
+
+        self._load_models()
+
+    def _load_models(self) -> None:
+        models = self._fetch_ollama_models()
+        # Seed current selections from main.py if importable, else defaults
+        current = {}
+        try:
+            import main as _main
+
+            current = {
+                "planner": _main._model_for_role("planner"),
+                "generator": _model_for_role_safe("generator"),
+                "fixer": _model_for_role_safe("fixer"),
+            }
+        except Exception:
+            current = {r: "ornith:latest" for r in self._roles}
+        self._current = current
+
+        all_models = list(models)
+        for role in self._roles:
+            combo = self._combos[role]
+            combo.clear()
+            cur = current.get(role, "")
+            if cur and cur not in all_models:
+                all_models.append(cur)
+            combo.addItems(all_models)
+            if cur:
+                combo.setCurrentText(cur)
+        self.status.setText(
+            f"{len(models)} model(s) available on Ollama"
+            + ("" if models else " — is Ollama running on :11434?")
+        )
+
+    def _fetch_ollama_models(self) -> list[str]:
+        try:
+            import urllib.request
+
+            req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
+            with urllib.request.urlopen(req, timeout=3) as r:
+                data = json.loads(r.read())
+            return [m["name"] for m in data.get("models", [])]
+        except Exception:
+            return []
+
+    def _apply(self) -> None:
+        cfg: dict[str, dict[str, str]] = {}
+        for role in self._roles:
+            model = self._combos[role].currentText().strip()
+            if model:
+                cfg[role] = {"provider": "ollama", "model": model}
+        try:
+            _ROUTER_FILE.write_text(json.dumps(cfg, indent=2))
+        except Exception as exc:
+            self.status.setText(f"Save failed: {exc}")
+            return
+        # Apply in-process if main is already imported
+        try:
+            import main as _main
+
+            _main.ROUTER_CONFIG = {
+                role: (c["provider"], c["model"]) for role, c in cfg.items()
+            }
+        except Exception:
+            pass
+        self.status.setText(f"Router saved → {_ROUTER_FILE.name} (applies on next run)")
+
+
+def _model_for_role_safe(role: str) -> str:
+    try:
+        import main as _main
+
+        return _main._model_for_role(role)
+    except Exception:
+        return "ornith:latest"

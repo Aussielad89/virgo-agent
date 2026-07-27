@@ -544,6 +544,7 @@ from virgo_desktop_pages import (
     DiagnosticsPage,
     FilesPage,
     LogsPage,
+    ModelsPage,
     NetworkPage,
     PipelinePage,
     PluginsPage,
@@ -579,6 +580,7 @@ DESKTOP_ICONS = {
     "about": "\u2139",  # ℹ
     "procs": "\U0001f4bb",  # 💻
     "bench": "\u23f1",  # ⏱
+    "models": "\U0001f9e0",  # 🧠
 }
 
 SIDEBAR_ITEMS = [
@@ -595,6 +597,7 @@ SIDEBAR_ITEMS = [
     ("plugins", "Plugins", DESKTOP_ICONS["plugins"]),
     ("procs", "Procs", DESKTOP_ICONS["procs"]),
     ("bench", "Bench", DESKTOP_ICONS["bench"]),
+    ("models", "Models", DESKTOP_ICONS["models"]),
     ("settings", "Settings", DESKTOP_ICONS["settings"]),
     ("about", "About", DESKTOP_ICONS["about"]),
 ]
@@ -759,6 +762,7 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(ProcessMonitorPage(), "procs")
         self._register(BenchmarkPage(), "bench")
         self._register(SettingsPage(), "settings")
+        self._register(ModelsPage(), "models")
         self._register(AboutPage(), "about")
 
         self.splitter.addWidget(self.stack)

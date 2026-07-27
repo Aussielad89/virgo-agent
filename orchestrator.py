@@ -375,10 +375,14 @@ class Orchestrator:
                     content=content,
                     mode="write",
                 )
-                state.generated_files.append(GeneratedFile(path=fpath, content=content))
+                state.generated_files.append(
+                    GeneratedFile(path=fpath, content=content)
+                )
                 syntax = result.get("syntax_check", "")
                 extra = f"syntax:{syntax}" if syntax else ""
                 _step("generate", fpath, extra)
+                self._emit("file_written", path=fpath, action="created",
+                           content=content)
             self._emit("phase_exit", phase="generate",
                        files=[g.path for g in state.generated_files])
 
@@ -774,6 +778,9 @@ class Orchestrator:
                                         old_string=old,
                                     )
                                     _step("fix", f"  patched {fpath}")
+                                    self._emit("file_written", path=fpath,
+                                               action="patched", content=new,
+                                               iteration=state.iteration)
                                 except (ValueError, FileNotFoundError) as exc:
                                     _step("fix", f"  patch failed: {exc}")
                                     # Fall back to overwrite
