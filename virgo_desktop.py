@@ -170,7 +170,7 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     }
     #sidebarHeader {
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-            stop:0 @accent@25, stop:0.4 @surface@, stop:0.6 @surface@, stop:1 @accent2@18);
+            stop:0 @accent25@, stop:0.4 @surface@, stop:0.6 @surface@, stop:1 @accent218@);
         border-bottom: 2px solid qlineargradient(x1:0, y1:0, x2:1, y2:1,
             stop:0 @accent@, stop:1 @accent2@);
         border-radius: 8px;
@@ -211,14 +211,14 @@ def _build_stylesheet(t: dict[str, str]) -> str:
         color: @red@ !important;
     }
     #quitBtn:hover {
-        background: @red@22 !important;
+        background: @red22@ !important;
     }
     #stopBtn {
         color: @red@ !important;
         border-color: @red@;
     }
     #stopBtn:hover {
-        background: @red@22 !important;
+        background: @red22@ !important;
     }
     #multiBtn {
         color: @subtext@;
@@ -290,7 +290,7 @@ def _build_stylesheet(t: dict[str, str]) -> str:
         padding: 6px 18px;
     }
     QPushButton#sendBtn:hover {
-        background: @accent@bb;
+        background: @accentbb@;
     }
     QPushButton:pressed {
         background: @sidebar_active@;
@@ -428,7 +428,7 @@ def _build_stylesheet(t: dict[str, str]) -> str:
         background: @accent@; width: 16px; height: 16px;
         margin: -5px 0; border-radius: 8px;
     }
-    QSlider::handle:horizontal:hover { background: @accent@bb; }
+    QSlider::handle:horizontal:hover { background: @accentbb@; }
     QCheckBox { color: @text@; spacing: 6px; }
     QCheckBox::indicator {
         width: 16px; height: 16px;
@@ -446,6 +446,26 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     """)
     for key, val in t.items():
         raw = raw.replace(f"@{key}@", val)
+    # Pre-compute alpha-enhanced variants for the stylesheet.
+    # Qt uses #AARRGGBB format, not #RRGGBBAA.
+    for suffix, alpha_pct in [("25", 0.15), ("18", 0.09), ("bb", 0.73)]:
+        accent = t.get("accent", "#89b4fa")
+        alpha = max(1, min(255, int(alpha_pct * 255)))
+        aa = f"{alpha:02x}"
+        rrggbb = accent.lstrip("#")
+        raw = raw.replace(f"@accent{suffix}@", f"#{aa}{rrggbb}")
+    for suffix, alpha_pct in [("18", 0.09), ("22", 0.13)]:
+        accent2 = t.get("accent2", "#a6e3a1")
+        alpha = max(1, min(255, int(alpha_pct * 255)))
+        aa = f"{alpha:02x}"
+        rrggbb = accent2.lstrip("#")
+        raw = raw.replace(f"@accent2{suffix}@", f"#{aa}{rrggbb}")
+    for suffix, alpha_pct in [("22", 0.13)]:
+        red = t.get("red", "#f38ba8")
+        alpha = max(1, min(255, int(alpha_pct * 255)))
+        aa = f"{alpha:02x}"
+        rrggbb = red.lstrip("#")
+        raw = raw.replace(f"@red{suffix}@", f"#{aa}{rrggbb}")
     # Drop any placeholder whose key was missing from the theme dict so a
     # user-saved/incomplete theme can never emit a literal '@x@' that makes
     # Qt reject the entire stylesheet ("Could not parse stylesheet").
