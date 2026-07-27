@@ -62,13 +62,45 @@ def _step(label: str, *parts: str) -> None:
 # round-trips through subprocess stdout without breaking legacy line parsing.
 # A callable set on Orchestrator.emit_hook receives the raw dict too, so an
 # in-process UI can subscribe without scraping stdout.
-# ===========================================================================
 def _emit_event(event: str, **payload: Any) -> None:
     """Emit a structured pipeline event (idempotent, never raises)."""
     import json as _json
+
     record = {"event": event, **payload}
     try:
         print("VIRGO_EVENT:" + _json.dumps(record, default=str), flush=True)
+    except Exception:
+        pass
+    # Crash-resume snapshot: if an orchestrator registered a snapshot path,
+    # persist WorkspaceState after phase/wtf/end transitions.
+    if event in ("phase_enter", "phase_exit", "wtf_cycle", "pipeline_end"):
+        _write_snapshot()
+
+
+# Crash-resume: the live Orchestrator registers its snapshot path here so the
+# module-level emitter can persist state without threading the path through
+# every call site.
+_SNAPSHOT_STATE: Any = None
+_SNAPSHOT_PATH: "Path | None" = None
+
+
+def _register_snapshot(state: Any, path: "Path | None") -> None:
+    global _SNAPSHOT_STATE, _SNAPSHOT_PATH
+    _SNAPSHOT_STATE = state
+    _SNAPSHOT_PATH = path
+
+
+def _write_snapshot() -> None:
+    if _SNAPSHOT_PATH is None or _SNAPSHOT_STATE is None:
+        return
+    try:
+        import dataclasses
+
+        from datetime import datetime, timezone
+
+        data = dataclasses.asdict(_SNAPSHOT_STATE)
+        data["_saved_at"] = datetime.now(timezone.utc).isoformat()
+        _SNAPSHOT_PATH.write_text(_json.dumps(data, indent=2, default=str), encoding="utf-8")
     except Exception:
         pass
 
@@ -236,6 +268,10 @@ class Orchestrator:
         self.state: WorkspaceState | None = None
         # Optional UI hook: if set, receives every structured event dict.
         self.emit_hook: Optional[Callable[[dict[str, Any]], None]] | None = None
+        # Optional crash-resume snapshot path: when set, WorkspaceState is
+        # serialised here after every phase so a killed run can be inspected
+        # or resumed.
+        self.snapshot_path: "Path | None" = None
 
     def _emit(self, event: str, **payload: Any) -> None:
         _emit_event(event, **payload)
@@ -295,6 +331,10 @@ class Orchestrator:
             max_iterations=max_iterations,
         )
         state = self.state
+
+        # Crash-resume: register state+snapshot path so phase events persist it.
+        if self.snapshot_path is not None:
+            _register_snapshot(state, self.snapshot_path)
 
         # Display pipeline overview graph
         try:

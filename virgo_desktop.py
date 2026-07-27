@@ -540,19 +540,24 @@ from virgo_desktop_pages import (
     AboutPage,
     AlertsPage,
     BenchmarkPage,
+    BenchChartsPage,
     ChatPage,
+    ComparePage,
     DiagnosticsPage,
     FilesPage,
     LogsPage,
     ModelsPage,
     NetworkPage,
+    PersonaPage,
     PipelinePage,
     PluginsPage,
     ProcessMonitorPage,
+    ReplayPage,
     ScaffoldPage,
     SessionPage,
     SettingsPage,
     SwarmPage,
+    ToastHistoryPage,
 )
 
 # ── Constants ────────────────────────────────────────────────────────
@@ -579,8 +584,13 @@ DESKTOP_ICONS = {
     "settings": "\u2699",  # ⚙
     "about": "\u2139",  # ℹ
     "procs": "\U0001f4bb",  # 💻
-    "bench": "\u23f1",  # ⏱
+    "bench": "⏱",
     "models": "\U0001f9e0",  # 🧠
+    "replay": "\U0001f501",  # 🔁
+    "compare": "\U0001f9f5",  # 🧵
+    "personas": "\U0001f479",  # 👹
+    "toasts": "\U0001f514",  # 🔔
+    "benchcharts": "\U0001f4ca",  # 📊
 }
 
 SIDEBAR_ITEMS = [
@@ -597,6 +607,11 @@ SIDEBAR_ITEMS = [
     ("plugins", "Plugins", DESKTOP_ICONS["plugins"]),
     ("procs", "Procs", DESKTOP_ICONS["procs"]),
     ("bench", "Bench", DESKTOP_ICONS["bench"]),
+    ("benchcharts", "Bench Charts", DESKTOP_ICONS["benchcharts"]),
+    ("replay", "Replay", DESKTOP_ICONS["replay"]),
+    ("compare", "Compare", DESKTOP_ICONS["compare"]),
+    ("personas", "Personas", DESKTOP_ICONS["personas"]),
+    ("toasts", "Toasts", DESKTOP_ICONS["toasts"]),
     ("models", "Models", DESKTOP_ICONS["models"]),
     ("settings", "Settings", DESKTOP_ICONS["settings"]),
     ("about", "About", DESKTOP_ICONS["about"]),
@@ -761,8 +776,13 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(PluginsPage(), "plugins")
         self._register(ProcessMonitorPage(), "procs")
         self._register(BenchmarkPage(), "bench")
-        self._register(SettingsPage(), "settings")
+        self._register(BenchChartsPage(), "benchcharts")
+        self._register(ReplayPage(), "replay")
+        self._register(ComparePage(), "compare")
+        self._register(PersonaPage(), "personas")
+        self._register(ToastHistoryPage(), "toasts")
         self._register(ModelsPage(), "models")
+        self._register(SettingsPage(), "settings")
         self._register(AboutPage(), "about")
 
         self.splitter.addWidget(self.stack)
@@ -1006,8 +1026,43 @@ class VirgoDesktopWindow(QMainWindow):
             toast.move(x, 16)
             toast.show()
             QTimer.singleShot(4000, lambda: toast.deleteLater())
+            # Persist to the Toast History page
+            try:
+                from virgo_desktop_pages import log_toast
+
+                log_toast(title, message)
+            except Exception:
+                pass
         except Exception:
             pass
+
+    def _open_web_dashboard(self) -> None:
+        """Launch `virgo serve` and open it in the default browser.
+
+        QtWebEngine isn't bundled, so we delegate to the OS browser instead
+        of embedding a QWebEngineView.
+        """
+        import webbrowser
+
+        host, port = "127.0.0.1", "8765"
+        # Start the server if not already running.
+        try:
+            import urllib.request
+
+            urllib.request.urlopen(f"http://{host}:{port}/", timeout=1)
+        except Exception:
+            try:
+                import subprocess as _sp
+
+                _sp.Popen(
+                    [sys.executable, str(HERE / "cli.py"), "serve",
+                     "--host", host, "--port", port],
+                    stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                    creationflags=_sp.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                )
+            except Exception:
+                pass
+        webbrowser.open(f"http://{host}:{port}/")
 
     def _fuzzy_score(self, query: str, text: str) -> int:
         """Subsequence fuzzy score: higher is better, -1 means no match."""
@@ -1145,10 +1200,11 @@ class VirgoDesktopWindow(QMainWindow):
                 lambda: self._route_to_page_action("pipeline", "_run_pipeline"),
             ),
             ("\U0001f504  Reload UI", "cmd", lambda: self._apply_style()),
-            ("\u2699  Open Settings", "cmd", lambda: self._navigate("settings")),
-            ("\u2139  About", "cmd", lambda: self._navigate("about")),
-            ("\U0001f514  Toggle sidebar", "cmd", lambda: self._toggle_sidebar()),
-            ("\u274c  Quit", "cmd", lambda: self.close()),
+            ("⚙  Open Settings", "cmd", lambda: self._navigate("settings")),
+            ("ℹ  About", "cmd", lambda: self._navigate("about")),
+            ("🔔 Toggle sidebar", "cmd", lambda: self._toggle_sidebar()),
+            ("🌐 Open Web Dashboard", "cmd", lambda: self._open_web_dashboard()),
+            ("❌ Quit", "cmd", lambda: self.close()),
         ]
 
         dlg = QDialog(self)
@@ -1220,7 +1276,7 @@ class VirgoDesktopWindow(QMainWindow):
         self._theme_name = nxt
         self._active_theme = nxt
         self._apply_style()
-        self._save_theme_pref(nxt)
+        self._save_theme_pref()
 
     def _show_shortcuts_overlay(self) -> None:
         """Show a dialog listing all keyboard shortcuts."""

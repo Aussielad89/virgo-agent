@@ -75,6 +75,19 @@ from PyQt6.QtWidgets import (
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
+# Internal orchestrator phase name -> DAG node id (matches orchestrator.DAG_NODES)
+_PHASE_TO_NODE = {
+    "discovering": "discover",
+    "planning": "plan",
+    "generating": "generate",
+    "reviewing": "review",
+    "dependencies": "deps",
+    "testing": "test",
+    "fixing": "fix",
+    "complete": "done",
+    "aborted": "aborted",
+}
+
 from _console import icon
 from _log import OUTDIR
 
@@ -228,6 +241,26 @@ class PipelinePage(PageWidget):
         goal_row.addWidget(self.stop_btn)
         goal_group.layout().addLayout(goal_row)  # type: ignore
 
+        # Preset goal launcher
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("Preset:"))
+        self.preset_combo = QComboBox()
+        self.preset_combo.setMinimumWidth(260)
+        self._presets = [
+            ("", "— choose a preset —"),
+            ("scaffold-fastapi", "Scaffold a FastAPI CRUD API"),
+            ("scaffold-cli", "Scaffold a Python CLI app"),
+            ("fix-tests", "Fix failing tests in the workspace"),
+            ("parse-logs", "Write a parser for mock_logs.txt"),
+            ("scraper", "Build a web scraper"),
+            ("refactor", "Refactor a module for clarity"),
+        ]
+        for val, label in self._presets:
+            self.preset_combo.addItem(label, val)
+        self.preset_combo.currentIndexChanged.connect(self._apply_preset)
+        preset_row.addWidget(self.preset_combo, 1)
+        goal_group.layout().addLayout(preset_row)  # type: ignore
+
         # Options row
         opt_row = QHBoxLayout()
         self.use_llm = QPushButton(f"{icon('llm')}  LLM: ON")
@@ -278,11 +311,25 @@ class PipelinePage(PageWidget):
         self._pulse_on = False
         self._dag_view.mousePressEvent = self._dag_clicked  # type: ignore
         dag_group.layout().addWidget(self.status_label)  # type: ignore
+        # Live stats (cost/latency meter)
+        self.stats_label = QLabel("Tokens: 0  ·  Elapsed: 0.0s  ·  Iterations: 0")
+        self.stats_label.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        dag_group.layout().addWidget(self.stats_label)  # type: ignore
+        # Live event ticker
+        self.events_log = QPlainTextEdit()
+        self.events_log.setReadOnly(True)
+        self.events_log.setMaximumHeight(90)
+        self.events_log.setPlaceholderText("Live pipeline events…")
+        self.events_log.setStyleSheet("background: #11111b; color: #a6adc8; font-size: 11px;")
+        dag_group.layout().addWidget(self.events_log)  # type: ignore
         # Export graph button
         export_row = QHBoxLayout()
         export_btn = QPushButton(f"{icon('save')}  Export graph PNG")
         export_btn.clicked.connect(self._export_dag)
         export_row.addWidget(export_btn)
+        report_btn = QPushButton(f"{icon('file')}  Export report")
+        report_btn.clicked.connect(self._export_report)
+        export_row.addWidget(report_btn)
         export_row.addStretch()
         dag_group.layout().addLayout(export_row)  # type: ignore
         self._add(dag_group)
@@ -310,6 +357,14 @@ class PipelinePage(PageWidget):
         tabs.addTab(self.stream, f"{icon('brain')}  Thought-Stream")
         self._stream_role: str | None = None
 
+        # Cost/latency meter state
+        self._stats: dict[str, Any] = {
+            "tokens": {},      # role -> token count (approx chars/4)
+            "start": 0.0,
+            "phase_t": {},     # phase -> start time
+            "iterations": 0,
+        }
+
         # Live diff viewer (generated code before → after, per iteration)
         diff_widget = QWidget()
         diff_layout = QVBoxLayout(diff_widget)
@@ -318,6 +373,12 @@ class PipelinePage(PageWidget):
         self.diff_file.setMinimumHeight(28)
         self.diff_file.currentTextChanged.connect(self._show_diff_for)
         diff_layout.addWidget(self.diff_file)
+        diff_btn_row = QHBoxLayout()
+        self.diff_open_btn = QPushButton(f"{icon('file')}  Open in viewer")
+        self.diff_open_btn.clicked.connect(self._open_diff_viewer)
+        diff_btn_row.addWidget(self.diff_open_btn)
+        diff_btn_row.addStretch()
+        diff_layout.addLayout(diff_btn_row)
         self.diff_view = QTextEdit()
         self.diff_view.setReadOnly(True)
         self.diff_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
@@ -506,20 +567,30 @@ class PipelinePage(PageWidget):
     def _handle_event(self, ev: dict[str, Any]) -> None:
         """Apply a structured VIRGO_EVENT dict to the live DAG."""
         etype = ev.get("event")
+        # Live event ticker
+        _detail = ev.get("phase") or ev.get("action") or etype
+        if etype in ("phase_enter", "phase_exit", "wtf_cycle", "pipeline_end", "file_written"):
+            self.events_log.appendPlainText(f"• {etype}: {_detail}")
+            self.events_log.verticalScrollBar().setValue(
+                self.events_log.verticalScrollBar().maximum())
         if etype == "pipeline_start":
-            self.status_label.setText("Pipeline running…")
-            self._pulse.start()
+            self._pulse.stop()
+            self._phase_status = dict.fromkeys(self._phases, "idle")
+            self._phase_extra = dict.fromkeys(self._phases, "")
+            self._build_dag()
+            self.status_label.setText("Starting…")
         elif etype == "phase_enter":
             ph = ev.get("phase")
-            if ph in self._phase_status:
-                self._update_dag(ph, "running")
-                self.status_label.setText(f"Phase: {ph}")
-        elif etype == "wtf_cycle":
-            cyc = ev.get("cycle", 0)
-            mx = ev.get("max_iterations", 0)
-            self._update_dag("test", "running", f"cycle {cyc}/{mx}" if mx else f"cycle {cyc}")
-            if self._phase_status.get("fix") == "running":
-                self._update_dag("fix", "running", f"cycle {cyc}")
+            self._update_dag(_PHASE_TO_NODE.get(ph, ph or ""), "running")
+            # mark prior running nodes done
+            for p in self._phases:
+                if self._phase_status.get(p) == "running" and p != _PHASE_TO_NODE.get(ph, ph):
+                    self._update_dag(p, "done")
+            if ph and ph not in self._phases:
+                # map internal phase (e.g. 'discovering') to node id
+                node = _PHASE_TO_NODE.get(ph, ph)
+                if node in self._phases:
+                    self._update_dag(node, "running")
         elif etype == "phase_exit":
             ph = ev.get("phase")
             if ph not in self._phase_status:
@@ -552,6 +623,7 @@ class PipelinePage(PageWidget):
             for p in self._phases:
                 if self._phase_status.get(p) == "running":
                     self._update_dag(p, "done")
+            self._update_stats()
             # Desktop toast on completion
             w = self.window()
             if hasattr(w, "_toast"):
@@ -561,16 +633,45 @@ class PipelinePage(PageWidget):
             role = ev.get("role", "generator")
             text = ev.get("text", "")
             if text:
+                self._stats["tokens"][role] = self._stats["tokens"].get(role, 0) + max(1, len(text) // 4)
                 if role != self._stream_role:
                     self._stream_role = role
                     self.stream.appendPlainText(f"\n▶ {role.upper()}\n")
                 self.stream.insertPlainText(text)
                 self.stream.verticalScrollBar().setValue(
                     self.stream.verticalScrollBar().maximum())
+                self._update_stats()
+        elif etype == "wtf_cycle":
+            self._stats["iterations"] = ev.get("cycle", self._stats["iterations"] + 1)
+            cyc = ev.get("cycle", 0)
+            mx = ev.get("max_iterations", 0)
+            self._update_dag("test", "running", f"cycle {cyc}/{mx}" if mx else f"cycle {cyc}")
+            if self._phase_status.get("fix") == "running":
+                self._update_dag("fix", "running", f"cycle {cyc}")
+            self._update_stats()
         elif etype == "file_written":
             self._record_diff(ev.get("path", ""), ev.get("content", ""),
                               ev.get("action", "created"),
                               ev.get("iteration", 0))
+
+    def _update_stats(self) -> None:
+        """Refresh the cost/latency meter label."""
+        total = sum(self._stats["tokens"].values())
+        elapsed = time.time() - self._stats["start"] if self._stats["start"] else 0.0
+        parts = [f"Tokens: ~{total}"]
+        if elapsed:
+            parts.append(f"Elapsed: {elapsed:.1f}s")
+        parts.append(f"Iterations: {self._stats['iterations']}")
+        self.stats_label.setText("  ·  ".join(parts))
+
+    def _open_diff_viewer(self) -> None:
+        """Open the currently selected generated file in the highlighted viewer."""
+        path = self.diff_file.currentText()
+        if not path or path not in self._diffs:
+            return
+        after = self._diffs[path][-1][1]
+        dlg = CodePreviewDialog(path, after, self)
+        dlg.exec()
 
     def _record_diff(self, path: str, content: str, action: str, iteration: int) -> None:
         """Store a generated-file snapshot and refresh the live diff viewer."""
@@ -634,6 +735,72 @@ class PipelinePage(PageWidget):
             if kw in low and self._phase_status.get(phase) == "idle":
                 self._update_dag(phase, "running")
                 break
+
+    def _apply_preset(self) -> None:
+        val = self.preset_combo.currentData() or ""
+        goals = {
+            "scaffold-fastapi": "scaffold fastapi-crud --output ./myapi --var project_name=myapi",
+            "scaffold-cli": "scaffold cli-app --output ./mycli --var project_name=mycli",
+            "fix-tests": "fix the failing tests in this workspace",
+            "parse-logs": "write a parser for mock_logs.txt that counts ERROR/WARN lines",
+            "scraper": "build a web scraper that fetches the latest headlines",
+            "refactor": "refactor the largest module for readability",
+        }
+        if val in goals:
+            self.goal_input.setText(goals[val])
+
+    def _export_report(self) -> None:
+        """Export the current run as a Markdown + HTML report."""
+        from datetime import datetime
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Run Report", str(HERE / "pipeline_report.md"),
+            "Markdown (*.md);;HTML (*.html)",
+        )
+        if not path:
+            return
+        lines = [f"# Virgo Pipeline Report", ""]
+        lines.append(f"- **Goal:** {self.goal_input.text() or '(none)'}")
+        lines.append(f"- **Result:** {self.status_label.text()}")
+        lines.append(f"- **Stats:** {self.stats_label.text()}")
+        lines.append("")
+        lines.append("## Live Events")
+        lines.append("")
+        for ln in self.events_log.toPlainText().strip().splitlines() or ["(none)"]:
+            lines.append(f"- {ln}")
+        lines.append("")
+        lines.append("## Generated Files (final diff state)")
+        lines.append("")
+        if self._diffs:
+            for p, hist in self._diffs.items():
+                before, after = hist[-1]
+                lines.append(f"### {p}")
+                lines.append("")
+                lines.append("```diff")
+                import difflib
+
+                for dl in difflib.unified_diff(
+                    before.splitlines(), after.splitlines(),
+                    fromfile="before", tofile="after", lineterm="",
+                ):
+                    lines.append(dl)
+                lines.append("```")
+                lines.append("")
+        else:
+            lines.append("(no files generated)")
+        md = "\n".join(lines)
+        if path.endswith(".html"):
+            esc = (md.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+            html = f"<html><head><meta charset='utf-8'><title>Virgo Report</title>" \
+                   f"<style>body{{background:#1e1e2e;color:#cdd6f4;font-family:sans-serif;" \
+                   f"max-width:900px;margin:2rem auto;padding:0 1rem}} code{{background:#313244;" \
+                   f"padding:2px 6px;border-radius:4px}} pre{{background:#11111b;padding:1rem;" \
+                   f"border-radius:8px;overflow:auto}} h1,h2,h3{{color:#89b4fa}}</style></head>" \
+                   f"<body>{esc.replace('```', '<pre>').replace('```', '</pre>')}</body></html>"
+            Path(path).write_text(html, encoding="utf-8")
+        else:
+            Path(path).write_text(md, encoding="utf-8")
+        self.output.appendPlainText(f"{icon('ok')} Report exported → {path}")
 
     def _minimize_to_tray(self) -> None:
         w = self.window()
@@ -3977,6 +4144,19 @@ class AboutPage(PageWidget):
         about_text.setTextFormat(Qt.TextFormat.RichText)
         self._add(about_text)
 
+        web_btn = QPushButton(f"{icon('globe')}  Open Web Dashboard (browser)")
+        web_btn.clicked.connect(self._open_web)
+        self._add(web_btn)
+
+    def _open_web(self) -> None:
+        w = self.window()
+        if hasattr(w, "_open_web_dashboard"):
+            w._open_web_dashboard()
+        else:
+            import webbrowser
+
+            webbrowser.open("http://127.0.0.1:8765/")
+
 
 class FilesPage(PageWidget):
     """File browser — tree view of the workspace."""
@@ -4189,3 +4369,394 @@ def _model_for_role_safe(role: str) -> str:
         return _main._model_for_role(role)
     except Exception:
         return "ornith:latest"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Code preview dialog (lightweight Python-aware highlighting)
+# ═══════════════════════════════════════════════════════════════════════
+
+_PY_KW = {
+    "def", "class", "return", "if", "elif", "else", "for", "while", "import",
+    "from", "as", "with", "try", "except", "finally", "raise", "yield", "lambda",
+    "in", "is", "not", "and", "or", "None", "True", "False", "async", "await",
+    "self", "pass", "break", "continue", "global", "nonlocal", "assert", "del",
+}
+
+
+def _highlight_code(text: str) -> str:
+    """Minimal HTML highlighter (escapes + colours keywords/strings/comments)."""
+    out = []
+    for line in text.splitlines():
+        esc = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        if "#" in esc:
+            idx = esc.find("#")
+            esc = (esc[:idx] + f'<span style="color:#6c7086">' + esc[idx:] + "</span>")
+        import re
+
+        esc = re.sub(r'("(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\')',
+                     r'<span style="color:#a6e3a1">\1</span>', esc)
+        for kw in _PY_KW:
+            esc = re.sub(r"\b" + kw + r"\b", f'<span style="color:#cba6f7">{kw}</span>', esc)
+        out.append(esc)
+    return ("<pre style='font-family:Consolas,monospace;font-size:12px;"
+            "background:#11111b;color:#cdd6f4;padding:12px;border-radius:8px;"
+            "white-space:pre;'>" + "\n".join(out) + "</pre>")
+
+
+class CodePreviewDialog(QDialog):
+    """Read-only syntax-highlighted code viewer."""
+
+    def __init__(self, title: str, code: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(760, 560)
+        lay = QVBoxLayout(self)
+        view = QTextEdit()
+        view.setReadOnly(True)
+        view.setHtml(_highlight_code(code))
+        lay.addWidget(view)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        lay.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Session replay viewer (#5)
+# ═══════════════════════════════════════════════════════════════════════
+
+_MEM_DIR = HERE / ".virgo_memory"
+
+
+class ReplayPage(PageWidget):
+    """Browse saved pipeline sessions and replay their summary + diffs."""
+
+    def __init__(self) -> None:
+        super().__init__("Replay", "Inspect saved pipeline sessions.")
+        self._sessions: list[Path] = []
+        self._current: dict[str, Any] = {}
+
+        row = QHBoxLayout()
+        self.session_combo = QComboBox()
+        self.session_combo.setMinimumHeight(28)
+        self.session_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.session_combo.currentIndexChanged.connect(self._load)
+        row.addWidget(QLabel("Session:"))
+        row.addWidget(self.session_combo, 1)
+        refresh = QPushButton(f"{icon('refresh')}  Refresh")
+        refresh.clicked.connect(self._refresh)
+        row.addWidget(refresh)
+        self.content.addLayout(row)
+
+        self.summary = QLabel("")
+        self.summary.setWordWrap(True)
+        self.summary.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        self._add(self.summary)
+
+        self.detail = QTextEdit()
+        self.detail.setReadOnly(True)
+        self.detail.setStyleSheet("background:#11111b;color:#cdd6f4;font-family:Consolas,monospace;font-size:12px;")
+        self._add(self.detail)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        self._sessions = sorted(_MEM_DIR.glob("*.json"), reverse=True) if _MEM_DIR.exists() else []
+        self.session_combo.clear()
+        for s in self._sessions:
+            self.session_combo.addItem(s.stem, str(s))
+        if self._sessions:
+            self._load()
+
+    def _load(self) -> None:
+        idx = self.session_combo.currentIndex()
+        if idx < 0:
+            return
+        path = Path(self.session_combo.itemData(idx) or "")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self.detail.setPlainText(f"Could not read: {exc}")
+            return
+        self._current = data
+        goal = data.get("goal") or data.get("session") or path.stem
+        phase = data.get("phase") or data.get("_phase") or "?"
+        self.summary.setText(f"Goal: {goal}  ·  Final phase: {phase}")
+        lines = []
+        gf = data.get("generated_files", [])
+        if isinstance(gf, list):
+            for f in gf:
+                name = f.get("path") if isinstance(f, dict) else f
+                lines.append(f"• {name}")
+        self.detail.setPlainText("Generated files:\n" + ("\n".join(lines) if lines else "(none)"))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Run compare (#6)
+# ═══════════════════════════════════════════════════════════════════════
+
+class ComparePage(PageWidget):
+    """Pick two saved sessions and compare their outcomes + files."""
+
+    def __init__(self) -> None:
+        super().__init__("Compare Runs", "Diff two pipeline sessions.")
+        self._sessions = sorted(_MEM_DIR.glob("*.json"), reverse=True) if _MEM_DIR.exists() else []
+        names = [s.stem for s in self._sessions]
+
+        row = QHBoxLayout()
+        self.a_combo = QComboBox(); self.a_combo.addItems(names)
+        self.b_combo = QComboBox(); self.b_combo.addItems(names)
+        row.addWidget(QLabel("A:")); row.addWidget(self.a_combo, 1)
+        row.addWidget(QLabel("B:")); row.addWidget(self.b_combo, 1)
+        go = QPushButton(f"{icon('compare')}  Compare")
+        go.clicked.connect(self._compare)
+        row.addWidget(go)
+        self.content.addLayout(row)
+
+        self.out = QTextEdit()
+        self.out.setReadOnly(True)
+        self.out.setStyleSheet("background:#11111b;color:#cdd6f4;font-family:Consolas,monospace;font-size:12px;")
+        self._add(self.out)
+
+    def _read(self, stem: str) -> dict:
+        for s in self._sessions:
+            if s.stem == stem:
+                try:
+                    return json.loads(s.read_text(encoding="utf-8"))
+                except Exception:
+                    return {}
+        return {}
+
+    def _compare(self) -> None:
+        a = self._read(self.a_combo.currentText())
+        b = self._read(self.b_combo.currentText())
+        lines = [f"A: {self.a_combo.currentText()}  vs  B: {self.b_combo.currentText()}", ""]
+        for tag, d in (("A", a), ("B", b)):
+            lines.append(f"[{tag}] phase={d.get('phase') or d.get('_phase')}  "
+                         f"files={len(d.get('generated_files', []) or [])}  "
+                         f"iterations={d.get('iteration', d.get('max_iterations', '?'))}")
+        lines.append("")
+        af = {f.get("path") if isinstance(f, dict) else f for f in (a.get("generated_files") or [])}
+        bf = {f.get("path") if isinstance(f, dict) else f for f in (b.get("generated_files") or [])}
+        only_a = af - bf
+        only_b = bf - af
+        if only_a:
+            lines.append("Only in A: " + ", ".join(sorted(only_a)))
+        if only_b:
+            lines.append("Only in B: " + ", ".join(sorted(only_b)))
+        if not only_a and not only_b:
+            lines.append("Both runs produced the same file set.")
+        self.out.setPlainText("\n".join(lines))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Swarm persona editor (#11)
+# ═══════════════════════════════════════════════════════════════════════
+
+_AGENTS_DIR = HERE / "agents"
+
+
+class PersonaPage(PageWidget):
+    """Edit swarm agent 'souls' (system prompts) stored as markdown/json."""
+
+    def __init__(self) -> None:
+        super().__init__("Agent Personas", "Edit swarm agent system prompts.")
+        _AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+        self._files: list[Path] = []
+        row = QHBoxLayout()
+        self.agent_combo = QComboBox()
+        self.agent_combo.setMinimumHeight(28)
+        self.agent_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.agent_combo.currentIndexChanged.connect(self._load)
+        row.addWidget(QLabel("Agent:"))
+        row.addWidget(self.agent_combo, 1)
+        new_btn = QPushButton(f"{icon('sparkle')}  New")
+        new_btn.clicked.connect(self._new)
+        row.addWidget(new_btn)
+        self.content.addLayout(row)
+
+        self.edit = QPlainTextEdit()
+        self.edit.setPlaceholderText("Agent system prompt / persona…")
+        self.edit.setStyleSheet("background:#11111b;color:#cdd6f4;font-family:Consolas,monospace;font-size:12px;")
+        self._add(self.edit)
+
+        btn = QPushButton(f"{icon('save')}  Save persona")
+        btn.clicked.connect(self._save)
+        self._add(btn)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        self._files = sorted(_AGENTS_DIR.glob("*.md")) + sorted(_AGENTS_DIR.glob("*.json"))
+        self.agent_combo.clear()
+        for f in self._files:
+            self.agent_combo.addItem(f.name, str(f))
+        if self._files:
+            self._load()
+
+    def _load(self) -> None:
+        idx = self.agent_combo.currentIndex()
+        if idx < 0:
+            return
+        p = Path(self.agent_combo.itemData(idx) or "")
+        try:
+            self.edit.setPlainText(p.read_text(encoding="utf-8", errors="replace"))
+        except Exception as exc:
+            self.edit.setPlainText(f"# error: {exc}")
+
+    def _new(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog
+
+        name, ok = QInputDialog.getText(self, "New persona", "Agent file name (.md):")
+        if ok and name.strip():
+            p = _AGENTS_DIR / (name.strip() if name.strip().endswith(".md") else name.strip() + ".md")
+            p.write_text(f"# {name}\n\nYou are a focused agent.\n", encoding="utf-8")
+            self._refresh()
+            self.agent_combo.setCurrentText(p.name)
+
+    def _save(self) -> None:
+        idx = self.agent_combo.currentIndex()
+        if idx < 0:
+            return
+        p = Path(self.agent_combo.itemData(idx) or "")
+        try:
+            p.write_text(self.edit.toPlainText(), encoding="utf-8")
+            self.edit.appendPlainText(f"\n[saved {p.name}]")
+        except Exception as exc:
+            self.edit.appendPlainText(f"\n[save failed: {exc}]")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Bench charts (#14) — render results as HTML bar charts (no QCharts)
+# ═══════════════════════════════════════════════════════════════════════
+
+class BenchChartsPage(PageWidget):
+    """Visualise benchmark results as HTML bar charts."""
+
+    def __init__(self) -> None:
+        super().__init__("Bench Charts", "Model latency / token benchmark visualiser.")
+        self._data: list[dict] = []
+        row = QHBoxLayout()
+        self.bench_combo = QComboBox()
+        self.bench_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.bench_combo.currentIndexChanged.connect(self._render)
+        row.addWidget(QLabel("Result set:"))
+        row.addWidget(self.bench_combo, 1)
+        refresh = QPushButton(f"{icon('refresh')}  Reload")
+        refresh.clicked.connect(self._load)
+        row.addWidget(refresh)
+        self.content.addLayout(row)
+
+        self.view = QTextEdit()
+        self.view.setReadOnly(True)
+        self.view.setStyleSheet("background:#11111b;color:#cdd6f4;font-family:Consolas,monospace;font-size:12px;")
+        self._add(self.view)
+        self._load()
+
+    def _load(self) -> None:
+        import glob
+
+        self._data = []
+        self.bench_combo.clear()
+        for p in sorted(glob.glob(str(HERE / "bench_*.json"))):
+            try:
+                d = json.loads(Path(p).read_text(encoding="utf-8"))
+                self._data.append(d)
+                self.bench_combo.addItem(Path(p).name, p)
+            except Exception:
+                pass
+        if not self._data:
+            self.view.setHtml("<p style='color:#a6adc8'>No bench_*.json files found. "
+                              "Run a benchmark first.</p>")
+            return
+        self._render()
+
+    def _render(self) -> None:
+        idx = self.bench_combo.currentIndex()
+        if idx < 0 or idx >= len(self._data):
+            return
+        d = self._data[idx]
+        models = d.get("models") or d.get("results") or []
+        if isinstance(models, dict):
+            models = [{"model": k, **v} for k, v in models.items()]
+        rows = []
+        maxv = 1.0
+        for m in models:
+            lat = float(m.get("latency") or m.get("avg_latency") or m.get("seconds") or 0)
+            maxv = max(maxv, lat)
+        for m in models:
+            lat = float(m.get("latency") or m.get("avg_latency") or m.get("seconds") or 0)
+            pct = int((lat / maxv) * 100) if maxv else 0
+            name = m.get("model", "?")
+            rows.append(
+                f"<div style='margin:6px 0'><span style='color:#89b4fa'>{name}</span><br>"
+                f"<div style='background:#313244;border-radius:4px;width:100%'>"
+                f"<div style='background:#a6e3a1;height:18px;border-radius:4px;width:{pct}%'></div>"
+                f"</div><span style='color:#a6adc8;font-size:11px'>{lat:.2f}s</span></div>")
+        self.view.setHtml(
+            f"<div style='padding:8px'><h3 style='color:#89b4fa'>"
+            f"{self.bench_combo.currentText()}</h3>" + "".join(rows) + "</div>")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Toast history center (#15)
+# ═══════════════════════════════════════════════════════════════════════
+
+_TOAST_LOG = HERE / ".virgo_toasts.json"
+
+
+def log_toast(title: str, message: str) -> None:
+    """Append a toast to the on-disk history (called by the main window)."""
+    try:
+        from datetime import datetime
+
+        hist: list[dict] = []
+        if _TOAST_LOG.exists():
+            try:
+                hist = json.loads(_TOAST_LOG.read_text(encoding="utf-8"))
+            except Exception:
+                hist = []
+        hist.append({"t": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                     "title": title, "message": message})
+        _TOAST_LOG.write_text(json.dumps(hist[-200:], indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+class ToastHistoryPage(PageWidget):
+    """Show a history of desktop toasts/notifications."""
+
+    def __init__(self) -> None:
+        super().__init__("Toast History", "Recent desktop notifications.")
+        row = QHBoxLayout()
+        refresh = QPushButton(f"{icon('refresh')}  Refresh")
+        refresh.clicked.connect(self._load)
+        clear = QPushButton(f"{icon('trash')}  Clear")
+        clear.clicked.connect(self._clear)
+        row.addWidget(refresh)
+        row.addWidget(clear)
+        row.addStretch()
+        self.content.addLayout(row)
+
+        self.view = QTextEdit()
+        self.view.setReadOnly(True)
+        self.view.setStyleSheet("background:#11111b;color:#cdd6f4;font-family:Consolas,monospace;font-size:12px;")
+        self._add(self.view)
+        self._load()
+
+    def _load(self) -> None:
+        if not _TOAST_LOG.exists():
+            self.view.setPlainText("(no notifications yet)")
+            return
+        try:
+            hist = json.loads(_TOAST_LOG.read_text(encoding="utf-8"))
+        except Exception:
+            self.view.setPlainText("(corrupt history)")
+            return
+        lines = [f"{h.get('t','')}  •  {h.get('title','')}: {h.get('message','')}"
+                 for h in reversed(hist)]
+        self.view.setPlainText("\n".join(lines) if lines else "(empty)")
+
+    def _clear(self) -> None:
+        try:
+            _TOAST_LOG.write_text("[]", encoding="utf-8")
+        except Exception:
+            pass
+        self._load()
