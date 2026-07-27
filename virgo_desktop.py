@@ -878,7 +878,8 @@ class VirgoDesktopWindow(QMainWindow):
         self._soundscape_volume = 50
 
         # ── Animated boot screen ──
-        self._show_boot_screen()
+        # Disabled for now — causing blank-window issues on some systems
+        # self._show_boot_screen()
 
     # ────────────────────────────────────────────────────────────────
 
@@ -2090,16 +2091,19 @@ class VirgoDesktopWindow(QMainWindow):
             ver.setFont(vfont)
             ver.setPos(cx + 150, cy + 350)
 
-            # Simply delete the splash after a delay (setWindowOpacity
-            # doesn't work on child widgets, so we just hide it directly).
+            # Simply delete the splash after a delay
             def _dismiss() -> None:
                 try:
                     splash.hide()
                     splash.deleteLater()
+                    # Force the main window to repaint what was underneath
+                    self.update()
+                    self.repaint()
+                    self.stack.update()
                 except Exception:
                     pass
 
-            QTimer.singleShot(2000, _dismiss)
+            QTimer.singleShot(2500, _dismiss)
         except Exception:
             pass  # Non-critical; boot proceeds without splash
 
