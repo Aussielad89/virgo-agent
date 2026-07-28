@@ -4063,6 +4063,69 @@ class SettingsPage(PageWidget):
         self._add(self.save_status)
         self.content.addStretch(1)
 
+        # ── Config bundle (export / import) ──
+        bundle = self._section("Config Bundle")
+        b_row = QHBoxLayout()
+        exp = QPushButton(f"{icon('save')}  Export bundle (.zip)")
+        exp.clicked.connect(self._export_bundle)
+        b_row.addWidget(exp)
+        imp = QPushButton(f"{icon('file')}  Import bundle (.zip)")
+        imp.clicked.connect(self._import_bundle)
+        b_row.addWidget(imp)
+        b_row.addStretch()
+        bundle.layout().addLayout(b_row)  # type: ignore
+        self._bundle_status = QLabel("Exports router.json + agents + prompts + themes.")
+        self._bundle_status.setStyleSheet("color:#a6adc8;font-size:12px;")
+        bundle.layout().addWidget(self._bundle_status)  # type: ignore
+
+    def _export_bundle(self) -> None:
+        """Zip router.json + agents/ + prompts + themes into one file."""
+        import zipfile
+        from datetime import datetime
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export config bundle",
+            str(HERE / f"virgo-bundle-{datetime.now():%Y%m%d}.zip"),
+            "ZIP (*.zip)")
+        if not path:
+            return
+        files = [HERE / "router.json"]
+        if _AGENTS_DIR.is_dir():
+            files += sorted(_AGENTS_DIR.glob("*.json"))
+        files.append(HERE / "_prompt_templates.json")
+        themes = HERE / "_virgo_themes.json"
+        if themes.exists():
+            files.append(themes)
+        try:
+            with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+                for f in files:
+                    if f.exists():
+                        z.write(f, f.name)
+            self._bundle_status.setText(f"Exported {Path(path).name}")
+        except Exception as exc:
+            self._bundle_status.setText(f"export failed: {exc}")
+
+    def _import_bundle(self) -> None:
+        """Restore a config bundle (router.json, agents, prompts, themes)."""
+        import zipfile
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import config bundle", str(HERE), "ZIP (*.zip)")
+        if not path:
+            return
+        try:
+            with zipfile.ZipFile(path) as z:
+                for name in z.namelist():
+                    if name.endswith(".json"):
+                        dest = HERE / name
+                        if name.startswith("agents/") or "/" in name:
+                            dest = HERE / name
+                        dest.write_bytes(z.read(name))
+            self._bundle_status.setText(
+                f"Imported {Path(path).name} — restart to apply")
+        except Exception as exc:
+            self._bundle_status.setText(f"import failed: {exc}")
+
     def _save(self) -> None:
         values: dict[str, str] = {}
         for key, widget in self._fields.items():
@@ -4698,7 +4761,18 @@ class ComparePage(PageWidget):
         go = QPushButton(f"{icon('compare')}  Compare")
         go.clicked.connect(self._compare)
         row.addWidget(go)
+        matrix_btn = QPushButton(f"{icon('grid')}  Matrix (all)")
+        matrix_btn.clicked.connect(self._matrix)
+        row.addWidget(matrix_btn)
         self.content.addLayout(row)
+
+        self.matrix_table = QTableWidget(0, 5)
+        self.matrix_table.setHorizontalHeaderLabels(
+            ["Session", "Status", "Iter", "Tokens", "Model"])
+        self.matrix_table.horizontalHeader().setStretchLastSection(True)
+        self.matrix_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._add(self.matrix_table)
 
         self.out = QTextEdit()
         self.out.setReadOnly(True)
@@ -4734,6 +4808,41 @@ class ComparePage(PageWidget):
         if not only_a and not only_b:
             lines.append("Both runs produced the same file set.")
         self.out.setPlainText("\n".join(lines))
+
+    def _matrix(self) -> None:
+        """Compare every saved session in one stat matrix."""
+        sessions = sorted(
+            _MEM_DIR.glob("*.json"),
+            key=lambda p: p.stat().st_mtime, reverse=True)
+        rows = []
+        for s in sessions:
+            try:
+                d = json.loads(s.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            passed = d.get("loop_passed")
+            if passed is True:
+                status = "PASS"
+            elif passed is False:
+                status = "FAIL"
+            else:
+                status = str(d.get("phase", "")).upper() or "—"
+            iters = str(d.get("iteration", "—"))
+            toks = str(d.get("total_tokens", d.get("tokens", "—")))
+            model = str(d.get("model", "—"))
+            rows.append((s.stem, status, iters, toks, model))
+        self.matrix_table.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            for c, val in enumerate(r):
+                item = QTableWidgetItem(val)
+                if c == 1:
+                    if val == "PASS":
+                        item.setForeground(QColor("#a6e3a1"))
+                    elif val == "FAIL":
+                        item.setForeground(QColor("#f38ba8"))
+                    else:
+                        item.setForeground(QColor("#f9e2af"))
+                self.matrix_table.setItem(i, c, item)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -5071,3 +5180,115 @@ class HistoryPage(PageWidget):
             w = self.window()
             if hasattr(w, "_navigate"):
                 w._navigate("replay")
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Cost / project accounting (#10)
+# ══════════════════════════════════════════════════════════════════════════
+
+class CostPage(PageWidget):
+    """Token accounting across sessions + per-project breakdown + CSV export.
+
+    Local Ollama runs are free; the $ column is an *optional* cloud-
+    equivalent estimate using editable $/1M-token rates so you can compare
+    what the same work would cost on a hosted API.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Cost Accounting",
+            "Tokens used across runs + per-project breakdown (CSV export).",
+        )
+        self._mem_dir = HERE / ".virgo_memory"
+        rate_row = QHBoxLayout()
+        rate_row.addWidget(QLabel("Est. $/1M tok:"))
+        self.rate = QLineEdit("0.0")
+        self.rate.setFixedWidth(70)
+        rate_row.addWidget(self.rate)
+        rate_row.addWidget(QLabel("(0 = local/free)"))
+        self.exp_btn = QPushButton(f"{icon('save')}  Export CSV")
+        self.exp_btn.clicked.connect(self._export_csv)
+        rate_row.addWidget(self.exp_btn)
+        rate_row.addStretch()
+        self.content.addLayout(rate_row)
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(
+            ["Project / goal", "Runs", "Tokens", "Est. $"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._add(self.table)
+        self.total_label = QLabel("")
+        self.total_label.setStyleSheet("color:#a6adc8;font-size:12px;")
+        self._add(self.total_label)
+        self._refresh()
+
+    def _aggregate(self):
+        rows = []
+        total_tok = 0
+        if not self._mem_dir.is_dir():
+            return rows, total_tok
+        for path in sorted(self._mem_dir.glob("*.json"),
+                         key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                d = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            goal = str(d.get("goal", path.stem))
+            proj = " ".join(goal.split()[:3])
+            tok = int(d.get("total_tokens", d.get("tokens", 0)) or 0)
+            rows.append((proj, 1, tok))
+            total_tok += tok
+        by_proj = {}
+        for proj, runs, tok in rows:
+            agg = by_proj.setdefault(proj, [0, 0])
+            agg[0] += runs
+            agg[1] += tok
+        out = [(p, v[0], v[1]) for p, v in by_proj.items()]
+        out.sort(key=lambda x: x[2], reverse=True)
+        return out, total_tok
+
+    def _refresh(self) -> None:
+        try:
+            rate = float(self.rate.text()) or 0.0
+        except ValueError:
+            rate = 0.0
+        agg, total = self._aggregate()
+        self.table.setRowCount(len(agg))
+        for i, (proj, runs, tok) in enumerate(agg):
+            self._set(i, 0, proj)
+            self._set(i, 1, str(runs))
+            self._set(i, 2, str(tok))
+            self._set(i, 3, f"${tok/1_000_000*rate:.4f}")
+        self.total_label.setText(
+            f"Total: {total:,} tokens across {len(agg)} project(s) "
+            f"· est. ${total/1_000_000*rate:.4f}")
+
+    def _set(self, r, c, text):
+        self.table.setItem(r, c, QTableWidgetItem(str(text)))
+
+    def _export_csv(self) -> None:
+        from datetime import datetime
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export accounting CSV",
+            str(HERE / f"cost_{datetime.now():%Y%m%d}.csv"),
+            "CSV (*.csv)")
+        if not path:
+            return
+        try:
+            rate = float(self.rate.text()) or 0.0
+        except ValueError:
+            rate = 0.0
+        agg, total = self._aggregate()
+        lines = ["project,runs,tokens,est_usd"]
+        for proj, runs, tok in agg:
+            lines.append(f"{proj},{runs},{tok},{tok/1_000_000*rate:.6f}")
+        lines.append(f"TOTAL,{len(agg)},{total},{total/1_000_000*rate:.6f}")
+        try:
+            Path(path).write_text("\n".join(lines), encoding="utf-8")
+            self.total_label.setText(
+                self.total_label.text() + f"  ·  saved {Path(path).name}")
+        except Exception as exc:
+            self.total_label.setText(f"export failed: {exc}")
