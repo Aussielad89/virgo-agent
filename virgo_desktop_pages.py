@@ -4253,6 +4253,28 @@ class FilesPage(PageWidget):
 
 _ROUTER_FILE = HERE / "router.json"
 
+# Known model capabilities (matched by name prefix). Used to tag the
+# per-role dropdowns and to record which models can handle images/OCR so
+# the pipeline can route vision tasks correctly.
+_MODEL_CAPS: dict[str, str] = {
+    "minicpm-v4.6": "vision",
+    "qwen3-vl": "vision",
+    "glm-ocr": "ocr",
+    "lfm2.5": "reason",
+    "granite4.1": "general",
+}
+
+
+def _cap_tag(model: str) -> str:
+    for prefix, cap in _MODEL_CAPS.items():
+        if model.startswith(prefix):
+            return {"vision": " 👁", "ocr": " 📝", "reason": " 🧠", "general": ""}.get(cap, "")
+    return ""
+
+
+def _is_vision(model: str) -> bool:
+    return _MODEL_CAPS.get(next((p for p in _MODEL_CAPS if model.startswith(p)), ""), "") == "vision"
+
 
 class ModelsPage(PageWidget):
     """Assign a model per pipeline role (planner / generator / fixer)."""
@@ -4320,12 +4342,17 @@ class ModelsPage(PageWidget):
             cur = current.get(role, "")
             if cur and cur not in all_models:
                 all_models.append(cur)
-            combo.addItems(all_models)
+            for m in all_models:
+                combo.addItem(m + _cap_tag(m), m)  # text=tagged, data=raw name
             if cur:
-                combo.setCurrentText(cur)
+                idx = combo.findData(cur)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+        vision = [m for m in all_models if _is_vision(m)]
+        caps_note = f"  ·  vision: {', '.join(vision) if vision else 'none'}"
         self.status.setText(
             f"{len(models)} model(s) available on Ollama"
-            + ("" if models else " — is Ollama running on :11434?")
+            + (" — is Ollama running on :11434?" if not models else caps_note)
         )
 
     def _fetch_ollama_models(self) -> list[str]:
@@ -4341,10 +4368,14 @@ class ModelsPage(PageWidget):
 
     def _apply(self) -> None:
         cfg: dict[str, dict[str, str]] = {}
+        vision_models: list[str] = []
         for role in self._roles:
-            model = self._combos[role].currentText().strip()
+            model = self._combos[role].currentData() or self._combos[role].currentText().strip()
             if model:
                 cfg[role] = {"provider": "ollama", "model": model}
+                if _is_vision(model) and model not in vision_models:
+                    vision_models.append(model)
+        cfg["vision_models"] = vision_models
         try:
             _ROUTER_FILE.write_text(json.dumps(cfg, indent=2))
         except Exception as exc:
@@ -4356,6 +4387,7 @@ class ModelsPage(PageWidget):
 
             _main.ROUTER_CONFIG = {
                 role: (c["provider"], c["model"]) for role, c in cfg.items()
+                if role != "vision_models"
             }
         except Exception:
             pass
