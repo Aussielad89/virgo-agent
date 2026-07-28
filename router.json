@@ -1,0 +1,7 @@
+{
+  "planner": {"provider": "ollama", "model": "minicpm-v4.6"},
+  "generator": {"provider": "ollama", "model": "granite4.1:3b"},
+  "fixer": {"provider": "ollama", "model": "minicpm-v4.6"},
+  "vision_models": ["minicpm-v4.6", "qwen3-vl:2b"],
+  "_note": "Assigned from Thermal Bench CPU results (2026-07-28). ornith/gemma4/llama3.2/qwen3.5 hang on this box and are intentionally omitted. minicpm-v4.6 = fastest + 10/10 quality (default). granite4.1:3b = reliable generator. glm-ocr is OCR-only. qwen3-vl:2b = vision but weak text."
+}
