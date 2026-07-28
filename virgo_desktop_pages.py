@@ -288,6 +288,30 @@ class PipelinePage(PageWidget):
         opt_row.addStretch()
         goal_group.layout().addLayout(opt_row)  # type: ignore
 
+        # Prompt template library
+        pt_group = self._section("Prompt Templates")
+        self._pt_file = HERE / "_prompt_templates.json"
+        pt_row = QHBoxLayout()
+        self.pt_combo = QComboBox()
+        self.pt_combo.setMinimumWidth(220)
+        self.pt_combo.currentTextChanged.connect(self._pt_selected)
+        pt_row.addWidget(QLabel("Template:"))
+        pt_row.addWidget(self.pt_combo, 1)
+        pt_group.layout().addLayout(pt_row)  # type: ignore
+        self.pt_edit = QLineEdit()
+        self.pt_edit.setPlaceholderText("prompt text (editable)")
+        pt_group.layout().addWidget(self.pt_edit)  # type: ignore
+        pt_btn_row = QHBoxLayout()
+        pt_save = QPushButton(f"{icon('save')}  Save")
+        pt_save.clicked.connect(self._pt_save)
+        pt_del = QPushButton(f"{icon('trash')}  Delete")
+        pt_del.clicked.connect(self._pt_delete)
+        pt_btn_row.addWidget(pt_save)
+        pt_btn_row.addWidget(pt_del)
+        pt_btn_row.addStretch()
+        pt_group.layout().addLayout(pt_btn_row)  # type: ignore
+        self._load_pt()
+
         # ── DAG visualizer ──
         dag_group = self._section("Pipeline Graph")
         self.status_label = QLabel("Idle")
@@ -366,7 +390,7 @@ class PipelinePage(PageWidget):
             "iterations": 0,
         }
 
-        # Live diff viewer (generated code before → after, per iteration)
+        # Live diff viewer (before → after, side by side, syntax-highlighted)
         diff_widget = QWidget()
         diff_layout = QVBoxLayout(diff_widget)
         diff_layout.setContentsMargins(0, 0, 0, 0)
@@ -375,19 +399,44 @@ class PipelinePage(PageWidget):
         self.diff_file.currentTextChanged.connect(self._show_diff_for)
         diff_layout.addWidget(self.diff_file)
         diff_btn_row = QHBoxLayout()
+        self.diff_mode_btn = QPushButton(f"{icon('compare')}  Unified diff")
+        self.diff_mode_btn.setCheckable(True)
+        self.diff_mode_btn.setChecked(False)
+        self.diff_mode_btn.clicked.connect(self._toggle_diff_mode)
+        diff_btn_row.addWidget(self.diff_mode_btn)
         self.diff_open_btn = QPushButton(f"{icon('file')}  Open in viewer")
         self.diff_open_btn.clicked.connect(self._open_diff_viewer)
         diff_btn_row.addWidget(self.diff_open_btn)
         diff_btn_row.addStretch()
         diff_layout.addLayout(diff_btn_row)
+        # Two-pane split (before | after)
+        self.diff_split = QSplitter(Qt.Orientation.Horizontal)
+        self.diff_before = QTextEdit()
+        self.diff_before.setReadOnly(True)
+        self.diff_before.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.diff_before.setStyleSheet(
+            "background:#11111b;color:#cdd6f4;"
+            "font-family:'Cascadia Code','Consolas',monospace;font-size:12px;")
+        self.diff_after = QTextEdit()
+        self.diff_after.setReadOnly(True)
+        self.diff_after.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.diff_after.setStyleSheet(
+            "background:#11111b;color:#cdd6f4;"
+            "font-family:'Cascadia Code','Consolas',monospace;font-size:12px;")
+        self.diff_split.addWidget(self.diff_before)
+        self.diff_split.addWidget(self.diff_after)
+        diff_layout.addWidget(self.diff_split, 1)
+        # Unified-diff view (hidden by default)
         self.diff_view = QTextEdit()
         self.diff_view.setReadOnly(True)
         self.diff_view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        self.diff_view.setStyleSheet("background: #11111b; color: #cdd6f4; font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12px;")
-        diff_layout.addWidget(self.diff_view)
+        self.diff_view.setStyleSheet(
+            "background:#11111b;color:#cdd6f4;"
+            "font-family:'Cascadia Code','Consolas',monospace;font-size:12px;")
+        self.diff_view.setVisible(False)
+        diff_layout.addWidget(self.diff_view, 1)
         tabs.addTab(diff_widget, f"{icon('compare')}  Live Diff")
         self._diffs: dict[str, list[tuple[str, str]]] = {}  # path -> [(before,after)...]
-
         self._add(tabs)
         self._restore_splitter()
 
@@ -686,12 +735,25 @@ class PipelinePage(PageWidget):
         if self.diff_file.currentText() == path or self.diff_file.count() == 1:
             self._show_diff_for(path)
 
+    def _toggle_diff_mode(self) -> None:
+        unified = self.diff_mode_btn.isChecked()
+        self.diff_split.setVisible(not unified)
+        self.diff_view.setVisible(unified)
+        self.diff_mode_btn.setText(
+            f"{icon('compare')}  Side-by-side" if unified
+            else f"{icon('compare')}  Unified diff")
+        self._show_diff_for(self.diff_file.currentText())
+
     def _show_diff_for(self, path: str) -> None:
         hist = self._diffs.get(path)
         if not hist:
+            self.diff_before.setPlainText("")
+            self.diff_after.setPlainText("")
             self.diff_view.setPlainText("")
             return
         before, after = hist[-1]
+        self.diff_before.setHtml(_highlight_code(before))
+        self.diff_after.setHtml(_highlight_code(after))
         import difflib
         b_lines = before.splitlines()
         a_lines = after.splitlines()
@@ -749,6 +811,57 @@ class PipelinePage(PageWidget):
         }
         if val in goals:
             self.goal_input.setText(goals[val])
+
+    def _load_pt(self) -> None:
+        """Load named prompt templates from _prompt_templates.json."""
+        self.pt_combo.clear()
+        self.pt_combo.addItem("— new / none —")
+        try:
+            data = json.loads(self._pt_file.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        for name in sorted(data):
+            self.pt_combo.addItem(name)
+
+    def _pt_selected(self, name: str) -> None:
+        if not name or name.startswith("—"):
+            return
+        try:
+            data = json.loads(self._pt_file.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if name in data:
+            self.pt_edit.setText(data[name])
+            self.goal_input.setText(data[name])
+
+    def _pt_save(self) -> None:
+        text = self.pt_edit.text().strip()
+        if not text:
+            return
+        name = self.pt_combo.currentText().strip()
+        if not name or name.startswith("—"):
+            name = f"tpl-{len(self.pt_combo)}"
+        try:
+            data = json.loads(self._pt_file.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        data[name] = text
+        self._pt_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        self._load_pt()
+        self.pt_combo.setCurrentText(name)
+
+    def _pt_delete(self) -> None:
+        name = self.pt_combo.currentText().strip()
+        if not name or name.startswith("—"):
+            return
+        try:
+            data = json.loads(self._pt_file.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        data.pop(name, None)
+        self._pt_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        self.pt_edit.clear()
+        self._load_pt()
 
     def _export_report(self) -> None:
         """Export the current run as a Markdown + HTML report."""
@@ -4631,12 +4744,13 @@ _AGENTS_DIR = HERE / "agents"
 
 
 class PersonaPage(PageWidget):
-    """Edit swarm agent 'souls' (system prompts) stored as markdown/json."""
+    """Visual builder for swarm agent personas (name, prompt, model, tools)."""
 
     def __init__(self) -> None:
-        super().__init__("Agent Personas", "Edit swarm agent system prompts.")
+        super().__init__("Agent Personas", "Build swarm agent personas — no JSON hand-editing.")
         _AGENTS_DIR.mkdir(parents=True, exist_ok=True)
         self._files: list[Path] = []
+
         row = QHBoxLayout()
         self.agent_combo = QComboBox()
         self.agent_combo.setMinimumHeight(28)
@@ -4649,21 +4763,47 @@ class PersonaPage(PageWidget):
         row.addWidget(new_btn)
         self.content.addLayout(row)
 
-        self.edit = QPlainTextEdit()
-        self.edit.setPlaceholderText("Agent system prompt / persona…")
-        self.edit.setStyleSheet("background:#11111b;color:#cdd6f4;font-family:Consolas,monospace;font-size:12px;")
-        self._add(self.edit)
+        # Form fields
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("agent name (filename)")
+        self._add(self.name_edit)
+        self.model_combo = QComboBox()
+        self.model_combo.setMinimumHeight(28)
+        self.model_combo.setEditable(True)
+        self._seed_models()
+        self._add(self.model_combo)
+        self.tools_edit = QLineEdit()
+        self.tools_edit.setPlaceholderText("tools (comma separated): file, web, shell")
+        self._add(self.tools_edit)
+        self.prompt_edit = QPlainTextEdit()
+        self.prompt_edit.setPlaceholderText("System prompt / persona…")
+        self.prompt_edit.setStyleSheet(
+            "background:#11111b;color:#cdd6f4;font-family:Consolas,monospace;font-size:12px;")
+        self._add(self.prompt_edit)
 
         btn = QPushButton(f"{icon('save')}  Save persona")
         btn.clicked.connect(self._save)
         self._add(btn)
         self._refresh()
 
+    def _seed_models(self) -> None:
+        try:
+            import urllib.request
+            req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
+            with urllib.request.urlopen(req, timeout=3) as r:
+                data = json.loads(r.read())
+            models = [m["name"] for m in data.get("models", [])]
+        except Exception:
+            models = []
+        self.model_combo.addItem("default")
+        for m in models:
+            self.model_combo.addItem(m)
+
     def _refresh(self) -> None:
-        self._files = sorted(_AGENTS_DIR.glob("*.md")) + sorted(_AGENTS_DIR.glob("*.json"))
+        self._files = sorted(_AGENTS_DIR.glob("*.json"))
         self.agent_combo.clear()
         for f in self._files:
-            self.agent_combo.addItem(f.name, str(f))
+            self.agent_combo.addItem(f.stem, str(f))
         if self._files:
             self._load()
 
@@ -4673,30 +4813,40 @@ class PersonaPage(PageWidget):
             return
         p = Path(self.agent_combo.itemData(idx) or "")
         try:
-            self.edit.setPlainText(p.read_text(encoding="utf-8", errors="replace"))
-        except Exception as exc:
-            self.edit.setPlainText(f"# error: {exc}")
+            data = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            return
+        self.name_edit.setText(data.get("name", p.stem))
+        self.prompt_edit.setPlainText(data.get("prompt", ""))
+        self.tools_edit.setText(", ".join(data.get("tools", [])))
+        mi = self.model_combo.findText(data.get("model", "default"))
+        if mi >= 0:
+            self.model_combo.setCurrentIndex(mi)
 
     def _new(self) -> None:
         from PyQt6.QtWidgets import QInputDialog
-
-        name, ok = QInputDialog.getText(self, "New persona", "Agent file name (.md):")
+        name, ok = QInputDialog.getText(self, "New persona", "Agent name:")
         if ok and name.strip():
-            p = _AGENTS_DIR / (name.strip() if name.strip().endswith(".md") else name.strip() + ".md")
-            p.write_text(f"# {name}\n\nYou are a focused agent.\n", encoding="utf-8")
-            self._refresh()
-            self.agent_combo.setCurrentText(p.name)
+            self.name_edit.setText(name.strip())
+            self.prompt_edit.setPlainText(f"You are {name.strip()}, a focused agent.")
+            self.tools_edit.clear()
+            self.agent_combo.setCurrentIndex(-1)
 
     def _save(self) -> None:
-        idx = self.agent_combo.currentIndex()
-        if idx < 0:
-            return
-        p = Path(self.agent_combo.itemData(idx) or "")
+        name = self.name_edit.text().strip() or "agent"
+        p = _AGENTS_DIR / f"{name}.json"
+        data = {
+            "name": name,
+            "model": self.model_combo.currentText().strip() or "default",
+            "tools": [t.strip() for t in self.tools_edit.text().split(",") if t.strip()],
+            "prompt": self.prompt_edit.toPlainText(),
+        }
         try:
-            p.write_text(self.edit.toPlainText(), encoding="utf-8")
-            self.edit.appendPlainText(f"\n[saved {p.name}]")
+            p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            self._refresh()
+            self.agent_combo.setCurrentText(name)
         except Exception as exc:
-            self.edit.appendPlainText(f"\n[save failed: {exc}]")
+            self.prompt_edit.appendPlainText(f"\n[save failed: {exc}]")
 
 
 # ═══════════════════════════════════════════════════════════════════════
