@@ -902,6 +902,40 @@ def cmd_agent(args: argparse.Namespace) -> None:
         print(f"\n  [virgo] Could not save transcript: {exc}")
 
 
+def cmd_a2a_serve(args: argparse.Namespace) -> None:
+    """Serve Virgo as an A2A agent (AgentCard + JSON-RPC tasks)."""
+    from a2a_server import main as a2a_main
+
+    sys.argv = ["a2a_server"]
+    if args.host != "127.0.0.1":
+        sys.argv += ["--host", args.host]
+    if args.port != 8080:
+        sys.argv += ["--port", str(args.port)]
+    if args.llm:
+        sys.argv.append("--llm")
+    a2a_main()
+
+
+def cmd_a2a(args: argparse.Namespace) -> None:
+    """Call a remote A2A agent or print its AgentCard."""
+    from a2a_client import A2AClient, fetch_agent_card
+
+    if args.card:
+        card = fetch_agent_card(args.url)
+        if card is None:
+            print(f"[virgo] Could not fetch AgentCard from {args.url}")
+            return
+        print(json.dumps(card, indent=2, default=str))
+        return
+    msg = " ".join(args.message) or "ping"
+    client = A2AClient(args.url)
+    if not client.available:
+        print(f"[virgo] Could not reach A2A agent at {args.url}")
+        return
+    print(f"[virgo] {client.name}: {msg!r}")
+    print(client.send(msg))
+
+
 def _cmd_chat_upload(history: list[dict[str, str]], arg: str) -> None:
     """Upload a file into the chat context.
 
@@ -1471,6 +1505,20 @@ def main() -> None:
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", "-p", type=int, default=8765)
     p_serve.set_defaults(func=cmd_serve)
+
+    # a2a-serve
+    p_a2a_serve = sub.add_parser("a2a-serve", help="Serve Virgo as an A2A agent")
+    p_a2a_serve.add_argument("--host", default="127.0.0.1")
+    p_a2a_serve.add_argument("--port", "-p", type=int, default=8080)
+    p_a2a_serve.add_argument("--llm", action="store_true", help="Use an LLM-backed agent")
+    p_a2a_serve.set_defaults(func=cmd_a2a_serve)
+
+    # a2a (call a peer agent)
+    p_a2a = sub.add_parser("a2a", help="Call a remote A2A agent")
+    p_a2a.add_argument("url", help="Base URL of the peer A2A agent")
+    p_a2a.add_argument("message", nargs="*", help="Message text to send")
+    p_a2a.add_argument("--card", action="store_true", help="Just fetch the peer's AgentCard")
+    p_a2a.set_defaults(func=cmd_a2a)
 
     # list
     p_list = sub.add_parser("list", help="List saved sessions")
