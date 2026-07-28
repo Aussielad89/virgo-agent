@@ -38,6 +38,7 @@ from PyQt6.QtGui import (
     QTextDocument,
 )
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QColorDialog,
@@ -4317,7 +4318,50 @@ class ModelsPage(PageWidget):
         self.status.setStyleSheet("color: #a6adc8; font-size: 12px;")
         self._add(self.status)
 
+        # Health row: ping every model on Ollama and show green/red dots
+        health_row = QHBoxLayout()
+        self.health_btn = QPushButton(f"{icon('pulse')}  Ping all models")
+        self.health_btn.clicked.connect(self._ping_models)
+        health_row.addWidget(self.health_btn)
+        self.health_label = QLabel("not checked yet")
+        self.health_label.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        health_row.addWidget(self.health_label, 1)
+        self.content.addLayout(health_row)
+
         self._load_models()
+
+    def _ping_models(self) -> None:
+        """Probe each model via a 1-token generate; mark ok/timeout."""
+        models = self._fetch_ollama_models()
+        if not models:
+            self.health_label.setText("no models — is Ollama on :11434?")
+            return
+        import urllib.request
+
+        ok = 0
+        dead = []
+        for m in models:
+            payload = json.dumps({
+                "model": m, "prompt": "ping", "stream": False,
+                "options": {"num_predict": 1},
+            }).encode()
+            try:
+                req = urllib.request.Request(
+                    "http://127.0.0.1:11434/api/generate",
+                    data=payload,
+                    headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    json.loads(r.read())
+                ok += 1
+            except Exception:
+                dead.append(m)
+        summary = f"{ok}/{len(models)} healthy"
+        if dead:
+            summary += "  ·  dead: " + ", ".join(dead)
+        self.health_label.setText(summary)
+        self.health_label.setStyleSheet(
+            "color: #a6e3a1; font-size: 12px;"
+            if not dead else "color: #f38ba8; font-size: 12px;")
 
     def _load_models(self) -> None:
         models = self._fetch_ollama_models()
@@ -4791,4 +4835,89 @@ class ToastHistoryPage(PageWidget):
             _TOAST_LOG.write_text("[]", encoding="utf-8")
         except Exception:
             pass
-        self._load()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Run history dashboard
+# ══════════════════════════════════════════════════════════════════════════
+
+class HistoryPage(PageWidget):
+    """Chronological dashboard of every saved pipeline session."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Run History",
+            "Every .virgo_memory session — status, model, tokens, duration.",
+        )
+        self._mem_dir = HERE / ".virgo_memory"
+        self._sessions: list[dict] = []
+
+        self.refresh_btn = QPushButton(f"{icon('refresh')}  Refresh")
+        self.refresh_btn.clicked.connect(self._refresh)
+        self._add_row(self.refresh_btn)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(
+            ["Goal", "Status", "Model", "Iter", "Tokens", "When"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.cellDoubleClicked.connect(self._open)
+        self._add(self.table)
+
+        self._refresh()
+
+    def _refresh(self) -> None:
+        from datetime import datetime
+
+        self._sessions = []
+        if not self._mem_dir.is_dir():
+            self.table.setRowCount(0)
+            return
+        rows = []
+        for path in sorted(self._mem_dir.glob("*.json"),
+                         key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            rows.append((path, data))
+        self._sessions = rows
+        self.table.setRowCount(len(rows))
+        for i, (path, data) in enumerate(rows):
+            goal = str(data.get("goal", path.stem))
+            passed = data.get("loop_passed")
+            phase = str(data.get("phase", "")).lower()
+            status = ("PASS" if passed is True
+                      else "FAIL" if passed is False
+                      else phase.upper() or "—")
+            model = str(data.get("model", "")) or "—"
+            iters = data.get("iteration", "—")
+            toks = data.get("total_tokens", data.get("tokens", "—"))
+            when = datetime.fromtimestamp(
+                path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            self._set_cell(i, 0, goal, maxlen=60)
+            self._set_cell(i, 1, status,
+                          color=("#a6e3a1" if status == "PASS"
+                                  else "#f38ba8" if status == "FAIL"
+                                  else "#f9e2af"))
+            self._set_cell(i, 2, model)
+            self._set_cell(i, 3, str(iters))
+            self._set_cell(i, 4, str(toks))
+            self._set_cell(i, 5, when)
+
+    def _set_cell(self, row, col, text, color=None, maxlen=None):
+        if maxlen and len(text) > maxlen:
+            text = text[:maxlen - 1] + "…"
+        item = QTableWidgetItem(text)
+        if color:
+            item.setForeground(QColor(color))
+        self.table.setItem(row, col, item)
+
+    def _open(self, row, _col) -> None:
+        if 0 <= row < len(self._sessions):
+            w = self.window()
+            if hasattr(w, "_navigate"):
+                w._navigate("replay")

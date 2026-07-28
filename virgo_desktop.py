@@ -545,6 +545,7 @@ from virgo_desktop_pages import (
     ComparePage,
     DiagnosticsPage,
     FilesPage,
+    HistoryPage,
     LogsPage,
     ModelsPage,
     NetworkPage,
@@ -588,9 +589,10 @@ DESKTOP_ICONS = {
     "models": "\U0001f9e0",  # 🧠
     "replay": "\U0001f501",  # 🔁
     "compare": "\U0001f9f5",  # 🧵
-    "personas": "\U0001f479",  # 👹
-    "toasts": "\U0001f514",  # 🔔
-    "benchcharts": "\U0001f4ca",  # 📊
+    "personas": "👹",  # 👹
+    "toasts": "🔔",  # 🔔
+    "benchcharts": "📊",  # 📊
+    "history": "🕘",  # 🕘
 }
 
 SIDEBAR_ITEMS = [
@@ -615,6 +617,7 @@ SIDEBAR_ITEMS = [
     ("models", "Models", DESKTOP_ICONS["models"]),
     ("settings", "Settings", DESKTOP_ICONS["settings"]),
     ("about", "About", DESKTOP_ICONS["about"]),
+    ("history", "History", DESKTOP_ICONS["history"]),
 ]
 
 
@@ -784,6 +787,7 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(ModelsPage(), "models")
         self._register(SettingsPage(), "settings")
         self._register(AboutPage(), "about")
+        self._register(HistoryPage(), "history")
 
         self.splitter.addWidget(self.stack)
 
