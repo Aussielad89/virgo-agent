@@ -50,6 +50,7 @@ jobs:
           python -m pytest tests/ --ignore=tests/test_server.py -v --cov=. --cov-report=term-missing
 
       - name: Server tests (optional deps)
+        shell: bash
         run: |
           if python -c "import fastapi; import pydantic_core" 2>/dev/null; then
             python -m pytest tests/test_server.py -v
