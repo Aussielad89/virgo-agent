@@ -538,28 +538,42 @@ from PyQt6.QtWidgets import (
 # ── Import virgo modules ─────────────────────────────────────────────
 from virgo_desktop_pages import (
     AboutPage,
+    A2APeerBrowser,
+    AgentSandboxPage,
     AlertsPage,
     BenchmarkPage,
     BenchChartsPage,
     ChatPage,
+    ClipboardWatcherPage,
+    CommandPalette,
     ComparePage,
     CostPage,
     DiagnosticsPage,
     FilesPage,
     HistoryPage,
     LogsPage,
+    MCPToolPlayground,
     ModelsPage,
     NetworkPage,
+    PageWidget,
+    PermissionGatePage,
+    PersonaMarketplacePage,
     PersonaPage,
     PipelinePage,
     PluginsPage,
     ProcessMonitorPage,
+    ProfilerPage,
     ReplayPage,
     ScaffoldPage,
     SessionPage,
     SettingsPage,
+    ShareableArchivePage,
     SwarmPage,
     ToastHistoryPage,
+    WebhookSettingsPage,
+    WindowsServicePage,
+    BenchmarkRunnerPage,
+    BatchActionsPage,
 )
 
 # ── Constants ────────────────────────────────────────────────────────
@@ -595,6 +609,18 @@ DESKTOP_ICONS = {
     "benchcharts": "📊",  # 📊
     "history": "🕘",  # 🕘
     "cost": "💲",  # 💲
+    "profiler": "📈",  # 📈
+    "mcp_play": "🧩",  # 🧩
+    "a2a": "🤖",  # 🤖
+    "benchmarks": "⏱",  # ⏱
+    "clipboard": "📋",  # 📋
+    "webhooks": "🔔",  # 🔔
+    "permissions": "🔒",  # 🔒
+    "batch": "🗂",  # 🗂️
+    "personas_plus": "👹",  # 👹
+    "share": "🔗",  # 🔗
+    "win_svc": "⚙",  # ⚙️
+    "sandbox": "🧪",  # 🧪
 }
 
 SIDEBAR_ITEMS = [
@@ -621,6 +647,18 @@ SIDEBAR_ITEMS = [
     ("settings", "Settings", DESKTOP_ICONS["settings"]),
     ("about", "About", DESKTOP_ICONS["about"]),
     ("history", "History", DESKTOP_ICONS["history"]),
+    ("profiler", "Profiler", DESKTOP_ICONS["profiler"]),
+    ("mcp_play", "MCP Play", DESKTOP_ICONS["mcp_play"]),
+    ("a2a", "A2A Peers", DESKTOP_ICONS["a2a"]),
+    ("benchmarks", "Benchmark Runner", DESKTOP_ICONS["benchmarks"]),
+    ("clipboard", "Clipboard", DESKTOP_ICONS["clipboard"]),
+    ("webhooks", "Webhooks", DESKTOP_ICONS["webhooks"]),
+    ("permissions", "Permissions", DESKTOP_ICONS["permissions"]),
+    ("batch", "Batch Actions", DESKTOP_ICONS["batch"]),
+    ("personas_plus", "Personas+", DESKTOP_ICONS["personas_plus"]),
+    ("share", "Share Archive", DESKTOP_ICONS["share"]),
+    ("win_svc", "Windows Svc", DESKTOP_ICONS["win_svc"]),
+    ("sandbox", "Sandbox", DESKTOP_ICONS["sandbox"]),
 ]
 
 
@@ -792,6 +830,18 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(AboutPage(), "about")
         self._register(HistoryPage(), "history")
         self._register(CostPage(), "cost")
+        self._register(ProfilerPage(), "profiler")
+        self._register(MCPToolPlayground(), "mcp_play")
+        self._register(A2APeerBrowser(), "a2a")
+        self._register(BenchmarkRunnerPage(), "benchmarks")
+        self._register(ClipboardWatcherPage(), "clipboard")
+        self._register(WebhookSettingsPage(), "webhooks")
+        self._register(PermissionGatePage(), "permissions")
+        self._register(BatchActionsPage(), "batch")
+        self._register(PersonaMarketplacePage(), "personas_plus")
+        self._register(ShareableArchivePage(), "share")
+        self._register(WindowsServicePage(), "win_svc")
+        self._register(AgentSandboxPage(), "sandbox")
 
         self.splitter.addWidget(self.stack)
 

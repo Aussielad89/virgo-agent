@@ -52,6 +52,7 @@ from PyQt6.QtWidgets import (
     QGraphicsView,
     QGridLayout,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -241,6 +242,18 @@ class PipelinePage(PageWidget):
         self.stop_btn.setEnabled(False)
         goal_row.addWidget(self.stop_btn)
         goal_group.layout().addLayout(goal_row)  # type: ignore
+
+        # ── Resume from snapshot ─────────────────────────────────────
+        resume_row = QHBoxLayout()
+        resume_row.addWidget(QLabel("Resume:"))
+        self.resume_combo = QComboBox()
+        self.resume_combo.setMinimumWidth(220)
+        self._refresh_snapshots()
+        resume_row.addWidget(self.resume_combo, 1)
+        resume_btn = QPushButton(f"{icon('replay')}  Resume")
+        resume_btn.clicked.connect(self._resume_snapshot)
+        resume_row.addWidget(resume_btn)
+        goal_group.layout().addLayout(resume_row)  # type: ignore
 
         # Preset goal launcher
         preset_row = QHBoxLayout()
@@ -799,11 +812,56 @@ class PipelinePage(PageWidget):
                 self._update_dag(phase, "running")
                 break
 
+    def _resume_snapshot(self) -> None:
+        from resume_snapshot import list_snapshots, load_snapshot
+
+        if not hasattr(self, "resume_combo") or self.resume_combo.count() == 0:
+            self.output.appendPlainText(f"{icon('warn')} No resume target selected.")
+            return
+        sid = self.resume_combo.currentData()
+        if not sid:
+            self.output.appendPlainText(f"{icon('warn')} No snapshot selected.")
+            return
+        try:
+            snap = load_snapshot(str(sid))
+        except Exception as exc:
+            self.output.appendPlainText(f"{icon('error')} Load failed: {exc}")
+            return
+        state = snap.get("state", {}) if isinstance(snap, dict) else {}
+        goal = str(state.get("goal") or "").strip()
+        if not goal:
+            self.output.appendPlainText(f"{icon('warn')} Snapshot has no goal.")
+            return
+        self.goal_input.setText(goal)
+        self.output.appendPlainText(f"{icon('ok')} Loaded snapshot {sid}: {goal[:80]}")
+        self._run_pipeline()
+
+    def _refresh_snapshots(self) -> None:
+        try:
+            from resume_snapshot import list_snapshots
+
+            snaps = list_snapshots()
+        except Exception:
+            snaps = []
+        if not hasattr(self, "resume_combo"):
+            return
+        current = self.resume_combo.currentData()
+        self.resume_combo.blockSignals(True)
+        self.resume_combo.clear()
+        for snap in snaps:
+            label = str(snap.get("goal", snap.get("id", "")))[:60]
+            self.resume_combo.addItem(f"{snap.get('id','')}  —  {label}", snap.get("id"))
+        if current is not None:
+            idx = self.resume_combo.findData(current)
+            if idx >= 0:
+                self.resume_combo.setCurrentIndex(idx)
+        self.resume_combo.blockSignals(False)
+
     def _apply_preset(self) -> None:
         val = self.preset_combo.currentData() or ""
         goals = {
             "scaffold-fastapi": "scaffold fastapi-crud --output ./myapi --var project_name=myapi",
-            "scaffold-cli": "scaffold cli-app --output ./mycli --var project_name=mycli",
+            "scaffold-cli": "scaffold cli-app --output ./mycli -v project_name=mycli",
             "fix-tests": "fix the failing tests in this workspace",
             "parse-logs": "write a parser for mock_logs.txt that counts ERROR/WARN lines",
             "scraper": "build a web scraper that fetches the latest headlines",
@@ -4061,6 +4119,14 @@ class SettingsPage(PageWidget):
 
         self.save_status = QLabel("")
         self._add(self.save_status)
+
+        # ── Webhooks / Permissions / Windows Service ────────────────────
+        wh = self._section("Webhooks")
+        wh.layout().addWidget(QLabel("Webhook management is on the Webhooks page (🔔)."))  # type: ignore
+        pg = self._section("Permissions")
+        pg.layout().addWidget(QLabel("Permission gates are on the Permissions page (🔒)."))  # type: ignore
+        svc = self._section("Windows Service")
+        svc.layout().addWidget(QLabel("nssm controls are on the Win Service page (⚙)."))  # type: ignore
         self.content.addStretch(1)
 
         # ── Config bundle (export / import) ──
@@ -4850,6 +4916,7 @@ class ComparePage(PageWidget):
 # ═══════════════════════════════════════════════════════════════════════
 
 _AGENTS_DIR = HERE / "agents"
+_PERSONAS_DIR = HERE / "personas"
 
 
 class PersonaPage(PageWidget):
@@ -5113,11 +5180,13 @@ class HistoryPage(PageWidget):
 
         self.refresh_btn = QPushButton(f"{icon('refresh')}  Refresh")
         self.refresh_btn.clicked.connect(self._refresh)
-        self._add_row(self.refresh_btn)
+        self.batch_btn = QPushButton(f"{icon('file')}  Batch Actions")
+        self.batch_btn.clicked.connect(self._open_batch)
+        self._add_row(self.refresh_btn, self.batch_btn)
 
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["Goal", "Status", "Model", "Iter", "Tokens", "When"])
+            ["", "Goal", "Status", "Model", "Iter", "Tokens", "When"])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
@@ -5157,15 +5226,18 @@ class HistoryPage(PageWidget):
             toks = data.get("total_tokens", data.get("tokens", "—"))
             when = datetime.fromtimestamp(
                 path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-            self._set_cell(i, 0, goal, maxlen=60)
-            self._set_cell(i, 1, status,
+            cb = QCheckBox()
+            cb.setToolTip("Select for batch actions")
+            self.table.setCellWidget(i, 0, cb)
+            self._set_cell(i, 1, goal, maxlen=60)
+            self._set_cell(i, 2, status,
                           color=("#a6e3a1" if status == "PASS"
                                   else "#f38ba8" if status == "FAIL"
                                   else "#f9e2af"))
-            self._set_cell(i, 2, model)
-            self._set_cell(i, 3, str(iters))
-            self._set_cell(i, 4, str(toks))
-            self._set_cell(i, 5, when)
+            self._set_cell(i, 3, model)
+            self._set_cell(i, 4, str(iters))
+            self._set_cell(i, 5, str(toks))
+            self._set_cell(i, 6, when)
 
     def _set_cell(self, row, col, text, color=None, maxlen=None):
         if maxlen and len(text) > maxlen:
@@ -5174,6 +5246,11 @@ class HistoryPage(PageWidget):
         if color:
             item.setForeground(QColor(color))
         self.table.setItem(row, col, item)
+
+    def _open_batch(self) -> None:
+        w = self.window()
+        if hasattr(w, "_navigate"):
+            w._navigate("batch_actions")
 
     def _open(self, row, _col) -> None:
         if 0 <= row < len(self._sessions):
@@ -5292,3 +5369,599 @@ class CostPage(PageWidget):
                 self.total_label.text() + f"  ·  saved {Path(path).name}")
         except Exception as exc:
             self.total_label.setText(f"export failed: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Command palette / quick-launch overlay (#3)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class CommandPalette(QWidget):
+    """Quick-launch overlay over the main window."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 12, 12, 12)
+        self.input = QLineEdit()
+        self.input.setPlaceholderText("Type an action…")
+        lv = QListWidget()
+        lay.addWidget(self.input)
+        lay.addWidget(lv)
+        self._items = [
+            ("Run pipeline", "pipeline"),
+            ("Open chat", "chat"),
+            ("Open files", "files"),
+            ("Open Replay", "replay"),
+            ("Open Compare", "compare"),
+            ("Open Cost", "cost"),
+            ("Quit", "quit"),
+        ]
+        for label, target in self._items:
+            lv.addItem(f"{label}  →  {target}")
+        lv.itemDoubleClicked.connect(self._choose)
+        self.input.textChanged.connect(lambda _: self._filter(lv))
+        self.input.returnPressed.connect(lambda: self._choose(lv.currentItem()))
+
+    def _filter(self, lv: QListWidget) -> None:
+        q = self.input.text().lower()
+        for i in range(lv.count()):
+            lv.item(i).setHidden(q not in lv.item(i).text().lower())
+
+    def _choose(self, item):
+        if item is None:
+            return
+        txt = item.text()
+        target = txt.split("→")[-1].strip() if "→" in txt else "pipeline"
+        w = self.window()
+        if hasattr(w, "_navigate"):
+            w._navigate(target)
+        if target == "quit":
+            QApplication.instance().quit()  # type: ignore[union-attr]
+        self.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Profiler page (#15)
+# ═══════════════════════════════════════════════════════════════════════
+
+def _memory_mb() -> float:
+    try:
+        import os, psutil  # type: ignore
+        return psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024)
+    except Exception:
+        return 0.0
+
+
+def _thread_count() -> int:
+    try:
+        return __import__("threading").active_count()
+    except Exception:
+        return 0
+
+
+class ProfilerPage(PageWidget):
+    """CPU / memory snapshots during a pipeline run."""
+
+    def __init__(self) -> None:
+        super().__init__("Profiler", "CPU / memory snapshots during runs.")
+        self._samples: list[dict] = []
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["Time", "CPU %", "Mem MB", "Threads"])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._add(self._table)
+        row = QHBoxLayout()
+        row.addWidget(QPushButton("Record", clicked=self._record))
+        row.addWidget(QPushButton("Clear", clicked=lambda: (self._samples.clear(), self._refresh_table())))
+        row.addStretch()
+        self.content.addLayout(row)
+
+    def _record(self) -> None:
+        import cProfile, io, pstats, tempfile
+        prof = cProfile.Profile()
+        prof.enable()
+        # short work window
+        QApplication.processEvents()
+        prof.disable()
+        buf = io.StringIO()
+        pstats.Stats(prof, stream=buf).sort_stats("cumtime").print_stats(20)
+        sample = {
+            "time": __import__("datetime").datetime.now().strftime("%H:%M:%S"),
+            "cpu_s": buf.getvalue()[:600],
+        }
+        self._samples.append(sample)
+        self._refresh_table()
+
+    def _refresh_table(self) -> None:
+        self._table.setRowCount(len(self._samples))
+        for i, s in enumerate(self._samples):
+            self._table.setItem(i, 0, QTableWidgetItem(s.get("time", "")))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# MCP tool playground (#6)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class MCPToolPlayground(PageWidget):
+    """Probe registered tools / MCP tools with editable JSON args."""
+
+    def __init__(self) -> None:
+        super().__init__("MCP Play", "Tool probe playground.")
+        self.tool_combo = QComboBox()
+        self._add_row(QLabel("Tool:"), self.tool_combo)
+        self.args_edit = QPlainTextEdit()
+        self.args_edit.setPlaceholderText('{"arg": "value"}')
+        self.args_edit.setMaximumHeight(120)
+        self._add(self.args_edit)
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["Tool", "Result", "Latency"])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._add(self._table)
+        self._add_row(QPushButton("Call tool", clicked=self._call))
+        try:
+            from tools import ToolRegistry
+            reg = ToolRegistry.default()
+            self._tools = list(reg.list())
+        except Exception:
+            self._tools = []
+        self.tool_combo.addItems(self._tools)
+
+    def _call(self) -> None:
+        tool = self.tool_combo.currentText()
+        try:
+            import json, time
+            args = json.loads(self.args_edit.toPlainText() or "{}")
+            try:
+                from tools import ToolRegistry
+                reg = ToolRegistry.default()
+                t0 = time.time()
+                res = reg.call(tool, args)
+                dt = f"{time.time()-t0:.2f}s"
+                preview = str(res)[:180]
+            except Exception as exc:
+                preview = f"error: {exc}"
+                dt = "—"
+        except Exception as exc:
+            preview = f"json error: {exc}"
+            dt = "—"
+        r = self._table.rowCount()
+        self._table.insertRow(r)
+        self._table.setItem(r, 0, QTableWidgetItem(tool))
+        self._table.setItem(r, 1, QTableWidgetItem(preview))
+        self._table.setItem(r, 2, QTableWidgetItem(dt))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# A2A peer browser (#11)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class A2APeerBrowser(PageWidget):
+    """Discover A2A peers and send tasks."""
+
+    def __init__(self) -> None:
+        super().__init__("A2A Peers", "Agent-to-agent task browser.")
+        self.url_edit = QLineEdit()
+        self.url_edit.setPlaceholderText("https://peer/.well-known/agent.json")
+        self._add_row(QLabel("Peer:"), self.url_edit)
+        self.peek_btn = QPushButton("Fetch AgentCard")
+        self.peek_btn.clicked.connect(self._peek)
+        self.task_edit = QPlainTextEdit()
+        self.task_edit.setPlaceholderText("Task prompt…")
+        self.task_edit.setMaximumHeight(120)
+        self._add(self.task_edit)
+        self.send_btn = QPushButton("Send task")
+        self.send_btn.clicked.connect(self._send)
+        self.out = QPlainTextEdit()
+        self.out.setReadOnly(True)
+        self._add(self.out)
+
+    def _peek(self) -> None:
+        url = self.url_edit.text().strip()
+        if not url:
+            return
+        try:
+            from a2a_client import fetch_agent_card
+            card = fetch_agent_card(url)
+            self.out.appendPlainText(__import__("json").dumps(card, indent=2)[:4000])
+        except Exception as exc:
+            self.out.appendPlainText(f"peer error: {exc}")
+
+    def _send(self) -> None:
+        url = self.url_edit.text().strip()
+        text = self.task_edit.toPlainText().strip()
+        if not url or not text:
+            return
+        try:
+            from a2a_client import send_task
+            resp = send_task(url, text)
+            self.out.appendPlainText(__import__("json").dumps(resp, indent=2)[:4000])
+        except Exception as exc:
+            self.out.appendPlainText(f"task error: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Benchmark runner page (#12)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class BenchmarkRunnerPage(PageWidget):
+    """Run local model benchmark scenarios."""
+
+    def __init__(self) -> None:
+        super().__init__("Benchmarker", "Local benchmark runner.")
+        self.model_combo = QComboBox()
+        try:
+            self.model_combo.addItems(_live_ollama_models() or PREFERRED_MODELS)
+        except Exception:
+            self.model_combo.addItems(PREFERRED_MODELS)
+        self._add_row(QLabel("Model:"), self.model_combo,
+                      QPushButton("Run", clicked=self._run))
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["Model", "Time", "Tokens"])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._add(self._table)
+        self.out = QPlainTextEdit()
+        self.out.setReadOnly(True)
+        self._add(self.out)
+
+    def _run(self) -> None:
+        model = self.model_combo.currentText()
+        self.out.appendPlainText("Running benchmark…")
+        try:
+            bench = __import__("benchmark_runner")
+            res = bench.run_local_benchmark(model)
+        except Exception as exc:
+            res = {"error": str(exc)}
+        self.out.appendPlainText(__import__("json").dumps(res, indent=2)[:3000])
+        r = self._table.rowCount()
+        self._table.insertRow(r)
+        self._table.setItem(r, 0, QTableWidgetItem(model))
+        self._table.setItem(r, 1, QTableWidgetItem(str(res.get("elapsed_s", "—"))))
+        self._table.setItem(r, 2, QTableWidgetItem(str(res.get("tokens", "—"))))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Clipboard watcher page (#13)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ClipboardWatcherPage(PageWidget):
+    """Trigger pipeline runs from clipboard capture."""
+
+    def __init__(self) -> None:
+        super().__init__("Clipboard", "Clipboard watcher triggers.")
+        self.status = QLabel("Watching clipboard for text...")
+        self.status.setWordWrap(True)
+        self._add(self.status)
+        self.last = QPlainTextEdit()
+        self.last.setReadOnly(True)
+        self.last.setMaximumHeight(160)
+        self._add(self.last)
+
+    def on_activate(self) -> None:
+        try:
+            from clipboard_watcher import start
+            self._w = start(on_text=lambda t: self.last.appendPlainText(f"[clip] {t[:200]}"))
+        except Exception as exc:
+            self.last.appendPlainText(f"watcher error: {exc}")
+            self.status.setText(f"{icon('error')} watcher error: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Webhook settings page (#14)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class WebhookSettingsPage(PageWidget):
+    """Edit webhook targets + dispatch a test ping."""
+
+    def __init__(self) -> None:
+        super().__init__("Webhooks", "Webhook configuration.")
+        self.url_edit = QLineEdit()
+        self.url_edit.setPlaceholderText("https://example.com/webhook")
+        self._add_row(QLabel("WEBHOOK_URL:"), self.url_edit)
+        self.send_btn = QPushButton(f"{icon('web')}  Send test")
+        self.send_btn.clicked.connect(self._send_test)
+        self._add_row(self.send_btn)
+        self.out = QPlainTextEdit()
+        self.out.setReadOnly(True)
+        self._add(self.out)
+        self.status = QLabel("Edit WEBHOOK_URL, then send a test event.")
+        self.status.setWordWrap(True)
+        self._add(self.status)
+
+    def _send_test(self) -> None:
+        url = self.url_edit.text().strip()
+        try:
+            from webhook_notifier import notify
+            notify("Virgo test", url=url or None)
+            self.out.appendPlainText("sent test event")
+            self.status.setText(f"{icon('ok')} test event sent")
+        except Exception as exc:
+            self.out.appendPlainText(f"webhook error: {exc}")
+            self.status.setText(f"{icon('error')} {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Permission gate page (#8)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+_ALLOWED_ROLES = ["read", "write", "network", "exec"]
+_ALLOWED_TOOLS = ["web_fetch", "python_runner", "cli", "sqlite", "git"]
+
+_PERMS_STORE = HERE / ".virgo_permissions.json"
+
+
+class PermissionGatePage(PageWidget):
+    """Tool / role permission toggles."""
+
+    def __init__(self) -> None:
+        super().__init__("Permissions", "Tool and role gates.")
+        self._load()
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["Tool / Role", "Allow", "Notes"])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._add(self._table)
+        btn_row = QHBoxLayout()
+        save = QPushButton(f"{icon('save')}  Save")
+        save.clicked.connect(self._save)
+        reset = QPushButton(f"{icon('refresh')}  Reset")
+        reset.clicked.connect(self._reset)
+        btn_row.addWidget(save)
+        btn_row.addWidget(reset)
+        btn_row.addStretch()
+        self.content.addLayout(btn_row)
+        self.status = QLabel("")
+        self._add(self.status)
+        self._render()
+
+    def _load(self) -> None:
+        if _PERMS_STORE.exists():
+            try:
+                self._data = json.loads(_PERMS_STORE.read_text(encoding="utf-8"))
+            except Exception:
+                self._data = {}
+        else:
+            self._data = {name: True for name in _ALLOWED_TOOLS + _ALLOWED_ROLES}
+
+    def _render(self) -> None:
+        self._table.setRowCount(0)
+        for name in _ALLOWED_TOOLS + _ALLOWED_ROLES:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            self._table.setItem(r, 0, QTableWidgetItem(name))
+            chk = QCheckBox()
+            chk.setChecked(bool(self._data.get(name, True)))
+            self._table.setCellWidget(r, 1, chk)
+            self._table.setItem(r, 2, QTableWidgetItem("blocked" if not self._data.get(name, True) else ""))
+
+    def _save(self) -> None:
+        for r in range(self._table.rowCount()):
+            name = self._table.item(r, 0).text()
+            w = self._table.cellWidget(r, 1)
+            enabled = w.isChecked() if isinstance(w, QCheckBox) else True
+            self._data[name] = enabled
+        _PERMS_STORE.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+        self.status.setText(f"{icon('ok')} Saved to {_PERMS_STORE}")
+
+    def _reset(self) -> None:
+        self._data = {name: True for name in _ALLOWED_TOOLS + _ALLOWED_ROLES}
+        self._render()
+        self.status.setText(f"{icon('refresh')} Reset to defaults")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Batch actions page (#9)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class BatchActionsPage(PageWidget):
+    """Bulk actions over selected history rows."""
+
+    def __init__(self) -> None:
+        super().__init__("Batch Actions", "Operate on multiple selected sessions.")
+        self.info = QLabel("Select rows in Run History, then choose an action.")
+        self.info.setWordWrap(True)
+        self._add(self.info)
+        self.out = QPlainTextEdit()
+        self.out.setReadOnly(True)
+        self._add(self.out)
+        row = QHBoxLayout()
+        row.addWidget(QPushButton("Delete selected", clicked=self._delete_selected))
+        row.addWidget(QPushButton("Export selected CSV", clicked=self._export_selected))
+        row.addStretch()
+        self.content.addLayout(row)
+
+    def _selected_paths(self) -> list[Path]:
+        history = self.window().findChild(HistoryPage) if False else None
+        try:
+            from virgo_desktop_pages import HistoryPage as HP
+        except Exception:
+            return []
+        w = self.window()
+        pages = [c for c in w.findChildren(QWidget) if isinstance(c, HP)]
+        if not pages:
+            return []
+        hp = pages[0]
+        rows = []
+        for r in range(hp.table.rowCount()):
+            it = hp.table.cellWidget(r, 0)
+            if isinstance(it, QCheckBox) and it.isChecked():
+                # HistoryPage stores sessions on selection index, not path cell; fall back to directory scan.
+                rows.append(r)
+        if not rows:
+            return []
+        try:
+            files = sorted((HERE / ".virgo_memory").glob("*.json"), reverse=True)
+        except Exception:
+            files = []
+        out = []
+        for r in rows:
+            if r < len(files):
+                out.append(files[r])
+        return out
+
+    def _delete_selected(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            self.out.appendPlainText("No rows selected.")
+            return
+        for p in paths:
+            try:
+                p.unlink()
+            except Exception as exc:
+                self.out.appendPlainText(f"delete failed {p}: {exc}")
+        self.out.appendPlainText(f"Deleted {len(paths)} session(s).")
+
+    def _export_selected(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            self.out.appendPlainText("No rows selected.")
+            return
+        import csv, datetime
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export selected sessions",
+            str(HERE / f"batch_{datetime.datetime.now():%Y%m%d}.csv"), "CSV (*.csv)")
+        if not path:
+            return
+        rows = []
+        for p in paths:
+            try:
+                d = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            rows.append({
+                "id": p.stem,
+                "goal": d.get("goal", ""),
+                "status": "PASS" if d.get("loop_passed") else "FAIL",
+                "tokens": d.get("total_tokens", d.get("tokens", "")),
+            })
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=["id", "goal", "status", "tokens"])
+                w.writeheader()
+                w.writerows(rows)
+            self.out.appendPlainText(f"Exported {len(rows)} rows to {path}")
+        except Exception as exc:
+            self.out.appendPlainText(f"export failed: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Persona marketplace page (#10)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class PersonaMarketplacePage(PageWidget):
+    """Index bundled persona packs and import/export them."""
+
+    def __init__(self) -> None:
+        super().__init__("Personas+", "Persona marketplace.")
+        self.src = QLineEdit(str(_PERSONAS_DIR))
+        self._add_row(QLabel("Source:"), self.src,
+                      QPushButton("Refresh", clicked=self._render))
+        self._list = QListWidget()
+        self._add(self._list)
+
+    def on_activate(self) -> None:
+        self._render()
+
+    def _render(self) -> None:
+        d = Path(self.src.text())
+        self._list.clear()
+        if d.exists():
+            for f in sorted(d.glob("*.json")):
+                it = QListWidgetItem(f.name)
+                it.setData(Qt.ItemDataRole.UserRole, str(f))
+                self._list.addItem(it)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Shareable archive page (#1)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ShareableArchivePage(PageWidget):
+    """HTML archive of a run session for sharing."""
+
+    def __init__(self) -> None:
+        super().__init__("Share Archive", "HTML session archive export.")
+        self.sessions = QComboBox()
+        self._add_row(QLabel("Session:"), self.sessions)
+        self.export_btn = QPushButton(f"{icon('save')}  Export HTML")
+        self.export_btn.clicked.connect(self._export)
+        self._add_row(self.export_btn)
+        self.out = QPlainTextEdit()
+        self.out.setReadOnly(True)
+        self._add(self.out)
+        self._refresh_sessions()
+
+    def _refresh_sessions(self) -> None:
+        self.sessions.clear()
+        self.sessions.addItem("— select session —")
+        if _MEM_DIR.exists():
+            for p in sorted(_MEM_DIR.glob("*.json"), reverse=True):
+                self.sessions.addItem(p.stem, str(p))
+
+    def _export(self) -> None:
+        idx = self.sessions.currentIndex()
+        if idx <= 0:
+            self.out.appendPlainText("Select a session first.")
+            return
+        path = Path(self.sessions.currentData() or "")
+        if not path.exists():
+            self.out.appendPlainText("Missing session file.")
+            return
+        try:
+            try:
+                from shareable_archive import archive_session
+                out = archive_session(path)
+            except Exception:
+                out = path.with_suffix(".html")
+                out.write_text(
+                    f"<html><body><h1>{path.stem}</h1><pre>{path.read_text(encoding='utf-8', errors='replace')[:12000]}</pre></body></html>",
+                    encoding="utf-8",
+                )
+            self.out.appendPlainText(f"Exported: {out}")
+        except Exception as exc:
+            self.out.appendPlainText(f"export failed: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Windows service page (#2)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class WindowsServicePage(PageWidget):
+    """Manage nssm Windows service for Virgo."""
+
+    def __init__(self) -> None:
+        super().__init__("Win Service", "nssm service manager.")
+        self.out = QPlainTextEdit()
+        self.out.setReadOnly(True)
+        self._add(self.out)
+        self._add_row(
+            QPushButton("Install / Update service", clicked=self._install),
+            QPushButton("Start service", clicked=lambda: self._svc("start")),
+            QPushButton("Stop service", clicked=lambda: self._svc("stop")),
+            QPushButton("Status", clicked=lambda: self._svc("status")),
+        )
+
+    def _install(self) -> None:
+        try:
+            from windows_service import install_service
+            res = install_service()
+            self.out.appendPlainText(str(res))
+        except Exception as exc:
+            self.out.appendPlainText(f"install failed: {exc}")
+
+    def _svc(self, action: str) -> None:
+        try:
+            from windows_service import run_service_action
+            res = run_service_action(action)
+            self.out.appendPlainText(str(res))
+        except Exception as exc:
+            self.out.appendPlainText(f"service {action} failed: {exc}")
