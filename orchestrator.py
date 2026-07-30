@@ -295,6 +295,7 @@ class Orchestrator:
         max_iterations: int = 5,
         max_plan_cycles: int = 5,
         run_critic: bool = False,
+        run_quality_gates: bool = False,
         auto_depend: bool = False,
         auto_approve: bool = False,
     ) -> WorkspaceState:
@@ -318,6 +319,10 @@ class Orchestrator:
             Hard cap on WTF cycles (default 5).
         run_critic:
             Run static analysis on generated files before testing.
+        run_quality_gates:
+            Run bandit, vulture, lizard, and semgrep on generated
+            Python files after critic (and before testing).  Reports
+            security issues, dead code, complexity, and patterns.
         auto_depend:
             Scan generated files for imports and auto-install missing
             third-party packages in the agent environment.
@@ -448,7 +453,39 @@ class Orchestrator:
                 _step("info", f"Critic skipped: {exc}")
                 self._emit("phase_exit", phase="review", skipped=True)
 
-        # ---- Phase 4b: Auto-dependency install (optional) -------------------
+        # ---- Phase 4b: Quality gates (optional) ----------------------------
+        if run_quality_gates and state.generated_files:
+            self._emit("phase_enter", phase="quality_gates")
+            _step("syntax", "Running quality gates …")
+            try:
+                from quality_gates import run_all_gates
+
+                gate_paths = [
+                    str(self.base_path / gf.path)
+                    for gf in state.generated_files
+                    if gf.path.endswith(".py")
+                ]
+                if gate_paths:
+                    report = run_all_gates(gate_paths)
+                    print(f"\n{report.summary_table()}\n")
+                    if not report.passed:
+                        _step("fail",
+                              f"Quality gates failed — {report.total_findings} finding(s)")
+                        self._emit("phase_exit", phase="quality_gates",
+                                   passed=False, findings=report.total_findings)
+                    else:
+                        _step("pass", "Quality gates passed")
+                        self._emit("phase_exit", phase="quality_gates",
+                                   passed=True, findings=0)
+                else:
+                    _step("info", "No .py files to check")
+                    self._emit("phase_exit", phase="quality_gates",
+                               skipped=True)
+            except Exception as exc:
+                _step("info", f"Quality gates skipped: {exc}")
+                self._emit("phase_exit", phase="quality_gates", skipped=True)
+
+        # ---- Phase 4c: Auto-dependency install (optional) -------------------
         if auto_depend and state.generated_files:
             state.phase = "dependencies"
             self._emit("phase_enter", phase="deps")

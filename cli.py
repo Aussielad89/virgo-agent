@@ -69,6 +69,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             goal = cfg.get("goal", args.goal)
             max_iterations = cfg.get("max_iterations", args.iterations)
             run_critic = cfg.get("critic", args.critic)
+            run_quality_gates = cfg.get("quality_gates", args.quality_gates)
             auto_depend = cfg.get("auto_depend", args.auto_depend)
             use_llm = cfg.get("llm", args.llm)
             name = cfg.get("name", args.name)
@@ -80,6 +81,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         goal = args.goal
         max_iterations = args.iterations
         run_critic = args.critic
+        run_quality_gates = args.quality_gates
         auto_depend = args.auto_depend
         use_llm = args.llm
         name = args.name
@@ -183,6 +185,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         fixer=fixer,
         max_iterations=max_iterations,
         run_critic=run_critic,
+        run_quality_gates=run_quality_gates,
         auto_depend=auto_depend,
         auto_approve=args.yes if hasattr(args, "yes") else False,
     )
@@ -1451,6 +1454,10 @@ def main() -> None:
     )
     p_run.add_argument(
         "--critic", action="store_true", help="Run static code analysis on generated files"
+    )
+    p_run.add_argument(
+        "--quality-gates", action="store_true",
+        help="Run bandit, vulture, lizard, semgrep on generated files"
     )
     p_run.add_argument(
         "--auto-depend", action="store_true", help="Auto-install third-party imports in agent_env"

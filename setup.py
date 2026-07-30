@@ -21,6 +21,7 @@ setup(
         "memory",
         "orchestrator",
         "plugins",
+        "quality_gates",
         "run",
         "server",
         "subagent",
