@@ -75,8 +75,13 @@ class AgentEnvironment:
         """Create the virtual environment if it doesn't exist.
 
         If *recreate* is ``True`` any existing ``agent_env`` directory
-        is deleted first.
+        is deleted first.  Falls back to ``python -m venv`` if the
+        stdlib ``venv.create()`` call fails (e.g. missing *ensurepip*).
         """
+        import logging
+
+        _log = logging.getLogger(__name__)
+
         if self.env_dir.exists():
             if recreate:
                 shutil.rmtree(self.env_dir)
@@ -84,7 +89,42 @@ class AgentEnvironment:
                 self._ready = self.is_ready
                 return self
 
-        venv.create(str(self.env_dir), with_pip=True, clear=False)
+        # --- Primary path: stdlib venv.create --------------------------
+        try:
+            venv.create(str(self.env_dir), with_pip=True, clear=False)
+        except Exception as exc:
+            _log.warning("venv.create failed: %s — falling back to subprocess", exc)
+            # --- Fallback: python -m venv via subprocess ---------------
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "venv", str(self.env_dir)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                # Best-effort pip bootstrap
+                py = self.env_dir / _bin_subdir() / "python"
+                try:
+                    subprocess.check_call(
+                        [str(py), "-m", "ensurepip", "--upgrade"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                except Exception:
+                    # ensurepip unavailable — try installing pip from host
+                    try:
+                        subprocess.check_call(
+                            [str(py), "-m", "pip", "install", "--upgrade", "pip"],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                    except Exception:
+                        _log.info("Could not bootstrap pip into venv — pip may be unavailable")
+            except Exception as sub_exc:
+                _log.exception("Fallback venv creation also failed: %s", sub_exc)
+                raise RuntimeError(
+                    f"Failed to create virtual environment at {self.env_dir}"
+                ) from sub_exc
+
         self._ready = self.is_ready
         if not self._ready:
             raise RuntimeError(f"Failed to create virtual environment at {self.env_dir}")

@@ -148,9 +148,24 @@ COMMANDS: dict[str, list[str]] = {
 def run_sandboxed(cmd: list[str]) -> str:
     """Run *cmd* through the sandbox and return stdout.
 
+    Supports simple ``>`` output redirection: the token ``>`` splits
+    the command from the output file path.  The output path must be
+    an absolute path (typically under a temp directory) to keep
+    sandbox safety.
+
     Raises ValueError if the command is not on the allowlist.
     Raises subprocess.CalledProcessError if the command fails.
     """
+    # --- Handle '>' output redirection -----------------------------------
+    output_path: str | None = None
+    if ">" in cmd:
+        idx = cmd.index(">")
+        if idx + 1 < len(cmd):
+            output_path = cmd[idx + 1]
+            cmd = cmd[:idx]
+        else:
+            raise ValueError("Redirect operator '>' without output path")
+
     safe, reason = is_command_safe(cmd)
     if not safe:
         raise ValueError(f"Blocked by sandbox: {reason}")
@@ -166,6 +181,14 @@ def run_sandboxed(cmd: list[str]) -> str:
         raise subprocess.CalledProcessError(
             result.returncode, cmd, output=result.stdout, stderr=result.stderr
         )
+
+    # If redirection was requested, write stdout to the file
+    if output_path is not None:
+        from pathlib import Path as _P
+
+        dest = _P(output_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(result.stdout)
 
     return result.stdout
 
