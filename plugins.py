@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import shutil
 import sys
 import threading
 import time
@@ -24,6 +25,10 @@ PLUGIN_DIRS = [
     HERE / "plugins",
     Path.home() / ".virgo" / "plugins",
 ]
+
+# Tracking dicts for loaded plugins
+_loaded_modules: dict[str, Any] = {}
+_loaded_plugins: dict[str, dict] = {}
 
 
 def discover() -> list[Path]:
@@ -38,6 +43,17 @@ def discover() -> list[Path]:
     return files
 
 
+def _extract_meta(module: Any) -> dict:
+    """Extract __plugin_meta__ from a module, returning defaults if missing."""
+    meta = getattr(module, "__plugin_meta__", {})
+    return {
+        "name": meta.get("name", Path(getattr(module, "__file__", "") or "").stem),
+        "version": meta.get("version", "0.0.0"),
+        "description": meta.get("description", ""),
+        "author": meta.get("author", ""),
+    }
+
+
 def load_path(path: Path, registry: Any) -> None:
     """Load a single plugin file and register any tools it exports.
 
@@ -48,14 +64,29 @@ def load_path(path: Path, registry: Any) -> None:
     """
     # Import the module
     module_name = f"_virgo_plugin_{path.stem}"
-    spec = importlib.util.spec_from_file_location(module_name, str(path))
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, str(path))
+    except Exception:
+        print(f"  [plugins]  Could not load: {path.name}")
+        return
     if spec is None or spec.loader is None:
         print(f"  [plugins]  Could not load: {path.name}")
         return
 
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        print(f"  [plugins]  Error loading {path.name}: {exc}")
+        sys.modules.pop(module_name, None)
+        return
+
+    # Track loaded module
+    _loaded_modules[module_name] = module
+
+    # Track plugin metadata
+    _loaded_plugins[path.stem] = _extract_meta(module)
 
     # 1. Look for a register() function
     if hasattr(module, "register"):
@@ -233,3 +264,106 @@ def watch_plugins(
     t.start()
     print(f"  [plugins]  Hot-reload active (polling, {len(loaded)} plugin(s))")
     return t
+
+
+# ── Plugin management helpers ────────────────────────────────────────────
+
+
+def list_plugins() -> list[dict]:
+    """Return a list of discovered plugins with their status."""
+    result: list[dict] = []
+    for path in discover():
+        name = path.stem
+        loaded = name in _loaded_plugins
+        result.append({
+            "name": name,
+            "meta": _loaded_plugins.get(name, _extract_meta_from_path(path)),
+            "loaded": loaded,
+        })
+    return result
+
+
+def _extract_meta_from_path(path: Path) -> dict:
+    """Extract metadata from a plugin file on disk (without importing it)."""
+    try:
+        content = path.read_text(encoding="utf-8")
+        # Quick parse of __plugin_meta__ from source
+        import ast
+        tree = ast.parse(content)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "__plugin_meta__":
+                        if isinstance(node.value, ast.Dict):
+                            meta = {}
+                            for key, val in zip(node.value.keys, node.value.values):
+                                if isinstance(key, ast.Constant) and isinstance(val, ast.Constant):
+                                    meta[key.value] = val.value
+                            return {
+                                "name": meta.get("name", path.stem),
+                                "version": meta.get("version", "0.0.0"),
+                                "description": meta.get("description", ""),
+                                "author": meta.get("author", ""),
+                            }
+    except Exception:
+        pass
+    return {
+        "name": path.stem,
+        "version": "0.0.0",
+        "description": "",
+        "author": "",
+    }
+
+
+def plugin_info(name: str) -> dict | None:
+    """Return metadata for a specific plugin, or None if not found."""
+    # Strip .py suffix if present
+    clean_name = name.removesuffix(".py")
+    if clean_name in _loaded_plugins:
+        return {"name": clean_name, **_loaded_plugins[clean_name]}
+
+    # Check discovered files
+    for path in discover():
+        if path.stem == clean_name:
+            return {"name": clean_name, **_extract_meta_from_path(path)}
+    return None
+
+
+def install_plugin(
+    source: str,
+    name: str | None = None,
+    target_dir: Path | None = None,
+) -> Path | None:
+    """Install a plugin by copying it to the target directory.
+
+    Returns the destination Path, or None on failure.
+    """
+    src = Path(source)
+    if not src.exists() or not src.suffix == ".py":
+        return None
+
+    dest_dir = target_dir or PLUGIN_DIRS[0]
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / (name or src.name)
+    shutil.copy2(str(src), str(dest))
+    return dest
+
+
+def reload_plugin(name: str, registry: Any) -> bool:
+    """Reload a specific plugin by name. Returns True if reloaded, False if not found."""
+    clean_name = name.removesuffix(".py")
+
+    # Find the plugin file
+    for path in discover():
+        if path.stem == clean_name:
+            # Clear from caches
+            module_name = f"_virgo_plugin_{clean_name}"
+            if module_name in sys.modules:
+                del sys.modules[module_name]
+            _loaded_modules.pop(module_name, None)
+            _loaded_plugins.pop(clean_name, None)
+
+            # Reload
+            load_path(path, registry)
+            return True
+    return False

@@ -93,6 +93,7 @@ class ToolRegistry:
         self.register(self._make_web_fetch())
         self.register(self._make_git_tool())
         self.register(self._make_db_sampler())
+        self.register(self._make_media_analyzer())
         if env is not None:
             self.register(self._make_python_runner(env))
 
@@ -131,6 +132,23 @@ class ToolRegistry:
             description=(
                 "Extract schema and sample rows from a SQLite database. "
                 "Returns table list, column info, and up to 5 sample rows per table."
+            ),
+        )
+
+    @staticmethod
+    def _make_media_analyzer() -> Tool:
+        def _media_analyzer(file_path: str) -> dict[str, Any]:
+            """Analyze a media file and return structured metadata."""
+            from virgo_media import MediaAnalyzer
+            analyzer = MediaAnalyzer(enable_vision=False)
+            return analyzer.analyze(file_path)
+
+        return Tool(
+            name="media_analyzer",
+            fn=_media_analyzer,
+            description=(
+                "Analyze a media file (image, audio, video, document) "
+                "and return structured metadata including type, format, and properties."
             ),
         )
 
@@ -429,6 +447,19 @@ def _file_sampler(
         raise IsADirectoryError(f"Not a file: {file_path}")
 
     ext = path.suffix.lower()
+
+    # Handle image/media files via virgo_media
+    _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".ico", ".svg"}
+    _AUDIO_EXTS = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"}
+    _VIDEO_EXTS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+    _DOC_EXTS = {".pdf", ".docx", ".pptx", ".xlsx"}
+    if ext in _IMAGE_EXTS | _AUDIO_EXTS | _VIDEO_EXTS | _DOC_EXTS:
+        try:
+            from virgo_media import MediaAnalyzer
+            analyzer = MediaAnalyzer(enable_vision=False)
+            return analyzer.analyze(str(path))
+        except Exception as exc:
+            return {"media_error": str(exc), "path": str(path)}
 
     if ext == ".csv":
         return _sample_csv(path, sample_size, encoding)
