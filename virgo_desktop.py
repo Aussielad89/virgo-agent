@@ -155,8 +155,8 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     QMainWindow, QWidget {
         background-color: @bg@;
         color: @text@;
-        font-family: 'Segoe UI', 'SF Pro', sans-serif;
-        font-size: 13px;
+        font-family: @ui_font_family@;
+        font-size: @ui_font_size@px;
     }
     #sidebar {
         background-color: @surface@;
@@ -1988,6 +1988,12 @@ class VirgoDesktopWindow(QMainWindow):
     def _apply_style(self) -> None:
         """Build and apply the stylesheet (theme + custom CSS injection)."""
         t = self._current_theme()
+        # Inject user font preferences (defaults if not configured).
+        t = dict(t)
+        t["ui_font_family"] = self._config.get(
+            "ui_font_family", "'Segoe UI', 'SF Pro', sans-serif"
+        )
+        t["ui_font_size"] = str(self._config.get("ui_font_size", 13))
         ss = _build_stylesheet(t)
         if getattr(self, "_custom_css", ""):
             ss += "\n" + self._custom_css
@@ -2003,6 +2009,13 @@ class VirgoDesktopWindow(QMainWindow):
                 win.setStyleSheet(ss)
             except Exception:
                 pass
+
+    def set_ui_font(self, family: str, size: int) -> None:
+        """Change the global UI font family + base size and re-apply live."""
+        self._config["ui_font_family"] = family
+        self._config["ui_font_size"] = int(size)
+        self._save_config()
+        self._apply_style()
 
     def refresh_theme(self) -> None:
         """Resolve the active theme from the current mode and re-apply."""
