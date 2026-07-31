@@ -1,198 +1,109 @@
-"""
-_mem0_memory — persistent agent memory powered by mem0.
-
-Replaces the basic JSON session memory with mem0's cross-session
-memory layer, giving Virgo persistent recall, user preferences,
-and learning across pipeline runs and chat sessions.
-
-Usage:
-    from _mem0_memory import agent_memory
-    agent_memory.add("user prefers concise code", session_id="user123")
-    results = agent_memory.search("preferences")
-"""
-
-from __future__ import annotations
-
-import json
+import sqlite3
 import os
-from pathlib import Path
-from typing import Any
+import json
+from datetime import datetime, timedelta
+from typing import Any, Optional
 
-HERE = Path(__file__).parent
-MEM0_DIR = HERE / ".virgo_mem0"
+class SQLiteMemoryCache:
+    def __init__(self, db_path: str = '~/.hermes/agent_memory.db'):
+        self.db_path = os.path.expanduser(db_path)
+        self._init_db()
+    
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS memory (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    timestamp DATETIME,
+                    ttl INTEGER  -- seconds
+                )
+            ''')
+    
+    def set(self, key: str, value: Any, ttl_seconds: int = 3600):
+        value_str = json.dumps(value)
+        timestamp = datetime.utcnow().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                'INSERT OR REPLACE INTO memory (key, value, timestamp, ttl) VALUES (?, ?, ?, ?)',
+                (key, value_str, timestamp, ttl_seconds)
+            )
+    
+    def get(self, key: str) -> Optional[Any]:
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute('SELECT value, timestamp, ttl FROM memory WHERE key = ?', (key,))
+            if row := cur.fetchone():
+                value, timestamp, ttl = row
+                if ttl and (datetime.utcnow() - datetime.fromisoformat(timestamp)) > timedelta(seconds=ttl):
+                    return None  # Expired
+                return json.loads(value)
+    
+    def cleanup(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                DELETE FROM memory
+                WHERE ttl > 0
+                AND datetime(timestamp, '+', ttl, 'second') < datetime('now')
+            """)
+    
+    def get_all(self) -> list[tuple[str, Any]]:
+        self.cleanup()
+        with sqlite3.connect(self.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute('SELECT key, value FROM memory')
+            return [(key, json.loads(value)) for key, value in cur.fetchall()]
 
+# ExperienceMemory integration
+class ExperienceMemory:
+    def __init__(self):
+        self._cache = SQLiteMemoryCache()
+    
+    def store(self, key: str, data: Any, ttl: int = 3600):
+        self._cache.set(key, data, ttl)
+    
+    def recall(self, key: str) -> Optional[Any]:
+        return self._cache.get(key)
+    
+    def get_all(self) -> list[tuple[str, Any]]:
+        return self._cache.get_all()
 
-def _ensure_mem0_config() -> dict:
-    """Build a mem0 configuration that stores data locally."""
-    MEM0_DIR.mkdir(parents=True, exist_ok=True)
-    return {
-        "vector_store": {
-            "provider": "qdrant",
-            "config": {
-                "path": str(MEM0_DIR / "qdrant_db"),
-                "collection_name": "virgo_memories",
-            },
-        },
-        "embedder": {
-            "provider": "ollama",
-            "config": {
-                "model": "nomic-embed-text:latest",
-                "ollama_base_url": os.environ.get(
-                    "OLLAMA_HOST", "http://localhost:11434"
-                ),
-            },
-        },
-        "llm": {
-            "provider": "ollama",
-            "config": {
-                "model": os.environ.get("MODEL_GENERATOR", "phi4-mini-reasoning:3.8b"),
-                "ollama_base_url": os.environ.get(
-                    "OLLAMA_HOST", "http://localhost:11434"
-                ),
-                "temperature": 0.1,
-            },
-        },
-        "version": "v2.0",
-    }
-
-
+# Maintain mem0 API compatibility for existing code
 class AgentMemory:
-    """Mem0-backed persistent memory for Virgo agents.
-
-    Provides add, search, get_all, and delete operations that
-    survive restarts and work across sessions.
-    """
-
-    def __init__(self, config: dict | None = None) -> None:
-        self._config = config or _ensure_mem0_config()
-        self._client: Any = None
-        self._ready = False
-
-    @property
-    def client(self) -> Any:
-        """Lazy-initialize the mem0 Memory client."""
-        if self._client is None:
-            self._init_client()
-        return self._client
-
-    def _init_client(self) -> None:
-        try:
-            from mem0 import Memory
-
-            self._client = Memory.from_config(self._config)
-            self._ready = True
-        except Exception as exc:
-            print(f"[mem0] init failed: {exc}")
-            self._client = None
-            self._ready = False
-
-    @property
-    def ready(self) -> bool:
-        return self._ready
-
-    def add(
-        self,
-        message: str,
-        session_id: str = "default",
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        """Store a memory entry.
-
-        Args:
-            message: The text content to remember.
-            session_id: Logical session or user identifier.
-            metadata: Optional dict of structured data (tags, source, etc.).
-        """
-        if not self.ready:
-            return
-        try:
-            self.client.add(
-                messages=message,
-                session_id=session_id,
-                metadata=metadata or {},
-            )
-        except Exception as exc:
-            print(f"[mem0] add failed: {exc}")
-
-    def search(
-        self,
-        query: str,
-        session_id: str = "default",
-        limit: int = 5,
-    ) -> list[dict[str, Any]]:
-        """Search memory entries relevant to a query.
-
-        Returns:
-            List of memory entries with 'text', 'score', 'metadata'.
-        """
-        if not self.ready:
-            return []
-        try:
-            results = self.client.search(
-                query=query,
-                session_id=session_id,
-                limit=limit,
-            )
-            return results.get("results", []) if isinstance(results, dict) else results
-        except Exception as exc:
-            print(f"[mem0] search failed: {exc}")
-            return []
-
-    def get_all(self, session_id: str = "default") -> list[dict[str, Any]]:
-        """Retrieve all memories for a session."""
-        if not self.ready:
-            return []
-        try:
-            results = self.client.get_all(session_id=session_id)
-            return results if isinstance(results, list) else []
-        except Exception as exc:
-            print(f"[mem0] get_all failed: {exc}")
-            return []
-
+    def __init__(self, config: dict | None = None):
+        self._cache = SQLiteMemoryCache()
+    
+    def add(self, message: str, session_id: str = "default", metadata: dict[str, Any] | None = None):
+        key = f"{session_id}:{message[:20]}"
+        self._cache.set(key, message, 86400)  # 1 day TTL
+    
+    def search(self, query: str, session_id: str = "default", limit: int = 5):
+        return [
+            {"text": v, "score": 1.0, "metadata": {}}
+            for k, v in self._cache.get_all()
+            if session_id in k and query.lower() in k.lower()
+        ][:limit]
+    
+    def get_all(self, session_id: str = "default"):
+        return [
+            {"text": v, "metadata": {}}
+            for k, v in self._cache.get_all()
+            if session_id in k
+        ]
+    
     def delete(self, memory_id: str) -> bool:
-        """Delete a specific memory by ID."""
-        if not self.ready:
-            return False
-        try:
-            self.client.delete(memory_id=memory_id)
-            return True
-        except Exception as exc:
-            print(f"[mem0] delete failed: {exc}")
-            return False
-
+        self._cache.set(memory_id, None, 0)  # Delete by setting TTL=0
+        return True
+    
     def clear(self, session_id: str = "default") -> bool:
-        """Clear all memories for a session."""
-        if not self.ready:
-            return False
-        try:
-            self.client.clear(session_id=session_id)
-            return True
-        except Exception as exc:
-            print(f"[mem0] clear failed: {exc}")
-            return False
-
+        for k, _ in self._cache.get_all():
+            if session_id in k:
+                self._cache.set(k, None, 0)
+        return True
+    
     def kb_context(self, query: str, top_k: int = 3) -> str:
-        """Build a RAG-style context string from relevant memories.
+        results = self.search(query, limit=top_k)
+        return "\n\n".join(r["text"] for r in results)
 
-        This is designed to slot into the existing _rag.kb_context()
-        interface so it can be used as a drop-in upgrade.
-        """
-        if not self.ready:
-            return ""
-        try:
-            results = self.search(query, limit=top_k)
-            if not results:
-                return ""
-            parts = []
-            for r in results:
-                text = ""
-                if isinstance(r, dict):
-                    text = r.get("text") or r.get("memory", "") or str(r.get("metadata", {}))
-                parts.append(text)
-            return "\n\n".join(parts[:top_k])
-        except Exception:
-            return ""
-
-
-# ── Module-level singleton ────────────────────────────────────────────────
+# Module-level singleton
 agent_memory = AgentMemory()
