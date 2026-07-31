@@ -4596,6 +4596,31 @@ class SettingsPage(PageWidget):
         theme_row.addWidget(self.theme_combo, 1)
         theme_section.layout().addLayout(theme_row)  # type: ignore
 
+        # ── Font family + size ───────────────────────────────────────
+        font_row = QHBoxLayout()
+        font_row.addWidget(QLabel("Font:"))
+        self.font_combo = QComboBox()
+        for fam in (
+            "'Segoe UI', 'SF Pro', sans-serif",
+            "Arial, sans-serif",
+            "'Consolas', 'Courier New', monospace",
+            "'Cascadia Code', monospace",
+            "'Inter', sans-serif",
+            "Tahoma, sans-serif",
+            "Verdana, sans-serif",
+        ):
+            self.font_combo.addItem(fam)
+        font_row.addWidget(self.font_combo, 2)
+        font_row.addWidget(QLabel("Size:"))
+        self.size_combo = QComboBox()
+        for s in (11, 12, 13, 14, 15, 16, 18, 20, 22):
+            self.size_combo.addItem(f"{s}px", s)
+        font_row.addWidget(self.size_combo, 1)
+        apply_font = QPushButton(f"{icon('ok')}  Apply font")
+        apply_font.clicked.connect(self._apply_font)
+        font_row.addWidget(apply_font)
+        theme_section.layout().addLayout(font_row)  # type: ignore
+
         # ── Custom theme editor ─────────────────────────────────────────
         editor = self._section("Custom theme editor")
         name_row = QHBoxLayout()
@@ -4726,6 +4751,17 @@ class SettingsPage(PageWidget):
                 widget.setText(val)
         self.save_status.setText("Defaults restored — click Save to persist")
 
+    def _apply_font(self) -> None:
+        w = self.window()
+        family = self.font_combo.currentText()
+        size = self.size_combo.currentData() or 13
+        try:
+            w.set_ui_font(family, int(size))
+            self.save_status.setText(f"{icon('ok')} Font applied: {family} @ {size}px")
+        except Exception as exc:
+            self.save_status.setText(f"{icon('error')} Font apply failed: {exc}")
+        QTimer.singleShot(3000, lambda: self.save_status.setText(""))
+
     def on_activate(self) -> None:
         """Sync the appearance controls with the window's current state."""
         w = self.window()
@@ -4741,6 +4777,18 @@ class SettingsPage(PageWidget):
         self.theme_combo.setEnabled(mode == "manual")
         self._refresh_theme_editor()
         self.css_edit.setPlainText(getattr(w, "_custom_css", "") or "")
+        # Sync font controls with saved config.
+        fam = w._config.get("ui_font_family", "'Segoe UI', 'SF Pro', sans-serif")
+        fidx = self.font_combo.findText(fam)
+        if fidx >= 0:
+            self.font_combo.setCurrentIndex(fidx)
+        else:
+            self.font_combo.addItem(fam)
+            self.font_combo.setCurrentText(fam)
+        sz = int(w._config.get("ui_font_size", 13))
+        sidx = self.size_combo.findData(sz)
+        if sidx >= 0:
+            self.size_combo.setCurrentIndex(sidx)
 
     def _populate_themes(self) -> None:
         self.theme_combo.clear()
