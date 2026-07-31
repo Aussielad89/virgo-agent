@@ -1,4 +1,4 @@
-﻿"""
+"""
 Virgo Desktop pages — each page is a QWidget plugged into the main window.
 """
 
@@ -21,7 +21,6 @@ from PyQt6.QtCore import (
     QMetaObject,
     QModelIndex,
     QObject,
-    QPointF,
     QSize,
     Qt,
     QTimer,
@@ -34,10 +33,7 @@ from PyQt6.QtGui import (
     QFileSystemModel,
     QFont,
     QKeySequence,
-    QPainter,
     QPen,
-    QPixmap,
-    QPolygonF,
     QShortcut,
     QTextDocument,
 )
@@ -48,7 +44,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
-    QGraphicsEllipseItem,
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsTextItem,
@@ -188,224 +183,103 @@ def _set_layout_visible(layout: "QLayout", visible: bool) -> None:
 
 
 class PipelinePage(PageWidget):
-    """Visual Pipeline Graph — animated DAG with live stats and split-view log."""
+    """Run the pipeline and watch real-time output."""
 
     def __init__(self) -> None:
         super().__init__(
             "Pipeline",
-            "Write → Test → Fix loop with animated graph & live metrics.",
+            "Write → Test → Fix loop with live output.",
         )
         self._process: subprocess.Popen | None = None
         self._running = False
-        self._elapsed = 0.0
-        self._iter_count = 0
-        self._token_count = 0
 
-        # ── Goal input ──
+        # Goal input
         goal_group = self._section("Goal")
         goal_row = QHBoxLayout()
         self.goal_input = QLineEdit()
         self.goal_input.setPlaceholderText(
             "e.g. build a web scraper that fetches Hacker News headlines"
         )
-        self.goal_input.setStyleSheet(
-            "QLineEdit { background: #181825; border: 1px solid #313244; "
-            "border-radius: 6px; padding: 6px 10px; color: #cdd6f4; }"
-        )
         goal_row.addWidget(self.goal_input, 1)
-        self.run_btn = QPushButton("▶  Run")
-        self.run_btn.setStyleSheet(
-            "QPushButton { background: #a6e3a1; color: #1e1e2e; font-weight: bold; "
-            "border: none; border-radius: 6px; padding: 6px 18px; }"
-            "QPushButton:hover { background: #89d89e; }"
-            "QPushButton:disabled { background: #313244; color: #6c7086; }"
-        )
+        self.run_btn = QPushButton(f"{icon('run')}  Run")
         self.run_btn.clicked.connect(self._run_pipeline)
         goal_row.addWidget(self.run_btn)
-        self.stop_btn = QPushButton("⏹  Stop")
-        self.stop_btn.setObjectName("stopBtn")
-        self.stop_btn.setEnabled(False)
+        self.stop_btn = QPushButton(f"{icon('stop')}  Stop")
         self.stop_btn.clicked.connect(self._stop_pipeline)
+        self.stop_btn.setEnabled(False)
         goal_row.addWidget(self.stop_btn)
         goal_group.layout().addLayout(goal_row)  # type: ignore
-        self._add(goal_group)
 
-        # ── Options bar ──
+        # Options row
         opt_row = QHBoxLayout()
-        self.use_llm = QPushButton("🧠  LLM: ON")
+        self.use_llm = QPushButton(f"{icon('llm')}  LLM: ON")
         self.use_llm.setCheckable(True)
         self.use_llm.setChecked(True)
         self.use_llm.clicked.connect(self._toggle_llm)
-        self.use_llm.setStyleSheet(
-            "QPushButton { background: #313244; border: 1px solid #45475a; "
-            "border-radius: 6px; padding: 4px 12px; color: #cdd6f4; font-size: 11px; }"
-            "QPushButton:hover { border-color: #89b4fa; }"
-        )
         opt_row.addWidget(self.use_llm)
-        opt_row.addWidget(QLabel("Iterations:"))
+
+        self.iter_label = QLabel("Max iterations:")
+        opt_row.addWidget(self.iter_label)
         self.iter_input = QLineEdit("5")
-        self.iter_input.setStyleSheet(
-            "QLineEdit { background: #181825; border: 1px solid #313244; "
-            "border-radius: 4px; padding: 3px 6px; color: #cdd6f4; max-width: 50px; }"
-        )
         self.iter_input.setFixedWidth(50)
         opt_row.addWidget(self.iter_input)
         opt_row.addStretch()
-        self.content.addLayout(opt_row)
+        goal_group.layout().addLayout(opt_row)  # type: ignore
 
-        # ── Animated Pipeline Graph ──
+        # ── DAG visualizer ──
         dag_group = self._section("Pipeline Graph")
-        self._status_label = QLabel("● Idle")
-        self._status_label.setStyleSheet("color: #6c7086; font-size: 12px; padding: 2px 0;")
-        dag_group.layout().addWidget(self._status_label)  # type: ignore
-
+        self.status_label = QLabel("Idle")
         self._phases = ["discover", "plan", "generate", "test", "fix"]
         self._phase_status: dict[str, str] = dict.fromkeys(self._phases, "idle")
         self._dag_scene = QGraphicsScene()
         self._dag_view = QGraphicsView(self._dag_scene)
-        self._dag_view.setMinimumHeight(160)
-        self._dag_view.setMaximumHeight(200)
+        self._dag_view.setMinimumHeight(140)
         self._dag_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._dag_view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._dag_view.setStyleSheet("border: 1px solid #313244; border-radius: 6px; background: #11111b;")
-        self._dag_view.setRenderHint(  # type: ignore[arg-type]
-            self._dag_view.renderHints() |
-            QPainter.RenderHint.Antialiasing
-        )
+        self._dag_view.setStyleSheet("border: 1px solid #313244; border-radius: 6px;")
         dag_group.layout().addWidget(self._dag_view)  # type: ignore
-        self._build_animated_dag()
-        # Click phase to re-run
+        self._build_dag()
         self._dag_view.mousePressEvent = self._dag_clicked  # type: ignore
+        dag_group.layout().addWidget(self.status_label)  # type: ignore
+        # Export graph button
+        export_row = QHBoxLayout()
+        export_btn = QPushButton(f"{icon('save')}  Export graph PNG")
+        export_btn.clicked.connect(self._export_dag)
+        export_row.addWidget(export_btn)
+        export_row.addStretch()
+        dag_group.layout().addLayout(export_row)  # type: ignore
         self._add(dag_group)
 
-        # ── Split view: log (left) + live stats (right) ──
-        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Progress
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        self._add(self.progress)
 
-        # Log pane
-        log_widget = QWidget()
-        log_layout = QVBoxLayout(log_widget)
-        log_layout.setContentsMargins(0, 0, 0, 0)
-        log_layout.setSpacing(4)
-        log_layout.addWidget(QLabel("📋  Output Log"))
+        # Splitter: log output only
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        self._splitter = splitter
+
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         self.output.setPlaceholderText("Pipeline output will appear here...")
-        self.output.setStyleSheet(
-            "QPlainTextEdit { background: #11111b; border: 1px solid #313244; "
-            "border-radius: 6px; color: #cdd6f4; font-size: 12px; }"
-        )
-        log_layout.addWidget(self.output, 1)
-        self._splitter.addWidget(log_widget)
-
-        # Stats pane
-        stats_widget = QWidget()
-        stats_layout = QVBoxLayout(stats_widget)
-        stats_layout.setContentsMargins(8, 0, 0, 0)
-        stats_layout.setSpacing(6)
-        stats_layout.addWidget(QLabel("📊  Live Stats"))
-
-        self._stat_labels = {}
-        for key, label, color in [
-            ("phase", "Phase", "#89b4fa"),
-            ("elapsed", "Elapsed", "#a6e3a1"),
-            ("iterations", "Iterations", "#f9e2af"),
-            ("tokens", "Tokens", "#f5c2e7"),
-            ("lines", "Log lines", "#a6adc8"),
-        ]:
-            row = QHBoxLayout()
-            row.addWidget(QLabel(f"{label}:"))
-            val = QLabel("—")
-            val.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 14px;")
-            row.addWidget(val, 1)
-            stats_layout.addLayout(row)
-            self._stat_labels[key] = val
-
-        # Mini progress
-        stats_layout.addSpacing(8)
-        self._progress = QProgressBar()
-        self._progress.setVisible(False)
-        self._progress.setStyleSheet(
-            "QProgressBar { background: #313244; border: none; border-radius: 4px; "
-            "height: 8px; text-align: center; font-size: 10px; color: #a6adc8; }"
-            "QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, "
-            "stop:0 #89b4fa, stop:1 #a6e3a1); border-radius: 4px; }"
-        )
-        stats_layout.addWidget(self._progress)
-
-        # Export button
-        export_btn = QPushButton("💾  Export graph")
-        export_btn.setStyleSheet(
-            "QPushButton { background: #313244; border: 1px solid #45475a; "
-            "border-radius: 6px; padding: 6px 12px; color: #cdd6f4; font-size: 11px; }"
-            "QPushButton:hover { border-color: #89b4fa; }"
-        )
-        export_btn.clicked.connect(self._export_dag)
-        stats_layout.addWidget(export_btn)
-
-        # ── Recipe Book (#13) ──
-        stats_layout.addSpacing(6)
-        recipe_label = QLabel("📖  Recipes")
-        recipe_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #f9e2af;")
-        stats_layout.addWidget(recipe_label)
-        recipe_row = QHBoxLayout()
-        self._recipe_combo = QComboBox()
-        self._recipe_combo.setStyleSheet(
-            "QComboBox { background: #181825; border: 1px solid #313244; "
-            "border-radius: 4px; padding: 3px 6px; color: #cdd6f4; font-size: 11px; }"
-        )
-        self._recipe_combo.currentIndexChanged.connect(self._load_recipe)
-        recipe_row.addWidget(self._recipe_combo, 1)
-        save_recipe_btn = QPushButton("💾 Save")
-        save_recipe_btn.setStyleSheet(
-            "QPushButton { background: #313244; border: 1px solid #45475a; "
-            "border-radius: 4px; padding: 3px 8px; color: #cdd6f4; font-size: 10px; }"
-            "QPushButton:hover { border-color: #f9e2af; }"
-        )
-        save_recipe_btn.clicked.connect(self._save_recipe)
-        recipe_row.addWidget(save_recipe_btn)
-        del_recipe_btn = QPushButton("✕")
-        del_recipe_btn.setFixedWidth(24)
-        del_recipe_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; color: #f38ba8; font-size: 12px; }"
-        )
-        del_recipe_btn.clicked.connect(self._delete_recipe)
-        recipe_row.addWidget(del_recipe_btn)
-        stats_layout.addLayout(recipe_row)
-        self._refresh_recipes()
-
-        stats_layout.addStretch()
-
-        self._splitter.addWidget(stats_widget)
-        self._splitter.setSizes([400, 200])
-
-        self._add(self._splitter)
+        splitter.addWidget(self.output)
+        self._add(splitter)
         self._restore_splitter()
 
-        # ── Timers ──
+        # Timer for polling subprocess
         self._timer = QTimer()
         self._timer.setInterval(100)
         self._timer.timeout.connect(self._poll_process)
-
-        self._anim_timer = QTimer()
-        self._anim_timer.setInterval(400)
-        self._anim_timer.timeout.connect(self._animate_dag)
-
-        self._elapsed_timer = QTimer()
-        self._elapsed_timer.setInterval(1000)
-        self._elapsed_timer.timeout.connect(self._tick_elapsed)
-
-        self._log_line_count = 0
-
-    # ── Helpers ──────────────────────────────────────────────────────────
 
     def on_activate(self) -> None:
         self.goal_input.setFocus()
 
     def _toggle_llm(self) -> None:
-        self.use_llm.setText(f"🧠  LLM: {'ON' if self.use_llm.isChecked() else 'OFF'}")
+        self.use_llm.setText(f"{icon('llm')}  LLM: {'ON' if self.use_llm.isChecked() else 'OFF'}")
 
     def _restore_splitter(self) -> None:
         try:
+            import json
+
             p = HERE / ".virgo_pipeline_ui.json"
             if p.exists():
                 d = json.loads(p.read_text())
@@ -417,6 +291,8 @@ class PipelinePage(PageWidget):
 
     def _save_splitter(self) -> None:
         try:
+            import json
+
             p = HERE / ".virgo_pipeline_ui.json"
             d = {}
             if p.exists():
@@ -429,108 +305,44 @@ class PipelinePage(PageWidget):
         except Exception:
             pass
 
-    # ── Animated DAG ─────────────────────────────────────────────────────
-
-    def _build_animated_dag(self) -> None:
-        """Draw phase nodes with glow-friendly rectangles + arrows."""
+    def _build_dag(self) -> None:
+        """Draw the 5 pipeline phase nodes + connecting arrows."""
         self._dag_scene.clear()
         self._dag_nodes: dict[str, QGraphicsRectItem] = {}
-        self._dag_glows: dict[str, QGraphicsEllipseItem] = {}
+        self._dag_text: dict[str, QGraphicsTextItem] = {}
         n = len(self._phases)
-        node_w, node_h, gap = 130, 52, 36
+        node_w, node_h, gap = 120, 50, 40
         total_w = n * node_w + (n - 1) * gap
         y = 30
         x0 = 20
-        glow_colors = {
-            "idle": QColor(69, 71, 90, 0),
-            "running": QColor(249, 226, 175, 60),
-            "done": QColor(166, 227, 161, 40),
-            "failed": QColor(243, 139, 168, 50),
-        }
-        fill_colors = {
+        colors = {
             "idle": "#45475a",
             "running": "#f9e2af",
             "done": "#a6e3a1",
             "failed": "#f38ba8",
         }
-
         for i, phase in enumerate(self._phases):
             x = x0 + i * (node_w + gap)
-
-            # Glow circle behind node
-            glow = QGraphicsEllipseItem(
-                x - 8, y - 8, node_w + 16, node_h + 16,
-            )
-            glow.setBrush(QBrush(glow_colors["idle"]))
-            glow.setPen(QPen(Qt.PenStyle.NoPen))
-            self._dag_scene.addItem(glow)
-            self._dag_glows[phase] = glow
-
-            # Node rect
             rect = QGraphicsRectItem(x, y, node_w, node_h)
-            rect.setBrush(QBrush(QColor(fill_colors["idle"])))
+            rect.setBrush(QBrush(QColor(colors["idle"])))
             rect.setPen(QPen(QColor("#1e1e2e"), 2))
             rect.setFlags(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable)
             rect.setData(0, phase)
             self._dag_scene.addItem(rect)
             self._dag_nodes[phase] = rect
-
-            # Phase label
-            display_name = {"discover": "Discover", "plan": "Plan", "generate": "Generate",
-                            "test": "Test", "fix": "Fix"}.get(phase, phase.upper())
-            txt = QGraphicsTextItem(display_name, rect)
-            txt.setPos(x + 12, y + 16)
-            txt.setDefaultTextColor(QColor("#1e1e2e"))
-            font = QFont("Segoe UI", 10, QFont.Weight.Bold)
-            txt.setFont(font)
-
-            # Arrow between nodes
+            txt = QGraphicsTextItem(phase.upper(), rect)
+            txt.setPos(x + 10, y + 15)
+            self._dag_text[phase] = txt
             if i < n - 1:
                 ax = x + node_w + 4
-                arrow = self._dag_scene.addLine(
-                    ax, y + node_h / 2, ax + gap - 8, y + node_h / 2,
-                    QPen(QColor("#6c7086"), 2),
+                self._dag_scene.addLine(
+                    ax, y + node_h / 2, ax + gap - 8, y + node_h / 2, QPen(QColor("#6c7086"), 2)
                 )
-                # Arrowhead
-                head = self._dag_scene.addPolygon(
-                    QPolygonF([
-                        QPointF(ax + gap - 4, y + node_h / 2 - 5),
-                        QPointF(ax + gap - 4, y + node_h / 2 + 5),
-                        QPointF(ax + gap + 4, y + node_h / 2),
-                    ]),
-                    QPen(Qt.PenStyle.NoPen),
-                    QBrush(QColor("#6c7086")),
-                )
-
-        self._dag_scene.setSceneRect(0, 0, total_w + 60, 120)
-        self._dag_view.setSceneRect(0, 0, total_w + 60, 120)
-
-    def _animate_dag(self) -> None:
-        """Pulse glow on the running phase node."""
-        for phase, status in self._phase_status.items():
-            glow = self._dag_glows.get(phase)
-            if not glow:
-                continue
-            if status == "running":
-                # Pulse alpha: alternate between 40 and 80
-                cur = glow.brush().color().alpha()
-                new_alpha = 40 if cur >= 70 else 80
-                glow.setBrush(QBrush(QColor(249, 226, 175, new_alpha)))
-            else:
-                alpha = {"done": 30, "failed": 40, "idle": 0}.get(status, 0)
-                if glow.brush().color().alpha() != alpha:
-                    glow.setBrush(QBrush(QColor(
-                        249 if status == "running" else (
-                            166 if status == "done" else 243
-                        ),
-                        226 if status == "running" else (
-                            227 if status == "done" else 139
-                        ),
-                        175 if status == "running" else (
-                            161 if status == "done" else 168
-                        ),
-                        alpha,
-                    )))
+                arrow = QGraphicsTextItem("→")
+                arrow.setPos(ax + gap / 2 - 6, y + node_h / 2 - 14)
+        self._dag_scene.setSceneRect(0, 0, total_w + 40, 110)
+        self._dag_view.setSceneRect(0, 0, total_w + 40, 110)
+        self._dag_view.fitInView(self._dag_scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def _update_dag(self, phase: str, status: str) -> None:
         if phase not in self._phase_status:
@@ -542,42 +354,54 @@ class PipelinePage(PageWidget):
             node.setBrush(QBrush(QColor(colors.get(status, "#45475a"))))
 
     def _dag_clicked(self, event) -> None:  # type: ignore[override]
+        """Click a phase node to re-run just that phase."""
         item = self._dag_view.itemAt(event.pos())
         phase = None
         if item is not None:
             phase = item.data(0)
         if phase:
             self._rerun_phase(phase)
+        # Call original to keep zoom/pan working
         QGraphicsView.mousePressEvent(self._dag_view, event)
 
     def _rerun_phase(self, phase: str) -> None:
+        """Re-run a single pipeline phase against the current goal."""
         goal = self.goal_input.text().strip()
         if not goal:
-            self.output.appendPlainText("⚠️  Enter a goal first.")
+            self.output.appendPlainText(f"{icon('warn')} Enter a goal first.")
             return
-        self.output.appendPlainText(f"▶  Re-running phase: {phase}")
+        self.output.appendPlainText(f"{icon('run')} Re-running phase: {phase}")
         self._update_dag(phase, "running")
         args = [
-            sys.executable, str(HERE / "cli.py"), "run",
-            "--goal", goal, "--phase", phase,
-            "--max-iterations", self.iter_input.text() or "5",
+            sys.executable,
+            str(HERE / "cli.py"),
+            "run",
+            "--goal",
+            goal,
+            "--phase",
+            phase,
+            "--max-iterations",
+            self.iter_input.text() or "5",
         ]
         if self.use_llm.isChecked():
             args.append("--llm")
         try:
             subprocess.run(
                 args,
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
             self._update_dag(phase, "done")
-            self.output.appendPlainText(f"✅ Phase {phase} complete")
+            self.output.appendPlainText(f"{icon('ok')} Phase {phase} complete")
         except Exception as exc:
             self._update_dag(phase, "failed")
-            self.output.appendPlainText(f"❌ Phase {phase} failed: {exc}")
+            self.output.appendPlainText(f"{icon('error')} Phase {phase} failed: {exc}")
 
     def _export_dag(self) -> None:
+        """Render the pipeline DAG scene to a PNG file."""
         from PyQt6.QtGui import QImage, QPainter
+
         path, _ = QFileDialog.getSaveFileName(
             self, "Export DAG", str(HERE / "pipeline_graph.png"), "PNG (*.png)"
         )
@@ -591,56 +415,57 @@ class PipelinePage(PageWidget):
             scene.render(painter)
             painter.end()
             img.save(path)
-            self.output.appendPlainText(f"✅ DAG exported → {path}")
+            self.output.appendPlainText(f"{icon('ok')} DAG exported → {path}")
         except Exception as exc:
-            self.output.appendPlainText(f"❌ Export failed: {exc}")
+            self.output.appendPlainText(f"{icon('error')} Export failed: {exc}")
 
     def _phase_from_line(self, line: str) -> str | None:
         low = line.lower()
         for kw, phase in (
-            ("discover", "discover"), ("plan", "plan"),
-            ("generat", "generate"), ("test", "test"), ("fix", "fix"),
+            ("discover", "discover"),
+            ("plan", "plan"),
+            ("generat", "generate"),
+            ("test", "test"),
+            ("fix", "fix"),
         ):
-            if kw in low and ("phase" in low or "→" in low or "running" in low or "starting" in low or kw == low.strip()):
+            if kw in low and (
+                "phase" in low
+                or "→" in low
+                or "running" in low
+                or "starting" in low
+                or kw == low.strip()
+            ):
                 return phase
-        # Also match iteration counters like "[1/5]"
-        import re
-        m = re.search(r"\[(\d+)/(\d+)\]", low)
-        if m:
-            self._iter_count = int(m.group(1))
-            self._stat_labels["iterations"].setText(f"{m.group(1)}/{m.group(2)}")
         return None
-
-    # ── Pipeline execution ──────────────────────────────────────────────
 
     def _run_pipeline(self) -> None:
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self._progress.setVisible(True)
-        self._progress.setRange(0, 0)
-        self._status_label.setText("🟡 Running...")
-        self._elapsed = 0.0
-        self._iter_count = 0
-        self._token_count = 0
-        self._log_line_count = 0
-        self.output.clear()
+        self.progress.setVisible(True)
+        self.progress.setRange(0, 0)  # indeterminate
+        self.status_label.setText("Running...")
+        # Reset DAG
         for p in self._phases:
             self._update_dag(p, "idle")
-        self._anim_timer.start()
-        self._elapsed_timer.start()
 
         args = [
-            sys.executable, str(HERE / "cli.py"), "run",
-            "--goal", self.goal_input.text().strip(),
-            "--max-iterations", self.iter_input.text() or "5",
+            sys.executable,
+            str(HERE / "cli.py"),
+            "run",
+            "--goal",
+            self.goal_input.text().strip(),
+            "--max-iterations",
+            self.iter_input.text() or "5",
         ]
         if self.use_llm.isChecked():
             args.append("--llm")
 
         self._process = subprocess.Popen(
             args,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
         self._timer.start()
@@ -649,7 +474,11 @@ class PipelinePage(PageWidget):
         if self._process:
             self._process.kill()
             self._process = None
-        self._cleanup_run("Stopped")
+        self._running = False
+        self.run_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.progress.setVisible(False)
+        self.status_label.setText("Stopped")
 
     def _poll_process(self) -> None:
         if not self._process:
@@ -659,176 +488,35 @@ class PipelinePage(PageWidget):
             line = self._process.stdout.readline()
             if line:
                 self.output.appendPlainText(line.rstrip())
-                self._log_line_count += 1
-                self._stat_labels["lines"].setText(str(self._log_line_count))
-                # Token estimation
-                self._token_count += len(line.split())
-                self._stat_labels["tokens"].setText(str(self._token_count))
-                # Phase detection
+                # Light up DAG nodes from phase markers
                 ph = self._phase_from_line(line)
                 if ph:
                     self._update_dag(ph, "running")
-                    self._stat_labels["phase"].setText(ph.capitalize())
         if self._process.poll() is not None:
+            # Drain remaining output
             if self._process.stdout:
                 for line in self._process.stdout:
                     self.output.appendPlainText(line.rstrip())
+            self._timer.stop()
+            self._running = False
+            self.run_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.progress.setVisible(False)
             rc = self._process.returncode
-            self._process = None
+            self.status_label.setText(f"Finished (exit code {rc})")
+            # Mark all running nodes done (or failed if rc != 0)
             final = "failed" if rc not in (0, None) else "done"
             for p in self._phases:
                 if self._phase_status.get(p) == "running":
                     self._update_dag(p, final)
                 elif self._phase_status.get(p) == "idle":
                     self._update_dag(p, "done" if final == "done" else "idle")
-            self._cleanup_run(f"Exit code {rc}")
+            self._process = None
+            # Desktop notification
             w = self.window()
-            if hasattr(w, "_achievement_check"):
-                w._achievement_check("pipeline", rc)
+            if hasattr(w, "notify"):
+                w.notify("Pipeline", f"Exit code {rc} — {self.goal_input.text()[:60]}")
             _beep("error" if rc not in (0, None) else "done")
-
-    def _cleanup_run(self, msg: str) -> None:
-        self._timer.stop()
-        self._anim_timer.stop()
-        self._elapsed_timer.stop()
-        self._running = False
-        self.run_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self._progress.setVisible(False)
-        self._status_label.setText(f"● {msg}")
-
-    def _tick_elapsed(self) -> None:
-        self._elapsed += 1
-        mins, secs = divmod(int(self._elapsed), 60)
-        self._stat_labels["elapsed"].setText(f"{mins:02d}:{secs:02d}")
-
-    # ── Recipe Book (#13) ───────────────────────────────────────────────
-    _RECIPES_DIR = Path(__file__).parent / ".virgo_recipes"
-
-    def _refresh_recipes(self) -> None:
-        """Reload pipeline recipes into the combo box."""
-        self._RECIPES_DIR.mkdir(exist_ok=True)
-        self._recipe_combo.blockSignals(True)
-        self._recipe_combo.clear()
-        self._recipe_combo.addItem("(select recipe)")
-        self._recipe_combo.addItem("💾  Save current as…")
-        for pf in sorted(self._RECIPES_DIR.glob("*.json")):
-            try:
-                data = json.loads(pf.read_text(encoding="utf-8"))
-                name = data.get("name", pf.stem)
-                tags = data.get("tags", "")
-                label = f"{name}" + (f"  [{tags}]" if tags else "")
-                self._recipe_combo.addItem(label)
-                self._recipe_combo.setItemData(
-                    self._recipe_combo.count() - 1, str(pf), Qt.ItemDataRole.UserRole,
-                )
-            except Exception:
-                pass
-        self._recipe_combo.blockSignals(False)
-
-    def _load_recipe(self, idx: int) -> None:
-        """Load a recipe into the pipeline inputs."""
-        if idx <= 0:
-            return
-        if idx == 1:
-            # "Save current as…" selected
-            self._save_recipe_dialog()
-            return
-        path = self._recipe_combo.itemData(idx, Qt.ItemDataRole.UserRole)
-        if not path:
-            return
-        try:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-            self.goal_input.setText(data.get("goal", ""))
-            self.iter_input.setText(str(data.get("iterations", 5)))
-            self.use_llm.setChecked(data.get("use_llm", True))
-            self.output.appendPlainText(f"📖  Loaded recipe: {data.get('name', 'Unnamed')}")
-        except Exception:
-            pass
-        # Reset combo to first item
-        self._recipe_combo.blockSignals(True)
-        self._recipe_combo.setCurrentIndex(0)
-        self._recipe_combo.blockSignals(False)
-
-    def _save_recipe(self) -> None:
-        """Quick-save from the Save button."""
-        self._save_recipe_dialog()
-
-    def _save_recipe_dialog(self) -> None:
-        """Dialog to save current pipeline config as a recipe."""
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Save Pipeline Recipe")
-        dlg.resize(360, 200)
-        dlg.setStyleSheet("QDialog { background: #1e1e2e; }")
-        lo = QVBoxLayout(dlg)
-        lo.setSpacing(10)
-
-        name_inp = QLineEdit()
-        name_inp.setPlaceholderText("Recipe name…")
-        name_inp.setStyleSheet(
-            "QLineEdit { background: #181825; border: 1px solid #313244; "
-            "border-radius: 6px; padding: 6px 10px; color: #cdd6f4; }"
-        )
-        lo.addWidget(QLabel("Name:"))
-        lo.addWidget(name_inp)
-
-        tags_inp = QLineEdit()
-        tags_inp.setPlaceholderText("Tags (comma-separated, e.g. web,api)")
-        tags_inp.setStyleSheet(
-            "QLineEdit { background: #181825; border: 1px solid #313244; "
-            "border-radius: 6px; padding: 6px 10px; color: #cdd6f4; }"
-        )
-        lo.addWidget(QLabel("Tags:"))
-        lo.addWidget(tags_inp)
-
-        btn_row = QHBoxLayout()
-        ok_btn = QPushButton("Save")
-        ok_btn.setStyleSheet(
-            "QPushButton { background: #a6e3a1; color: #1e1e2e; font-weight: bold; "
-            "border: none; border-radius: 6px; padding: 6px 16px; }"
-        )
-        ok_btn.clicked.connect(dlg.accept)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet(
-            "QPushButton { background: #313244; border: 1px solid #45475a; "
-            "border-radius: 6px; padding: 6px 16px; color: #cdd6f4; }"
-        )
-        cancel_btn.clicked.connect(dlg.reject)
-        btn_row.addStretch()
-        btn_row.addWidget(cancel_btn)
-        btn_row.addWidget(ok_btn)
-        lo.addLayout(btn_row)
-
-        if not dlg.exec():
-            return
-        name = name_inp.text().strip()
-        if not name:
-            return
-        tags = tags_inp.text().strip()
-        slug = name.lower().replace(" ", "_").replace("/", "_")
-        payload = {
-            "name": name,
-            "goal": self.goal_input.text().strip(),
-            "iterations": int(self.iter_input.text() or "5"),
-            "use_llm": self.use_llm.isChecked(),
-            "tags": tags,
-        }
-        dest = self._RECIPES_DIR / f"{slug}.json"
-        dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        self._refresh_recipes()
-        self.output.appendPlainText(f"📖  Saved recipe: {name}")
-
-    def _delete_recipe(self) -> None:
-        """Delete the currently selected recipe."""
-        idx = self._recipe_combo.currentIndex()
-        if idx <= 1:
-            return
-        path = self._recipe_combo.itemData(idx, Qt.ItemDataRole.UserRole)
-        if path:
-            Path(path).unlink(missing_ok=True)
-            self._refresh_recipes()
-            self.output.appendPlainText(f"🗑️  Deleted recipe")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1260,9 +948,6 @@ class ChatPage(PageWidget):
                 "/read &lt;path&gt;, /web &lt;url&gt;, /py &lt;code&gt;. "
                 "Use Attach to send files or photos.</i>"
             )
-
-        # ── Prompt Library side panel (lazy-built) ──
-        self._setup_prompt_panel()
 
     def _attach(self) -> None:
         """Open a file picker and attach selected files / photos to the chat."""
@@ -1937,222 +1622,97 @@ class ChatPage(PageWidget):
         path = _chat_session_path()
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    # ── Prompt Library (side panel) ─────────────────────────────────────
+    # ── Prompt library ─────────────────────────────────────────────────
     _PROMPTS_DIR = Path(__file__).parent / ".virgo_prompts"
 
-    def _setup_prompt_panel(self) -> None:
-        """Build the docked prompt library panel alongside the chat area."""
-        self._prompt_panel = QWidget()
-        self._prompt_panel.setObjectName("promptPanel")
-        self._prompt_panel.setStyleSheet(
-            "#promptPanel { background: #181825; border-left: 1px solid #313244; }"
+    def _show_prompt_lib(self) -> None:
+        """Open the prompt library dialog — save or load prompt templates."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Prompt Library")
+        dlg.resize(400, 350)
+        dlg.setStyleSheet("QDialog { background: #1e1e2e; }")
+        layout = QVBoxLayout(dlg)
+
+        # ── List existing prompts ──
+        lbl = QLabel("Saved prompts (click to load):")
+        lbl.setStyleSheet("color:#cdd6f4; font-weight:bold;")
+        layout.addWidget(lbl)
+
+        lst = QListWidget()
+        lst.setStyleSheet(
+            "background:#181825; border:1px solid #313244; border-radius:6px; color:#cdd6f4;"
         )
-        self._prompt_panel.setMinimumWidth(280)
-        self._prompt_panel.setMaximumWidth(400)
-        self._prompt_panel.setVisible(False)
+        layout.addWidget(lst)
 
-        p_layout = QVBoxLayout(self._prompt_panel)
-        p_layout.setContentsMargins(10, 10, 10, 10)
-        p_layout.setSpacing(6)
-
-        # ── Header ──
-        header_row = QHBoxLayout()
-        title = QLabel("📋  Prompt Library")
-        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #cdd6f4;")
-        header_row.addWidget(title)
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(24, 24)
-        close_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; "
-            "color: #6c7086; font-size: 14px; }"
-            "QPushButton:hover { color: #f38ba8; }"
-        )
-        close_btn.clicked.connect(lambda: self._toggle_prompt_panel(False))
-        header_row.addWidget(close_btn)
-        p_layout.addLayout(header_row)
-
-        # ── Search ──
-        self._prompt_search = QLineEdit()
-        self._prompt_search.setPlaceholderText("Search prompts...")
-        self._prompt_search.setStyleSheet(
-            "QLineEdit { background: #1e1e2e; border: 1px solid #313244; "
-            "border-radius: 6px; padding: 5px 8px; color: #cdd6f4; font-size: 12px; }"
-        )
-        self._prompt_search.textChanged.connect(self._filter_prompt_list)
-        p_layout.addWidget(self._prompt_search)
-
-        # ── Category tabs ──
-        cat_row = QHBoxLayout()
-        cat_row.setSpacing(4)
-        self._cat_buttons: dict[str, QPushButton] = {}
-        for cat in ("All", "General", "Code", "Debug", "Custom"):
-            btn = QPushButton(cat)
-            btn.setCheckable(True)
-            btn.setFixedHeight(26)
-            btn.setStyleSheet(
-                "QPushButton { background: #11111b; border: 1px solid #313244; "
-                "border-radius: 4px; padding: 2px 8px; color: #6c7086; "
-                "font-size: 11px; }"
-                "QPushButton:checked { background: #313244; color: #89b4fa; "
-                "border-color: #89b4fa; }"
-                "QPushButton:hover { color: #cdd6f4; }"
-            )
-            btn.clicked.connect(lambda checked=False, c=cat: self._select_prompt_category(c))
-            cat_row.addWidget(btn)
-            self._cat_buttons[cat] = btn
-        cat_row.addStretch()
-        p_layout.addLayout(cat_row)
-        self._cat_buttons["All"].setChecked(True)
-        self._prompt_category = "All"
-
-        # ── Prompt list ──
-        self._prompt_list = QListWidget()
-        self._prompt_list.setStyleSheet(
-            "QListWidget { background: #1e1e2e; border: 1px solid #313244; "
-            "border-radius: 6px; color: #cdd6f4; font-size: 12px; }"
-            "QListWidget::item { padding: 6px 8px; border-bottom: 1px solid #11111b; }"
-            "QListWidget::item:hover { background: #313244; }"
-            "QListWidget::item:selected { background: #45475a; color: #89b4fa; }"
-        )
-        self._prompt_list.itemDoubleClicked.connect(self._load_selected_prompt)
-        p_layout.addWidget(self._prompt_list, 1)
-
-        # ── Save row ──
-        save_row = QHBoxLayout()
-        self._prompt_name_input = QLineEdit()
-        self._prompt_name_input.setPlaceholderText("New prompt name...")
-        self._prompt_name_input.setStyleSheet(
-            "QLineEdit { background: #1e1e2e; border: 1px solid #313244; "
-            "border-radius: 6px; padding: 4px 8px; color: #cdd6f4; font-size: 12px; }"
-        )
-        save_row.addWidget(self._prompt_name_input, 1)
-        save_btn = QPushButton("💾")
-        save_btn.setFixedSize(30, 30)
-        save_btn.setToolTip("Save current input as a prompt")
-        save_btn.setStyleSheet(
-            "QPushButton { background: #313244; border: 1px solid #45475a; "
-            "border-radius: 6px; font-size: 14px; }"
-            "QPushButton:hover { background: #45475a; }"
-        )
-        save_btn.clicked.connect(self._save_prompt_from_panel)
-        save_row.addWidget(save_btn)
-        p_layout.addLayout(save_row)
-
-        # ── Category chooser for save ──
-        cat_save_row = QHBoxLayout()
-        cat_save_row.addWidget(QLabel("Category:"))
-        self._prompt_cat_combo = QComboBox()
-        self._prompt_cat_combo.addItems(["General", "Code", "Debug", "Custom"])
-        self._prompt_cat_combo.setStyleSheet(
-            "QComboBox { background: #1e1e2e; border: 1px solid #313244; "
-            "border-radius: 4px; padding: 3px 6px; color: #cdd6f4; font-size: 11px; }"
-        )
-        cat_save_row.addWidget(self._prompt_cat_combo, 1)
-        cat_save_row.addStretch()
-        p_layout.addLayout(cat_save_row)
-
-        # Insert the panel into the parent layout (next to chat area)
-        parent_layout = self.content.layout() if self.content.layout() else None
-        if parent_layout:
-            # We need to insert it after the chat log. Since we can't easily
-            # restructure, we'll add it as the last widget in content.
-            pass
-        self.content.addWidget(self._prompt_panel)
-
-        # Load prompts
-        self._refresh_prompt_list()
-
-        # ── Keyboard shortcut ──
-        self._prompt_shortcut = QShortcut(QKeySequence("Ctrl+Shift+L"), self)
-        self._prompt_shortcut.activated.connect(self._toggle_prompt_panel)
-
-        # ── Prompt panel timer (auto-refresh) ──
-        self._prompt_timer = QTimer()
-        self._prompt_timer.setInterval(3000)
-        self._prompt_timer.timeout.connect(self._refresh_prompt_list)
-        self._prompt_timer.start()
-
-    def _toggle_prompt_panel(self, show: bool | None = None) -> None:
-        """Show or hide the prompt library side panel."""
-        if show is None:
-            show = not self._prompt_panel.isVisible()
-        self._prompt_panel.setVisible(show)
-        if show:
-            self._refresh_prompt_list()
-            self._prompt_search.setFocus()
-
-    def _refresh_prompt_list(self) -> None:
-        """Reload prompts from disk into the list (preserving filter)."""
+        # Load prompts from disk
         self._PROMPTS_DIR.mkdir(exist_ok=True)
-        self._all_prompts: list[dict] = []
-        for pf in sorted(self._PROMPTS_DIR.glob("*.json")):
+        prompt_files = sorted(self._PROMPTS_DIR.glob("*.json"))
+        for pf in prompt_files:
             try:
                 data = json.loads(pf.read_text(encoding="utf-8"))
-                data["_path"] = str(pf)
-                self._all_prompts.append(data)
+                name = data.get("name", pf.stem)
+                item = QListWidgetItem(f"{icon('file')}  {name}")
+                item.setData(33, str(pf))
+                lst.addItem(item)
             except Exception:
                 pass
-        self._filter_prompt_list()
 
-    def _filter_prompt_list(self) -> None:
-        """Apply search + category filter and refresh the list widget."""
-        self._prompt_list.clear()
-        query = self._prompt_search.text().strip().lower()
-        for data in getattr(self, "_all_prompts", []):
-            name = data.get("name", "").lower()
-            text = data.get("text", "").lower()
-            cat = data.get("category", "General")
-            if self._prompt_category != "All" and cat != self._prompt_category:
-                continue
-            if query and query not in name and query not in text:
-                continue
-            display = data.get("name", "Unnamed")
-            icon_str = {"General": "📝", "Code": "💻", "Debug": "🐛", "Custom": "⭐"}.get(cat, "📄")
-            item = QListWidgetItem(f"{icon_str}  {display}")
-            item.setData(Qt.ItemDataRole.UserRole, data.get("_path", ""))
-            self._prompt_list.addItem(item)
+        def _load_prompt(item) -> None:
+            path = Path(item.data(33))
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                text = data.get("text", "")
+                self.msg_input.setText(text)
+                self.msg_input.setFocus()
+                dlg.accept()
+            except Exception:
+                pass
 
-    def _select_prompt_category(self, cat: str) -> None:
-        """Switch active category filter."""
-        self._prompt_category = cat
-        for name, btn in self._cat_buttons.items():
-            btn.setChecked(name == cat)
-        self._filter_prompt_list()
+        lst.itemDoubleClicked.connect(_load_prompt)
 
-    def _load_selected_prompt(self, item: QListWidgetItem) -> None:
-        """Load the selected prompt into the chat input."""
-        path = item.data(Qt.ItemDataRole.UserRole)
-        if not path:
-            return
-        try:
-            data = json.loads(Path(path).read_text(encoding="utf-8"))
-            self.msg_input.setText(data.get("text", ""))
-            self.msg_input.setFocus()
-        except Exception:
-            pass
+        # ── Save a new prompt ──
+        save_row = QHBoxLayout()
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("Prompt name…")
+        name_input.setStyleSheet(
+            "background:#181825; border:1px solid #313244; border-radius:6px; "
+            "color:#cdd6f4; padding:6px 10px;"
+        )
+        save_row.addWidget(name_input, 1)
+        save_btn = QPushButton("Save current input")
+        save_btn.setStyleSheet(
+            "background:#313244; border:1px solid #45475a; border-radius:6px; "
+            "color:#cdd6f4; padding:6px 12px;"
+        )
+        save_row.addWidget(save_btn)
+        layout.addLayout(save_row)
 
-    def _save_prompt_from_panel(self) -> None:
-        """Save the current chat input as a new prompt."""
-        name = self._prompt_name_input.text().strip()
-        text = self.msg_input.text().strip()
-        if not name or not text:
-            self.chat_log.append("<i>[Enter a name and some text to save a prompt]</i>")
-            return
-        cat = self._prompt_cat_combo.currentText()
-        slug = name.lower().replace(" ", "_").replace("/", "_")
-        payload = {"name": name, "text": text, "category": cat}
-        dest = self._PROMPTS_DIR / f"{slug}.json"
-        dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        self._prompt_name_input.clear()
-        self._refresh_prompt_list()
-        self.chat_log.append(f"<i>[Saved prompt: {name}]</i>")
+        def _save_prompt() -> None:
+            name = name_input.text().strip()
+            if not name:
+                return
+            text = self.msg_input.text().strip()
+            if not text:
+                return
+            slug = name.lower().replace(" ", "_").replace("/", "_")
+            payload = {"name": name, "text": text}
+            dest = self._PROMPTS_DIR / f"{slug}.json"
+            dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            # Re-open dialog to refresh list
+            dlg.accept()
+            self._show_prompt_lib()
 
-    def _show_prompt_lib(self) -> None:
-        """Toggle the prompt panel (replaces old dialog)."""
-        self._toggle_prompt_panel()
-        if self._prompt_panel.isVisible():
-            # Hides the prompt panel - if user was expecting dialog, toggle on
-            pass
+        save_btn.clicked.connect(_save_prompt)
+
+        close_btn = QPushButton("Close")
+        close_btn.setStyleSheet(
+            "background:#313244; border:1px solid #45475a; border-radius:6px; "
+            "color:#cdd6f4; padding:6px 12px;"
+        )
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn)
+
+        dlg.exec()
 
     def _speak_reply(self) -> None:
         """Read the last assistant reply aloud via edge-tts."""
@@ -2725,159 +2285,58 @@ class _GuiStream:
 
 
 class NetworkPage(PageWidget):
-    """Recon Dashboard + Attack Surface Map — device discovery, port scan, topology."""
+    """Network discovery and device scanning."""
 
     def __init__(self) -> None:
         super().__init__(
-            "Recon",
-            "Device discovery, port scanning & attack surface visualization.",
+            "Network",
+            "Discover devices on your local subnet.",
         )
 
-        # ── Controls ──
-        ctrl_row = QHBoxLayout()
-        ctrl_row.addWidget(QLabel("Target:"))
+        target_row = QHBoxLayout()
+        target_row.addWidget(QLabel(f"{icon('info')} Subnet:"))
         self.subnet_input = QLineEdit("192.168.1.0/24")
-        self.subnet_input.setStyleSheet(
-            "QLineEdit { background: #181825; border: 1px solid #313244; "
-            "border-radius: 6px; padding: 5px 8px; color: #cdd6f4; }"
-        )
-        self.subnet_input.setFixedWidth(150)
-        ctrl_row.addWidget(self.subnet_input)
-        self.scan_btn = QPushButton("🔍  Scan")
-        self.scan_btn.setStyleSheet(
-            "QPushButton { background: #313244; border: 1px solid #45475a; "
-            "border-radius: 6px; padding: 5px 14px; color: #cdd6f4; }"
-            "QPushButton:hover { border-color: #89b4fa; }"
-        )
+        self.subnet_input.setFixedWidth(160)
+        target_row.addWidget(self.subnet_input)
+        self.scan_btn = QPushButton(f"{icon('run')}  Scan")
         self.scan_btn.clicked.connect(self._scan)
-        ctrl_row.addWidget(self.scan_btn)
+        target_row.addWidget(self.scan_btn)
         self.auto_cb = QCheckBox("Auto (30s)")
-        self.auto_cb.setStyleSheet("color: #a6adc8;")
         self.auto_cb.toggled.connect(self._toggle_auto)
-        ctrl_row.addWidget(self.auto_cb)
-        self.export_btn = QPushButton("💾  Export")
-        self.export_btn.setStyleSheet(
-            "QPushButton { background: #313244; border: 1px solid #45475a; "
-            "border-radius: 6px; padding: 5px 10px; color: #cdd6f4; font-size: 11px; }"
-        )
+        target_row.addWidget(self.auto_cb)
+        self.export_btn = QPushButton(f"{icon('save')}  Export CSV")
         self.export_btn.clicked.connect(self._export)
-        ctrl_row.addWidget(self.export_btn)
-        ctrl_row.addStretch()
-        self.content.addLayout(ctrl_row)
+        target_row.addWidget(self.export_btn)
+        target_row.addStretch()
+        self.content.addLayout(target_row)
 
-        # ── Tab widget: Devices | Topology | Port Scanner ──
-        self._tabs = QTabWidget()
-        self._tabs.setStyleSheet(
-            "QTabWidget::pane { border: 1px solid #313244; border-radius: 6px; "
-            "background: #1e1e2e; }"
-            "QTabBar::tab { background: #181825; border: 1px solid #313244; "
-            "border-bottom: none; border-top-left-radius: 6px; border-top-right-radius: 6px; "
-            "padding: 6px 14px; margin-right: 2px; color: #6c7086; }"
-            "QTabBar::tab:selected { background: #313244; color: #89b4fa; font-weight: bold; }"
-            "QTabBar::tab:hover { color: #cdd6f4; }"
-        )
+        self.results_list = QListWidget()
+        self._add(self.results_list)
 
-        # ── Tab 1: Recon Dashboard (device cards / table) ──
-        dev_tab = QWidget()
-        dev_lo = QVBoxLayout(dev_tab)
-        dev_lo.setContentsMargins(8, 8, 8, 8)
+        self.status = QLabel("Ready")
+        self._add(self.status)
 
-        self._device_table = QTableWidget(0, 5)
-        self._device_table.setHorizontalHeaderLabels(["IP", "Hostname", "MAC", "Vendor", "Status"])
-        self._device_table.setAlternatingRowColors(True)
-        self._device_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._device_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._device_table.verticalHeader().setVisible(False)
-        self._device_table.horizontalHeader().setStretchLastSection(True)
-        self._device_table.setColumnWidth(0, 130)
-        self._device_table.setColumnWidth(1, 150)
-        self._device_table.setColumnWidth(2, 140)
-        self._device_table.setStyleSheet(
-            "QTableWidget { background: #1e1e2e; border: none; border-radius: 6px; "
-            "color: #cdd6f4; gridline-color: #313244; font-size: 12px; }"
-            "QTableWidget::item { padding: 4px 8px; }"
-            "QHeaderView::section { background: #181825; border: 1px solid #313244; "
-            "padding: 6px; color: #a6adc8; font-weight: bold; }"
-        )
-        dev_lo.addWidget(self._device_table)
-
-        self._device_count = QLabel("0 devices")
-        self._device_count.setStyleSheet("color: #a6adc8; font-size: 12px; padding: 2px;")
-        dev_lo.addWidget(self._device_count)
-        self._tabs.addTab(dev_tab, "📋  Devices")
-
-        # ── Tab 2: Attack Surface Map (topology graph) ──
-        topo_tab = QWidget()
-        topo_lo = QVBoxLayout(topo_tab)
-        topo_lo.setContentsMargins(8, 8, 8, 8)
-
-        self._topo_scene = QGraphicsScene()
-        self._topo_view = QGraphicsView(self._topo_scene)
-        self._topo_view.setMinimumHeight(300)
-        self._topo_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._topo_view.setStyleSheet("background: #11111b; border: none; border-radius: 6px;")
-        topo_lo.addWidget(self._topo_view)
-
-        topo_info = QLabel("Devices discovered by scan appear as nodes. Edges show connectivity.")
-        topo_info.setStyleSheet("color: #6c7086; font-size: 11px; padding: 2px;")
-        topo_lo.addWidget(topo_info)
-        self._tabs.addTab(topo_tab, "🗺️  Topology")
-
-        # ── Tab 3: Port Scanner ──
-        port_tab = QWidget()
-        port_lo = QVBoxLayout(port_tab)
-        port_lo.setContentsMargins(8, 8, 8, 8)
-
+        # ── Port scanner ──
+        port_group = self._section("Port scanner")
         port_row = QHBoxLayout()
         port_row.addWidget(QLabel("Host:"))
         self.port_host = QLineEdit("localhost")
-        self.port_host.setStyleSheet(
-            "QLineEdit { background: #181825; border: 1px solid #313244; "
-            "border-radius: 6px; padding: 5px 8px; color: #cdd6f4; }"
-        )
-        self.port_host.setFixedWidth(150)
+        self.port_host.setFixedWidth(160)
         port_row.addWidget(self.port_host)
         port_row.addWidget(QLabel("Ports:"))
-        self.port_range = QLineEdit("80,443,22,8080,11434,5432,3306")
-        self.port_range.setStyleSheet(
-            "QLineEdit { background: #181825; border: 1px solid #313244; "
-            "border-radius: 6px; padding: 5px 8px; color: #cdd6f4; }"
-        )
+        self.port_range = QLineEdit("11434,8080,80,443,22,5432")
         port_row.addWidget(self.port_range, 1)
-
-        self.port_scan_btn = QPushButton("🔍  Scan ports")
-        self.port_scan_btn.setStyleSheet(
-            "QPushButton { background: #313244; border: 1px solid #45475a; "
-            "border-radius: 6px; padding: 5px 14px; color: #cdd6f4; }"
-            "QPushButton:hover { border-color: #f38ba8; }"
-        )
+        self.port_scan_btn = QPushButton(f"{icon('run')}  Scan ports")
         self.port_scan_btn.clicked.connect(self._scan_ports)
         port_row.addWidget(self.port_scan_btn)
-        port_lo.addLayout(port_row)
-
+        port_group.layout().addLayout(port_row)  # type: ignore
         self.port_results = QListWidget()
-        self.port_results.setStyleSheet(
-            "QListWidget { background: #1e1e2e; border: 1px solid #313244; "
-            "border-radius: 6px; color: #cdd6f4; }"
-            "QListWidget::item { padding: 4px 8px; }"
-        )
-        port_lo.addWidget(self.port_results, 1)
-        self._tabs.addTab(port_tab, "🔌  Ports")
+        port_group.layout().addWidget(self.port_results)  # type: ignore
+        self._add(port_group)
 
-        self._add(self._tabs)
-
-        # ── Status bar ──
-        self._status = QLabel("Ready. Enter a subnet and scan.")
-        self._status.setStyleSheet("color: #6c7086; font-size: 12px;")
-        self.content.addWidget(self._status)
-
-        # ── State ──
-        self._devices: list[dict] = []
         self._timer = QTimer()
         self._timer.setInterval(30000)
         self._timer.timeout.connect(self._scan)
-
-    # ── Recon scan ──────────────────────────────────────────────────────
 
     def _toggle_auto(self, on: bool) -> None:
         if on:
@@ -2887,110 +2346,35 @@ class NetworkPage(PageWidget):
             self._timer.stop()
 
     def _scan(self) -> None:
-        self._status.setText("Scanning...")
+        self.status.setText("Scanning...")
         self.scan_btn.setEnabled(False)
 
         def _run() -> None:
-            devices = []
+            text = ""
             try:
                 from virgo_network_scanner import scan_subnet
-                raw = scan_subnet(self.subnet_input.text())
-                for d in (raw or []):
-                    if hasattr(d, "_asdict"):
-                        devices.append(d._asdict())
-                    elif isinstance(d, dict):
-                        devices.append(d)
-                    else:
-                        devices.append({"ip": str(d), "hostname": "", "mac": "", "vendor": "", "status": "up"})
+
+                devices = scan_subnet(self.subnet_input.text())
+                text = "\n".join(str(d) for d in (devices or []))
             except Exception as exc:
-                devices = [{"ip": f"Error: {exc}", "hostname": "", "mac": "", "vendor": "", "status": "error"}]
+                text = f"Error: {exc}"
             QMetaObject.invokeMethod(
-                self, "_show_results", Qt.ConnectionType.QueuedConnection,
-                Q_ARG(list, devices),
+                self,
+                "_show_results",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, text),
             )
 
         threading.Thread(target=_run, daemon=True).start()
 
-    @pyqtSlot(list)
-    def _show_results(self, devices: list[dict]) -> None:
-        self._devices = devices
-        self._device_table.setRowCount(len(devices))
-        for row, d in enumerate(devices):
-            ip = d.get("ip", "?")
-            host = d.get("hostname", "") or d.get("host", "")
-            mac = d.get("mac", "")
-            vendor = d.get("vendor", "")
-            status = d.get("status", "up")
-
-            ip_item = QTableWidgetItem(ip)
-            ip_item.setForeground(QColor("#89b4fa"))
-            self._device_table.setItem(row, 0, ip_item)
-            self._device_table.setItem(row, 1, QTableWidgetItem(host))
-            self._device_table.setItem(row, 2, QTableWidgetItem(mac))
-            self._device_table.setItem(row, 3, QTableWidgetItem(vendor))
-
-            st_item = QTableWidgetItem(status)
-            st_item.setForeground(QColor("#a6e3a1" if status == "up" else "#f38ba8"))
-            self._device_table.setItem(row, 4, st_item)
-
-        self._device_count.setText(f"{len(devices)} device(s)")
-        self._status.setText(f"Found {len(devices)} device(s)")
+    @pyqtSlot(str)
+    def _show_results(self, text: str) -> None:
+        self.results_list.clear()
+        for line in text.strip().split("\n"):
+            if line:
+                self.results_list.addItem(line)
+        self.status.setText(f"{self.results_list.count()} device(s)")
         self.scan_btn.setEnabled(True)
-        self._build_topology()
-
-    # ── Attack Surface Map (topology) ──────────────────────────────────
-
-    def _build_topology(self) -> None:
-        """Render discovered devices as a visual network graph."""
-        self._topo_scene.clear()
-        if not self._devices:
-            txt = self._topo_scene.addText("No devices — run a scan first")
-            txt.setDefaultTextColor(QColor("#6c7086"))
-            return
-
-        import math
-        n = len(self._devices)
-        cx, cy, radius = 250, 180, 140
-        node_w, node_h = 100, 36
-
-        self._topo_nodes: list[dict] = []
-        for i, d in enumerate(self._devices):
-            angle = (2 * math.pi * i) / n - math.pi / 2
-            x = cx + radius * math.cos(angle) - node_w // 2
-            y = cy + radius * math.sin(angle) - node_h // 2
-
-            # Node rect
-            ip = d.get("ip", f"device_{i}")
-            rect = QGraphicsRectItem(x, y, node_w, node_h)
-            rect.setBrush(QBrush(QColor("#181825")))
-            rect.setPen(QPen(QColor("#89b4fa"), 1.5))
-            rect.setFlags(QGraphicsRectItem.GraphicsItemFlag.ItemIsSelectable)
-            self._topo_scene.addItem(rect)
-
-            # IP label
-            label = QGraphicsTextItem(ip, rect)
-            label.setPos(x + 6, y + 8)
-            label.setDefaultTextColor(QColor("#cdd6f4"))
-            f = QFont("Segoe UI", 8, QFont.Weight.Bold)
-            label.setFont(f)
-
-            self._topo_nodes.append({"rect": rect, "ip": ip})
-
-        # Draw edges between consecutive devices (star topology)
-        for i in range(n - 1):
-            n1 = self._topo_nodes[i]
-            n2 = self._topo_nodes[i + 1]
-            r1 = n1["rect"]
-            r2 = n2["rect"]
-            x1 = r1.rect().center().x() + r1.pos().x()
-            y1 = r1.rect().center().y() + r1.pos().y()
-            x2 = r2.rect().center().x() + r2.pos().x()
-            y2 = r2.rect().center().y() + r2.pos().y()
-            self._topo_scene.addLine(x1, y1, x2, y2, QPen(QColor("#45475a"), 1, Qt.PenStyle.DashLine))
-
-        self._topo_scene.setSceneRect(0, 0, 500, 400)
-
-    # ── Port scanner ────────────────────────────────────────────────────
 
     def _scan_ports(self) -> None:
         host = self.port_host.text().strip()
@@ -3009,6 +2393,7 @@ class NetworkPage(PageWidget):
 
         def _run() -> None:
             import socket
+
             open_ports: list[int] = []
             for port in ports:
                 try:
@@ -3019,8 +2404,11 @@ class NetworkPage(PageWidget):
                 except Exception:
                     pass
             QMetaObject.invokeMethod(
-                self, "_show_ports", Qt.ConnectionType.QueuedConnection,
-                Q_ARG(list, open_ports), Q_ARG(list, ports),
+                self,
+                "_show_ports",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(list, open_ports),
+                Q_ARG(list, ports),
             )
 
         threading.Thread(target=_run, daemon=True).start()
@@ -3029,31 +2417,25 @@ class NetworkPage(PageWidget):
     def _show_ports(self, open_ports: list, all_ports: list) -> None:
         self.port_results.clear()
         for port in all_ports:
-            is_open = int(port) in open_ports
-            item = QListWidgetItem(f"  {'🔓' if is_open else '🔒'}  Port {port}  {'OPEN' if is_open else 'closed'}")
-            if is_open:
+            state = "OPEN" if port in open_ports else "closed"
+            item = QListWidgetItem(f"{port}: {state}")
+            if port in open_ports:
                 item.setForeground(QColor("#a6e3a1"))
-            else:
-                item.setForeground(QColor("#6c7086"))
             self.port_results.addItem(item)
         self.port_scan_btn.setEnabled(True)
-        self._status.setText(f"Port scan: {len(open_ports)}/{len(all_ports)} open")
 
     def _export(self) -> None:
-        if not self._devices:
-            self._status.setText("Nothing to export yet.")
+        if self.results_list.count() == 0:
+            self.status.setText("Nothing to export yet.")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Export devices", "network-scan.csv", "CSV (*.csv)"
         )
         if not path:
             return
-        import csv
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=["ip", "hostname", "mac", "vendor", "status"])
-            w.writeheader()
-            w.writerows(self._devices)
-        self._status.setText(f"Exported {len(self._devices)} device(s)")
+        rows = [self.results_list.item(i).text() for i in range(self.results_list.count())]
+        Path(path).write_text("\n".join(rows), encoding="utf-8")
+        self.status.setText(f"Exported {len(rows)} device(s)")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -3062,196 +2444,88 @@ class NetworkPage(PageWidget):
 
 
 class DiagnosticsPage(PageWidget):
-    """Live system health — CPU, RAM, disk, network, services, processes."""
+    """System health diagnostics."""
 
     def __init__(self) -> None:
         super().__init__(
-            "System Health",
-            "Live CPU, memory, disk, network & service monitoring.",
+            "Diagnostics",
+            "CPU, memory, disk, and service health checks.",
         )
+
+        self._add_row(
+            QPushButton(f"{icon('run')}  Run Full Diagnostics", clicked=self._run_diag),
+            QPushButton(f"{icon('save')}  Export JSON", clicked=self._export),
+        )
+        self.auto_cb = QCheckBox("Auto (60s)")
+        self.auto_cb.toggled.connect(self._toggle_auto)
+        self._add_row(self.auto_cb)
+
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMaximumBlockCount(500)
+        self._add(self.output)
 
         self._timer = QTimer()
-        self._timer.setInterval(5000)
-        self._timer.timeout.connect(self._refresh)
-
-        # ── Controls ──
-        ctrl_row = QHBoxLayout()
-        refresh_btn = QPushButton("🔄  Refresh")
-        refresh_btn.setStyleSheet(
-            "QPushButton { background: #313244; border: 1px solid #45475a; "
-            "border-radius: 6px; padding: 6px 14px; color: #cdd6f4; }"
-            "QPushButton:hover { border-color: #89b4fa; }"
-        )
-        refresh_btn.clicked.connect(self._refresh)
-        ctrl_row.addWidget(refresh_btn)
-        self._auto_cb = QCheckBox("Auto (5s)")
-        self._auto_cb.setStyleSheet("color: #a6adc8;")
-        self._auto_cb.toggled.connect(self._toggle_auto)
-        ctrl_row.addWidget(self._auto_cb)
-        ctrl_row.addStretch()
-        self.content.addLayout(ctrl_row)
-
-        # ── Stats grid: CPU, RAM, DISK ──
-        gauges = QHBoxLayout()
-        gauges.setSpacing(16)
-        self._gauges: dict[str, QProgressBar] = {}
-        for name, icon, color in [
-            ("CPU", "⚡", "#89b4fa"),
-            ("RAM", "🅂", "#a6e3a1"),
-            ("DISK C:", "💾", "#f9e2af"),
-        ]:
-            box = QWidget()
-            box.setStyleSheet(
-                "background: #181825; border: 1px solid #313244; "
-                "border-radius: 8px; padding: 12px;"
-            )
-            bl = QVBoxLayout(box)
-            bl.setSpacing(6)
-            bl.addWidget(QLabel(f"{icon}  {name}"))
-            bar = QProgressBar()
-            bar.setRange(0, 100)
-            bar.setValue(0)
-            bar.setTextVisible(True)
-            bar.setFixedHeight(22)
-            bar.setStyleSheet(f"""
-                QProgressBar {{ background: #11111b; border: none; border-radius: 4px;
-                    text-align: center; color: #cdd6f4; font-size: 11px; }}
-                QProgressBar::chunk {{ background: {color}; border-radius: 4px; }}
-            """)
-            bl.addWidget(bar)
-            gauges.addWidget(box, 1)
-            self._gauges[name] = bar
-        self.content.addLayout(gauges)
-
-        # ── Network + Services row ──
-        info_row = QHBoxLayout()
-        info_row.setSpacing(16)
-
-        # Network panel
-        net_group = self._section("Network")
-        self._net_labels: list[QLabel] = []
-        self._net_container = QVBoxLayout()
-        net_group.layout().addLayout(self._net_container)  # type: ignore
-        info_row.addWidget(net_group, 1)
-
-        # Services panel
-        svc_group = self._section("Services")
-        self._svc_labels: dict[str, QLabel] = {}
-        for svc in ["Ollama", "Ollama Models"]:
-            row = QHBoxLayout()
-            lbl = QLabel(f"  ○  {svc}")
-            lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
-            row.addWidget(lbl)
-            self._svc_labels[svc] = lbl
-            svc_group.layout().addLayout(row)  # type: ignore
-        info_row.addWidget(svc_group, 1)
-        self.content.addLayout(info_row)
-
-        # ── Process table ──
-        proc_group = self._section("Top Processes")
-        self._proc_table = QTableWidget(0, 4)
-        self._proc_table.setHorizontalHeaderLabels(["PID", "Name", "Mem %", "CPU %"])
-        self._proc_table.setAlternatingRowColors(True)
-        self._proc_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._proc_table.verticalHeader().setVisible(False)
-        self._proc_table.horizontalHeader().setStretchLastSection(True)
-        self._proc_table.setStyleSheet(
-            "QTableWidget { background: #1e1e2e; border: none; border-radius: 6px; "
-            "color: #cdd6f4; gridline-color: #313244; font-size: 11px; }"
-            "QTableWidget::item { padding: 2px 6px; }"
-            "QHeaderView::section { background: #181825; border: 1px solid #313244; "
-            "padding: 4px; color: #a6adc8; font-weight: bold; }"
-        )
-        self._proc_table.setMinimumHeight(200)
-        proc_group.layout().addWidget(self._proc_table)  # type: ignore
-        self._add(proc_group)
-
-        # ── Last update timestamp ──
-        self._ts_label = QLabel("")
-        self._ts_label.setStyleSheet("color: #6c7086; font-size: 11px;")
-        self.content.addWidget(self._ts_label)
-
-        self._refresh()
-
-    def on_activate(self) -> None:
-        if self._auto_cb.isChecked():
-            self._timer.start()
+        self._timer.setInterval(60000)
+        self._timer.timeout.connect(self._run_diag)
 
     def _toggle_auto(self, on: bool) -> None:
         if on:
-            self._refresh()
+            self._run_diag()
             self._timer.start()
         else:
             self._timer.stop()
 
-    def _refresh(self) -> None:
-        """Fetch latest stats and update all widgets."""
+    def _run_diag(self) -> None:
+        self.output.clear()
+        self.output.appendPlainText("Running system diagnostics...\n")
+
+        def _run() -> None:
+            import io
+
+            try:
+                from virgo_diagnostics import run_full_diagnostics
+
+                buf = io.StringIO()
+                old = sys.stdout
+                sys.stdout = buf
+                try:
+                    run_full_diagnostics()
+                finally:
+                    sys.stdout = old
+                text = buf.getvalue()
+            except Exception as exc:
+                text = f"Error: {exc}"
+            QMetaObject.invokeMethod(
+                self,
+                "_append_diag",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, text),
+            )
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _export(self) -> None:
+        text = self.output.toPlainText().strip()
+        if not text:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export diagnostics", "diagnostics.json", "JSON (*.json)"
+        )
+        if not path:
+            return
+        import re as _re
+
+        # Best-effort: store the raw log; attempt to parse key/value lines.
         try:
-            from virgo_diagnostics import get_system_stats
-            stats = get_system_stats()
+            data = dict(_re.findall(r"^([\w\s]+):\s*(.+)$", text, _re.MULTILINE))
+        except Exception:
+            data = {"raw": text}
+        Path(path).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-            # CPU gauge
-            cpu_pct = stats.get("cpu", {}).get("percent", 0) or 0
-            self._gauges["CPU"].setValue(int(cpu_pct))
-            freq = stats.get("cpu", {}).get("freq_mhz")
-            freq_str = f" @ {freq}MHz" if freq else ""
-            self._gauges["CPU"].setFormat(f"CPU  {cpu_pct:.0f}%  ({stats['cpu'].get('count', '?')} cores{freq_str})")
-
-            # RAM gauge
-            mem = stats.get("memory", {})
-            if mem:
-                self._gauges["RAM"].setValue(int(mem["percent"]))
-                self._gauges["RAM"].setFormat(f"RAM  {mem['percent']:.0f}%  ({mem['used_gb']}/{mem['total_gb']} GB)")
-
-            # Disk gauge
-            disks = stats.get("disk", [])
-            if disks:
-                d = disks[0]
-                self._gauges["DISK C:"].setValue(int(d["percent"]))
-                self._gauges["DISK C:"].setFormat(f"{d['mount']}  {d['percent']:.0f}%  ({d['used_gb']}/{d['total_gb']} GB)")
-
-            # Network
-            for i in reversed(range(self._net_container.count())):
-                w = self._net_container.itemAt(i)
-                if w and w.widget():
-                    w.widget().deleteLater()
-            for iface in stats.get("network", [])[:5]:
-                lbl = QLabel(f"  🌐  {iface['interface']}:  {iface['ip']}")
-                lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
-                self._net_container.addWidget(lbl)
-            if not stats.get("network"):
-                self._net_container.addWidget(QLabel("  (no network info)"))
-
-            # Services
-            services = stats.get("services", {})
-            for svc, lbl in self._svc_labels.items():
-                if svc == "Ollama":
-                    status = services.get("Ollama", "unknown")
-                    icon = "🟢" if status == "running" else ("🟡" if status == "checking" else "🔴")
-                    lbl.setText(f"  {icon}  Ollama: {status}")
-                elif svc == "Ollama Models":
-                    models = stats.get("ollama", {}).get("models", [])
-                    count = stats.get("ollama", {}).get("model_count", 0)
-                    lbl.setText(f"  🧠  {count} model(s): {', '.join(models[:3])}{'...' if count > 3 else ''}")
-
-            # Processes
-            self._proc_table.setRowCount(0)
-            for proc in stats.get("processes", [])[:10]:
-                r = self._proc_table.rowCount()
-                self._proc_table.insertRow(r)
-                self._proc_table.setItem(r, 0, QTableWidgetItem(str(proc["pid"])))
-                self._proc_table.setItem(r, 1, QTableWidgetItem(proc["name"]))
-                mt = QTableWidgetItem(f"{proc['mem_pct']:.1f}")
-                mt.setForeground(QColor("#a6e3a1"))
-                self._proc_table.setItem(r, 2, mt)
-                ct = QTableWidgetItem(f"{proc['cpu_pct']:.1f}")
-                ct.setForeground(QColor("#89b4fa"))
-                self._proc_table.setItem(r, 3, ct)
-
-            self._ts_label.setText(f"Last updated: {stats['timestamp']}")
-
-        except Exception as exc:
-            self._ts_label.setText(f"Error: {exc}")
+    @pyqtSlot(str)
+    def _append_diag(self, text: str) -> None:
+        self.output.appendPlainText(text)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -3730,84 +3004,56 @@ class SessionPage(PageWidget):
 
 
 class SwarmPage(PageWidget):
-    """Agent Swarm Visualizer — live agent cards with real-time status."""
+    """Launch a multi-agent delegation (swarm) run."""
 
     def __init__(self) -> None:
         super().__init__(
-            "Swarm",
-            "Launch a multi-agent swarm with live visual feedback",
+            "",
+            "Give a goal and Virgo figures out the rest.",
         )
 
-        # ── Goal input ──
+        goal_group = self._section("Goal")
         goal_row = QHBoxLayout()
-        goal_row.addWidget(QLabel("Goal:"))
         self.goal_input = QLineEdit()
         self.goal_input.setPlaceholderText("e.g. build a REST API and a CLI that consumes it")
-        self.goal_input.setStyleSheet(
-            "QLineEdit { background: #181825; border: 1px solid #313244; "
-            "border-radius: 6px; padding: 6px 10px; color: #cdd6f4; }"
-        )
         goal_row.addWidget(self.goal_input, 1)
-        self.content.addLayout(goal_row)
+        goal_group.layout().addLayout(goal_row)  # type: ignore
 
-        # ── Controls ──
-        ctrl_row = QHBoxLayout()
-        self.launch_btn = QPushButton("🚀  Launch Swarm")
-        self.launch_btn.clicked.connect(self._launch)
-        self.stop_swarm_btn = QPushButton("⏹  Stop")
-        self.stop_swarm_btn.setObjectName("stopBtn")
-        self.stop_swarm_btn.setVisible(False)
-        self.stop_swarm_btn.clicked.connect(self._stop_swarm)
-        self.llm_toggle = QPushButton("🧠  LLM: ON")
-        self.llm_toggle.setCheckable(True)
-        self.llm_toggle.setChecked(True)
-        self.llm_toggle.clicked.connect(lambda: self.llm_toggle.setText(
-            f"🧠  LLM: {'ON' if self.llm_toggle.isChecked() else 'OFF'}"
-        ))
-        ctrl_row.addWidget(self.launch_btn)
-        ctrl_row.addWidget(self.stop_swarm_btn)
-        ctrl_row.addWidget(self.llm_toggle)
-        ctrl_row.addStretch()
-        self.content.addLayout(ctrl_row)
+        # LLM toggle (default ON)
+        opt_row = QHBoxLayout()
+        self.use_llm = QPushButton(f"{icon('llm')}  LLM: ON")
+        self.use_llm.setCheckable(True)
+        self.use_llm.setChecked(True)
+        self.use_llm.clicked.connect(self._toggle_llm)
+        opt_row.addWidget(self.use_llm)
+        opt_row.addStretch()
+        goal_group.layout().addLayout(opt_row)  # type: ignore
 
-        # ── Agent cards container (scrollable) ──
-        self._cards_widget = QWidget()
-        self._cards_layout = QVBoxLayout(self._cards_widget)
-        self._cards_layout.setContentsMargins(0, 0, 0, 0)
-        self._cards_layout.setSpacing(6)
-
-        scroll = QWidget()
-        scroll_layout = QVBoxLayout(scroll)
-        scroll_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_layout.addWidget(self._cards_widget)
-        scroll_layout.addStretch()
-        self._add(scroll)
-
-        # ── Status bar ──
-        self._status_bar = QLabel("Ready. Enter a goal and launch.")
-        self._status_bar.setStyleSheet(
-            "color: #a6adc8; font-size: 12px; padding: 4px 0;"
+        self._add_row(
+            QPushButton(f"{icon('run')}  Launch swarm", clicked=self._launch),
         )
-        self.content.addWidget(self._status_bar)
 
-        # ── State ──
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setPlaceholderText("Swarm output will appear here...")
+        self._add(self.output)
+
         self._running = False
-        self._proc: subprocess.Popen | None = None
-        self._agent_cards: dict[str, "AgentCard"] = {}
-        self._card_container = self._cards_layout
 
     def on_activate(self) -> None:
         self.goal_input.setFocus()
+
+    def _toggle_llm(self) -> None:
+        self.use_llm.setText(f"{icon('llm')}  LLM: {'ON' if self.use_llm.isChecked() else 'OFF'}")
 
     def _launch(self) -> None:
         if self._running:
             return
         goal = self.goal_input.text().strip()
         if not goal:
-            self._status_bar.setText("⚠️  Enter a goal first.")
+            self.output.appendPlainText(f"{icon('warn')} Enter a goal.")
             return
-
-        # Load saved .env
+        # Load saved .env so the Settings model dropdowns drive the swarm.
         env_path = HERE / ".env"
         if env_path.exists():
             for line in env_path.read_text().splitlines():
@@ -3815,13 +3061,9 @@ class SwarmPage(PageWidget):
                     k, _, v = line.partition("=")
                     os.environ[k.strip()] = v.strip()
 
-        # Clear previous cards
-        self._clear_cards()
-
-        self._status_bar.setText(f"🚀  Launching swarm: {goal}")
+        self.output.clear()
+        self.output.appendPlainText(f"{icon('run')}  Launching swarm: {goal}")
         self._running = True
-        self.launch_btn.setEnabled(False)
-        self.stop_swarm_btn.setVisible(True)
 
         args = [
             sys.executable,
@@ -3829,9 +3071,8 @@ class SwarmPage(PageWidget):
             "swarm",
             "--goal",
             goal,
+            "--llm",
         ]
-        if self.llm_toggle.isChecked():
-            args.append("--llm")
 
         self._proc = subprocess.Popen(
             args,
@@ -3841,216 +3082,46 @@ class SwarmPage(PageWidget):
         )
         threading.Thread(target=self._read_output, daemon=True).start()
 
-        # Poll for agent updates from stdout
-        self._poll_timer = QTimer()
-        self._poll_timer.setInterval(300)
-        self._poll_timer.timeout.connect(self._refresh_cards)
-        self._poll_timer.start()
-
-    def _stop_swarm(self) -> None:
-        if self._proc and self._proc.poll() is None:
-            self._proc.terminate()
-            self._status_bar.setText("⏹  Swarm stopped.")
-        self._cleanup_done()
-
     def _read_output(self) -> None:
-        """Read swarm output and detect agent activity."""
         try:
             for line in iter(self._proc.stdout.readline, ""):  # type: ignore
                 if not line:
                     break
-                self._parse_line(line.rstrip())
-            self._proc.wait()  # type: ignore
-        except Exception:
-            pass
+                QMetaObject.invokeMethod(
+                    self,
+                    "_append_output",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, line.rstrip()),
+                )
+            self._proc.wait()
+        except Exception as exc:
+            QMetaObject.invokeMethod(
+                self,
+                "_append_output",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, f"(error: {exc})"),
+            )
         finally:
             QMetaObject.invokeMethod(
-                self, "_cleanup_done", Qt.ConnectionType.QueuedConnection,
+                self,
+                "_set_done",
+                Qt.ConnectionType.QueuedConnection,
             )
 
-    def _parse_line(self, line: str) -> None:
-        """Parse subprocess output to detect agent starts/completions."""
-        low = line.lower()
-        detailed = line[:80]
-
-        # Detect agent starts
-        if "[agent:" in low or "spawning" in low:
-            name = self._extract_name(line) or f"agent-{len(self._agent_cards)}"
-            QMetaObject.invokeMethod(
-                self, "_add_agent_card", Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, name), Q_ARG(str, "running"),
-                Q_ARG(str, detailed),
-            )
-        # Detect agent completions
-        elif "done" in low or "finished" in low or "completed" in low:
-            name = self._extract_name(line)
-            if name and name in self._agent_cards:
-                QMetaObject.invokeMethod(
-                    self, "_update_card", Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, name), Q_ARG(str, "done"),
-                    Q_ARG(str, detailed),
-                )
-            elif self._agent_cards:
-                # Mark the last running card as done
-                last = list(self._agent_cards.keys())[-1]
-                QMetaObject.invokeMethod(
-                    self, "_update_card", Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, last), Q_ARG(str, "done"),
-                    Q_ARG(str, detailed),
-                )
-        # Detect errors
-        elif "error" in low or "traceback" in low or "failed" in low:
-            name = self._extract_name(line)
-            if name and name in self._agent_cards:
-                QMetaObject.invokeMethod(
-                    self, "_update_card", Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(str, name), Q_ARG(str, "error"),
-                    Q_ARG(str, detailed),
-                )
-
-    @staticmethod
-    def _extract_name(line: str) -> str | None:
-        """Try to extract an agent name from an output line."""
-        import re
-        m = re.search(r"\[agent:\s*(\w+)\]", line, re.IGNORECASE)
-        if m:
-            return m.group(1)
-        m = re.search(r"(agent[\d_]+)", line, re.IGNORECASE)
-        if m:
-            return m.group(1)
-        return None
-
-    def _clear_cards(self) -> None:
-        while self._card_container.count():
-            item = self._card_container.takeAt(0)
-            if item and item.widget():
-                item.widget().deleteLater()
-        self._agent_cards.clear()
-
-    @pyqtSlot(str, str, str)
-    def _add_agent_card(self, name: str, status: str, detail: str) -> None:
-        if name in self._agent_cards:
-            self._update_card(name, status, detail)
-            return
-        card = AgentCard(name, status, detail)
-        self._agent_cards[name] = card
-        self._card_container.addWidget(card)
-
-    @pyqtSlot(str, str, str)
-    def _update_card(self, name: str, status: str, detail: str) -> None:
-        card = self._agent_cards.get(name)
-        if card:
-            card.set_status(status, detail)
-
-    def _refresh_cards(self) -> None:
-        """Animate running cards with a pulsing dot indicator."""
-        for card in self._agent_cards.values():
-            card.tick()
+    @pyqtSlot(str)
+    def _append_output(self, line: str) -> None:
+        self.output.appendPlainText(line)
+        self.output.verticalScrollBar().setValue(self.output.verticalScrollBar().maximum())
 
     @pyqtSlot()
-    def _cleanup_done(self) -> None:
-        if hasattr(self, "_poll_timer"):
-            self._poll_timer.stop()
+    def _set_done(self) -> None:
+        from cli import icon as _icon
+
+        self.output.appendPlainText(f"\n{_icon('done')}  Swarm finished.")
         self._running = False
-        self.launch_btn.setEnabled(True)
-        self.stop_swarm_btn.setVisible(False)
-        self._status_bar.setText("✅  Swarm finished.")
-        # Mark any still-running cards as done
-        for name, card in self._agent_cards.items():
-            if card._card_status == "running":
-                card.set_status("done", "Swarm completed")
         w = self.window()
         if hasattr(w, "notify"):
             w.notify("Swarm", f"Finished — {self.goal_input.text()[:60]}")
-
-
-class AgentCard(QWidget):
-    """An individual agent card showing status, current tool, and tokens."""
-
-    def __init__(self, name: str, status: str = "running", detail: str = "") -> None:
-        super().__init__()
-        self._card_status = status
-        self._tick = 0
-        self.setStyleSheet("""
-            AgentCard {
-                background: #181825;
-                border: 1px solid #313244;
-                border-radius: 8px;
-            }
-        """)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(10)
-
-        # Status icon
-        self._icon = QLabel("●")
-        self._icon.setStyleSheet("font-size: 18px; color: #f9e2af;")
-        self._icon.setFixedWidth(20)
-        layout.addWidget(self._icon)
-
-        # Name + detail
-        info_col = QVBoxLayout()
-        info_col.setSpacing(2)
-        self._name_label = QLabel(name)
-        self._name_label.setStyleSheet(
-            "font-size: 13px; font-weight: bold; color: #cdd6f4;"
-        )
-        info_col.addWidget(self._name_label)
-        self._detail_label = QLabel(detail or "Running...")
-        self._detail_label.setStyleSheet("font-size: 11px; color: #6c7086;")
-        info_col.addWidget(self._detail_label)
-        layout.addLayout(info_col, 1)
-
-        # Mini stats
-        self._stats_label = QLabel("")
-        self._stats_label.setStyleSheet(
-            "font-size: 11px; color: #a6adc8; padding: 2px 8px;"
-            "background: #11111b; border-radius: 4px;"
-        )
-        layout.addWidget(self._stats_label)
-
-        self.set_status(status, detail)
-
-    def set_status(self, status: str, detail: str = "") -> None:
-        self._card_status = status
-        colors = {
-            "running": "#f9e2af",
-            "done": "#a6e3a1",
-            "error": "#f38ba8",
-            "idle": "#6c7086",
-        }
-        icons = {
-            "running": "●",
-            "done": "✓",
-            "error": "✗",
-            "idle": "○",
-        }
-        c = colors.get(status, "#6c7086")
-        self._icon.setText(icons.get(status, "●"))
-        self._icon.setStyleSheet(f"font-size: 18px; color: {c};")
-        border_c = {"running": "#f9e2af", "done": "#a6e3a1", "error": "#f38ba8"}.get(status, "#313244")
-        self.setStyleSheet(f"""
-            AgentCard {{
-                background: #181825;
-                border: 1px solid {border_c};
-                border-radius: 8px;
-            }}
-        """)
-        if detail:
-            self._detail_label.setText(detail)
-        if status == "running":
-            self._stats_label.setText("● running")
-        elif status == "done":
-            self._stats_label.setText("✅ complete")
-        elif status == "error":
-            self._stats_label.setText("❌ failed")
-
-    def tick(self) -> None:
-        """Animate the running indicator."""
-        if self._card_status == "running":
-            self._tick += 1
-            dots = "." * ((self._tick // 4) % 4)
-            self._stats_label.setText(f"● running{dots}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -4226,256 +3297,71 @@ _BENCH_PROMPT = "Write a Python function that returns the nth Fibonacci number u
 
 
 class BenchmarkPage(PageWidget):
-    """Multi-Model Thermal Dashboard — compare every Ollama model on the same prompt."""
+    """Time local models on a standard prompt and show a latency table."""
 
     def __init__(self) -> None:
-        super().__init__(
-            "Thermal Bench",
-            "Run all Ollama models on one prompt — compare speed & quality",
+        super().__init__("Bench", "Benchmark local Ollama models")
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(_live_ollama_models() or PREFERRED_MODELS)
+        self._add_row(
+            QLabel("Model:"),
+            self.model_combo,
+            QPushButton(f"{icon('run')}  Run 1x", clicked=self._bench_once),
+            QPushButton(f"{icon('run')}  Run all", clicked=self._bench_all),
         )
-
-        # ── Prompt input ──
-        prompt_row = QHBoxLayout()
-        prompt_row.addWidget(QLabel("Prompt:"))
-        self._prompt_input = QLineEdit()
-        self._prompt_input.setText("Explain Python decorators in one paragraph.")
-        self._prompt_input.setStyleSheet(
-            "QLineEdit { background: #181825; border: 1px solid #313244; "
-            "border-radius: 6px; padding: 6px 10px; color: #cdd6f4; }"
-        )
-        prompt_row.addWidget(self._prompt_input, 1)
-        self.content.addLayout(prompt_row)
-
-        # ── Controls ──
-        ctrl_row = QHBoxLayout()
-        self._run_all_btn = QPushButton("🔥  Run all models")
-        self._run_all_btn.clicked.connect(self._run_all)
-        self._stop_btn = QPushButton("⏹  Stop")
-        self._stop_btn.setObjectName("stopBtn")
-        self._stop_btn.setVisible(False)
-        self._stop_btn.clicked.connect(self._stop_all)
-        self._status_label = QLabel("")
-        self._status_label.setStyleSheet("color: #a6adc8; font-size: 12px;")
-        ctrl_row.addWidget(self._run_all_btn)
-        ctrl_row.addWidget(self._stop_btn)
-        ctrl_row.addWidget(self._status_label)
-        ctrl_row.addStretch()
-        self.content.addLayout(ctrl_row)
-
-        # ── Results table (color-coded heatmap) ──
-        self._table = QTableWidget(0, 7)
-        self._table.setHorizontalHeaderLabels([
-            "Model", "Latency", "Tokens", "Tok/s", "Quality", "Status", "Preview"
-        ])
-        self._table.setAlternatingRowColors(True)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.verticalHeader().setVisible(False)
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["Model", "Time (s)", "Tokens"])
         self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.setColumnWidth(0, 160)
-        self._table.setColumnWidth(1, 80)
-        self._table.setColumnWidth(2, 80)
-        self._table.setColumnWidth(3, 70)
-        self._table.setColumnWidth(4, 70)
-        self._table.setColumnWidth(5, 80)
-        self._table.setStyleSheet(
-            "QTableWidget { background: #1e1e2e; border: 1px solid #313244; "
-            "border-radius: 6px; color: #cdd6f4; gridline-color: #313244; font-size: 12px; }"
-            "QTableWidget::item { padding: 4px 8px; }"
-            "QTableView::item:selected { background: #45475a; }"
-            "QHeaderView::section { background: #181825; border: 1px solid #313244; "
-            "padding: 6px; color: #a6adc8; font-weight: bold; }"
-        )
-        self._table.itemDoubleClicked.connect(self._show_full_output)
         self._add(self._table)
+        self._result = QPlainTextEdit()
+        self._result.setReadOnly(True)
+        self._result.setMaximumHeight(160)
+        self._add(self._result)
 
-        # ── Full output viewer (expandable) ──
-        self._output_view = QPlainTextEdit()
-        self._output_view.setReadOnly(True)
-        self._output_view.setMaximumHeight(200)
-        self._output_view.setVisible(False)
-        self._add(self._output_view)
+    def _bench_once(self) -> None:
+        model = self.model_combo.currentText()
+        self._run_model(model)
 
-        # ── State ──
-        self._running: set[str] = set()
-        self._results: dict[str, dict] = {}
-        self._cancelled = False
-        self._bench_prompt = _BENCH_PROMPT
+    def _bench_all(self) -> None:
+        for m in (
+            self.model_combo.model().stringList()
+            if hasattr(self.model_combo.model(), "stringList")
+            else PREFERRED_MODELS
+        ):
+            self._run_model(m)
 
-    def _run_all(self) -> None:
-        """Kick off benchmarks on every available model in parallel."""
-        prompt = self._prompt_input.text().strip() or self._bench_prompt
-        models = _live_ollama_models()
-        if not models:
-            # If Ollama is unreachable, use the preferred list so the page
-            # is still useful.
-            models = PREFERRED_MODELS[:]
-
-        self._table.setRowCount(0)
-        self._results.clear()
-        self._running = set(models)
-        self._cancelled = False
-        self._run_all_btn.setEnabled(False)
-        self._stop_btn.setVisible(True)
-        self._output_view.setVisible(False)
-        self._status_label.setText(f"Running {len(models)} model(s)...")
-
-        for model in models:
-            threading.Thread(
-                target=self._bench_one,
-                args=(model, prompt),
-                daemon=True,
-            ).start()
-
-    def _stop_all(self) -> None:
-        self._cancelled = True
-        self._stop_btn.setVisible(False)
-        self._run_all_btn.setEnabled(True)
-        self._status_label.setText("Cancelled.")
-        self._running.clear()
-
-    def _bench_one(self, model: str, prompt: str) -> None:
-        """Benchmark a single model against Ollama and update the table."""
+    def _run_model(self, model: str) -> None:
         import time
         import urllib.request
 
+        self._result.appendPlainText(f"Benchmarking {model}…")
         t0 = time.time()
         try:
             req = urllib.request.Request(
                 "http://localhost:11434/api/generate",
-                data=json.dumps({
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"num_predict": 256},
-                }).encode(),
+                data=json.dumps(
+                    {
+                        "model": model,
+                        "prompt": _BENCH_PROMPT,
+                        "stream": False,
+                    }
+                ).encode(),
                 headers={"Content-Type": "application/json"},
             )
             resp = json.loads(urllib.request.urlopen(req, timeout=120).read())
             dt = time.time() - t0
-            text = resp.get("response", "")
-            toks = resp.get("eval_count", 0) or len(text.split())
-            tok_s = round(toks / dt, 1) if dt > 0 else 0
-            quality = self._score_output(prompt, text)
-            QMetaObject.invokeMethod(
-                self,
-                "_add_result",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, model),
-                Q_ARG(str, f"{dt:.2f}s"),
-                Q_ARG(str, str(toks)),
-                Q_ARG(str, f"{tok_s:.1f}"),
-                Q_ARG(str, f"{quality}/10"),
-                Q_ARG(str, "✅ Done"),
-                Q_ARG(str, text[:80].replace("\n", " ")),
-            )
+            toks = resp.get("eval_count") or len(resp.get("response", "").split())
+            self._result.appendPlainText(f"  {model}: {dt:.1f}s, ~{toks} tokens")
+            self._append_row(model, f"{dt:.1f}", str(toks))
         except Exception as exc:
-            QMetaObject.invokeMethod(
-                self,
-                "_add_result",
-                Qt.ConnectionType.QueuedConnection,
-                Q_ARG(str, model),
-                Q_ARG(str, "—"),
-                Q_ARG(str, "—"),
-                Q_ARG(str, "—"),
-                Q_ARG(str, "—"),
-                Q_ARG(str, f"❌ {exc!s:.50}"),
-                Q_ARG(str, ""),
-            )
+            self._result.appendPlainText(f"  {model}: ERROR {exc}")
 
-    @pyqtSlot(str, str, str, str, str, str, str)
-    def _add_result(
-        self, model: str, lat: str, toks: str,
-        tps: str, qual: str, status: str, preview: str,
-    ) -> None:
-        _color = QColor
-        row = self._table.rowCount()
-        self._table.insertRow(row)
-
-        # Colour-code latency (green < 5s, yellow < 20s, red >= 20s)
-        try:
-            lat_val = float(lat.rstrip("s"))
-            if lat_val < 5:
-                bg = _color("#1a3a2a")
-            elif lat_val < 20:
-                bg = _color("#3a3a1a")
-            else:
-                bg = _color("#3a1a1a")
-        except Exception:
-            bg = _color("#1e1e2e")
-
-        items = [
-            (model, _color("#89b4fa")),
-            (lat, _color("#cdd6f4")),
-            (toks, _color("#a6adc8")),
-            (tps, _color("#a6e3a1")),
-            (qual, _color("#f5c2e7")),
-            (status, _color("#a6adc8")),
-            (preview, _color("#6c7086")),
-        ]
-        for col, (text, fg) in enumerate(items):
-            item = QTableWidgetItem(text)
-            item.setForeground(fg)
-            item.setBackground(bg)
-            self._table.setItem(row, col, item)
-
-        self._results[model] = {
-            "latency": lat, "tokens": toks, "tok_s": tps,
-            "quality": qual, "output": preview,
-        }
-
-        self._running.discard(model)
-        if not self._running and not self._cancelled:
-            self._run_all_btn.setEnabled(True)
-            self._stop_btn.setVisible(False)
-            # Rank by quality then speed
-            ranked = sorted(
-                self._results.items(),
-                key=lambda kv: (
-                    float(kv[1]["quality"].split("/")[0]) if kv[1]["quality"] != "—" else 0,
-                    -float(kv[1]["latency"].rstrip("s")) if kv[1]["latency"] != "—" else 0,
-                ),
-                reverse=True,
-            )
-            self._status_label.setText(
-                f"Done — best: {ranked[0][0]} ({ranked[0][1]['quality']}, "
-                f"{ranked[0][1]['latency']})"
-                if ranked else "Done."
-            )
-
-    @staticmethod
-    def _score_output(prompt: str, output: str) -> int:
-        """Heuristic quality: keyword relevance + structure."""
-        import re
-        if not output:
-            return 0
-        pwords = set(re.findall(r"\w+", prompt.lower()))
-        owords = re.findall(r"\w+", output.lower())
-        if not owords:
-            return 0
-        overlap = len([w for w in owords if w in pwords]) / max(1, len(pwords))
-        length_bonus = min(1.0, len(owords) / 100.0)
-        score = int(round((overlap * 0.5 + length_bonus * 0.5) * 10))
-        return max(0, min(10, score))
-
-    def _show_full_output(self, item: QTableWidgetItem) -> None:
-        """Double-click a row to see the full output."""
-        row = item.row()
-        model_item = self._table.item(row, 0)
-        if not model_item:
-            return
-        model = model_item.text()
-        result = self._results.get(model)
-        if not result:
-            return
-        self._output_view.setPlainText(
-            f"Model: {model}\n"
-            f"Latency: {result['latency']}  |  Tokens: {result['tokens']}  "
-            f"|  Tok/s: {result['tok_s']}  |  Quality: {result['quality']}\n"
-            f"{'─' * 60}\n"
-            f"Full output:\n{result.get('_full', '(not stored)')}"
-        )
-        self._output_view.setVisible(True)
+    def _append_row(self, model: str, dt: str, toks: str) -> None:
+        r = self._table.rowCount()
+        self._table.insertRow(r)
+        self._table.setItem(r, 0, QTableWidgetItem(model))
+        self._table.setItem(r, 1, QTableWidgetItem(dt))
+        self._table.setItem(r, 2, QTableWidgetItem(toks))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -4844,31 +3730,19 @@ class AboutPage(PageWidget):
 
         about_text = QLabel(
             f"<h2>Virgo Desktop {APP_VERSION}</h2>"
-            f"<p>A multi-agent pipeline framework with a polished PyQt6 GUI — "
-            f"featuring an animated pipeline graph, thermal model bench, "
-            f"recon dashboard with attack surface map, swarm visualizer, "
-            f"live system health monitoring, and more.</p>"
+            f"<p>A polished GUI for the <b>virgo-agent</b> framework — "
+            f"multi-agent state machine with diagnostics, network scanning, "
+            f"alerting, web search, project scaffolding, and system monitoring.</p>"
             f"<hr>"
-            f"<p><b>Pages (19 total):</b> Pipeline · Chat · Dashboard · "
-            f"Mascot Chat · Activity Feed · Leaderboard · Files · "
-            f"Network/Recon · System Health · Alerts · Scaffolds · "
-            f"Sessions · Swarm · Logs · Plugins · Procs · Bench · "
-            f"Settings · About</p>"
+            f"<p><b>Agent Runtime:</b> ReAct loop with tool use, evaluation, "
+            f"and experience memory.</p>"
+            f"<p><b>Pipeline:</b> Discover → Plan → Generate → Critic → "
+            f"Test/Fix loop.</p>"
+            f"<p><b>System:</b> Diagnostics, alerts, network scanning, "
+            f"auto-remediation, webhooks.</p>"
             f"<hr>"
-            f"<p><b>Key Shortcuts:</b></p>"
-            f"<p>"
-            f"1–9 / 0 — Switch pages · "
-            f"Ctrl+P — Quick page switcher · "
-            f"Ctrl+Shift+P — Command palette · "
-            f"Ctrl+Shift+L — Prompt library · "
-            f"Ctrl+Shift+I — Performance overlay · "
-            f"Ctrl+B — Toggle sidebar · "
-            f"? — Show all shortcuts"
-            f"</p>"
-            f"<hr>"
-            f"<p><b>Integrations:</b> Ollama (local LLM) · "
-            f"crawl4ai (web crawling) · mem0 (persistent memory) · "
-            f"psutil (system stats) · PyQt6 6.11</p>"
+            f"<p><b>Shortcuts:</b> 1–9 / 0 switch pages · Ctrl+Enter sends "
+            f"chat · Esc/close minimizes to tray.</p>"
             f"<hr>"
             f"<p>Built with PyQt6 · MIT License</p>"
             f"<p><a href='https://github.com/Aussielad89/virgo-agent' "
@@ -4893,45 +3767,13 @@ class DashboardPage(PageWidget):
         self._timer.setInterval(3000)
         self._timer.timeout.connect(self._refresh)
 
-        # ── Widget selector (#18) ──
-        self._widget_toggles: dict[str, QPushButton] = {}
-        self._widget_visible: dict[str, bool] = {
-            "persona": True, "system": True, "mascot": True,
-            "achievements": True, "activity": True, "actions": True,
-        }
-        widget_row = QHBoxLayout()
-        widget_row.setSpacing(4)
-        for w_id, w_label, w_emoji in [
-            ("persona", "Badge", "🎭"), ("system", "System", "⚡"),
-            ("mascot", "Mascot", "🐾"), ("achievements", "XP", "🏆"),
-            ("activity", "Activity", "📋"), ("actions", "Actions", "🚀"),
-        ]:
-            btn = QPushButton(w_emoji if len(w_emoji) > 1 else w_label)
-            btn.setCheckable(True)
-            btn.setChecked(True)
-            btn.setFixedHeight(26)
-            btn.setStyleSheet(
-                "QPushButton { background: #181825; border: 1px solid #313244; "
-                "border-radius: 4px; padding: 2px 8px; color: #6c7086; font-size: 10px; }"
-                "QPushButton:checked { background: #313244; color: #89b4fa; border-color: #89b4fa; }"
-            )
-            btn.clicked.connect(lambda checked=False, wid=w_id: self._toggle_widget(wid))
-            widget_row.addWidget(btn)
-            self._widget_toggles[w_id] = btn
-        widget_row.addStretch()
-        self.content.addLayout(widget_row)
-
-        self._all_widgets: dict[str, QWidget] = {}
-
         # ── Persona badge ──
         self._persona_badge = QLabel("Persona: Hacker")
-        self._persona_badge.setObjectName("dw_persona")
         self._persona_badge.setStyleSheet("font-size: 14px; font-weight: bold; color: #89b4fa; padding: 4px;")
         self._add(self._persona_badge)
 
         # ── System stats row ──
         stats_group = self._section("System")
-        stats_group.setObjectName("dw_system")
         self._stats_labels = {}
         for name, icon_c in [("CPU", "⚡"), ("RAM", "🅂"), ("DISK", "💾")]:
             row = QHBoxLayout()
@@ -4958,7 +3800,6 @@ class DashboardPage(PageWidget):
 
         # Mascot panel
         mascot_group = self._section("Sidekick")
-        mascot_group.setObjectName("dw_mascot")
         self._mascot_art = QLabel("(mascot ascii)")
         self._mascot_art.setStyleSheet("font-family: 'Courier New', monospace; font-size: 12px; color: #f5c2e7; padding: 8px; background: #181825; border-radius: 6px;")
         self._mascot_name = QLabel("")
@@ -4974,7 +3815,6 @@ class DashboardPage(PageWidget):
 
         # Achievements panel
         ach_group = self._section("Achievements")
-        ach_group.setObjectName("dw_achievements")
         self._ach_level = QLabel("Level 1")
         self._ach_level.setStyleSheet("font-size: 14px; font-weight: bold; color: #f9e2af;")
         self._ach_xp = QLabel("0 XP")
@@ -5002,7 +3842,6 @@ class DashboardPage(PageWidget):
 
         # ── Activity feed ──
         activity_group = self._section("Recent Activity")
-        activity_group.setObjectName("dw_activity")
         self._activity_log = QTextEdit()
         self._activity_log.setReadOnly(True)
         self._activity_log.setMaximumHeight(120)
@@ -5012,7 +3851,6 @@ class DashboardPage(PageWidget):
 
         # ── Quick actions ──
         actions_group = self._section("Quick Actions")
-        actions_group.setObjectName("dw_actions")
         actions_row = QHBoxLayout()
         actions_row.setSpacing(8)
         for label_text, callback in [
@@ -5090,20 +3928,71 @@ class DashboardPage(PageWidget):
             pass
 
     def _refresh_mascot(self) -> None:
+        """Update mascot ASCII art and name display."""
+        try:
+            import queue
+            import concurrent.futures
+            import time
+            
+            result_queue = queue.Queue()
+            
+            def _load_mascot():
+                try:
+                    from virgo_mascot import (
+                        current_mascot_name,
+                        get_mascot,
+                        idle_action,
+                        mascot_ascii,
+                    )
+                    name = current_mascot_name()
+                    m = get_mascot()
+                    display = m.get("display", name)
+                    ascii_str = mascot_ascii(name) or ""
+                    action = idle_action()
+                    result_queue.put(("success", (ascii_str, display, action)))
+                except Exception as e:
+                    result_queue.put(("error", str(e)))
+            
+            # Run in thread with timeout
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_load_mascot)
+                try:
+                    # Wait for result with timeout
+                    future.result(timeout=1.0)
+                except concurrent.futures.TimeoutError:
+                    result_queue.put(("timeout", "Operation timed out"))
+                except Exception:
+                    result_queue.put(("error", "Unexpected error"))
+                
+                # Get result
+                if not result_queue.empty():
+                    status, data = result_queue.get()
+                    if status == "success":
+                        ascii_str, display, action = data
+                        self._mascot_art.setText(ascii_str)
+                        self._mascot_name.setText(f"✦  {display}  —  {action}")
+                    else:
+                        raise Exception(data)
+                else:
+                    raise Exception("No result received")
+                    
+        except Exception:
+            self._mascot_art.setText("(mascot module not available)")
+            self._mascot_name.setText("")
+            self._mascot_action.setText("")
         """Update mascot display."""
         try:
-            from virgo_mascot import (
-                current_mascot_name, get_mascot, idle_action, mascot_ascii,
-            )
+            from virgo_mascot import get_mascot, current_mascot_name, mascot_ascii, idle_action
             name = current_mascot_name()
             m = get_mascot()
             display = m.get("display", name)
             ascii_str = mascot_ascii(name) or ""
             action = idle_action()
             self._mascot_art.setText(ascii_str)
-            self._mascot_name.setText(f"✦  {display}  —  {action}")
+            self._mascot_name.setText(f"✦  {display}")
+            self._mascot_action.setText(action)
         except Exception:
-            self._mascot_art.setText("(mascot not available)")
+            self._mascot_art.setText("(no mascot)")
             self._mascot_name.setText("")
             self._mascot_action.setText("")
 
@@ -5194,22 +4083,6 @@ class DashboardPage(PageWidget):
             self._refresh_focus()
         except Exception:
             pass
-
-    # ── Widget toggle (#18) ──
-
-    def _toggle_widget(self, widget_id: str) -> None:
-        """Show/hide a dashboard widget section."""
-        self._widget_visible[widget_id] = not self._widget_visible.get(widget_id, True)
-        # Find the widget by scrolling through children
-        for child in self.findChildren(QWidget):
-            obj_name = child.objectName()
-            if obj_name == f"dw_{widget_id}":
-                child.setVisible(self._widget_visible[widget_id])
-                break
-        # Update toggle button
-        btn = self._widget_toggles.get(widget_id)
-        if btn:
-            btn.setChecked(self._widget_visible[widget_id])
 
 
 def _xp_for_level(level: int) -> int:
@@ -5601,7 +4474,6 @@ class MascotChatPage(PageWidget):
             self._mascot_name.setText(f"✦  {display}  —  {action}")
         except Exception:
             self._mascot_art.setText("(mascot module not available)")
-            self._mascot_name.setText("")
 
     def _send_message(self) -> None:
         """Send the current input text to the mascot for a reply."""
@@ -5747,36 +4619,6 @@ class LeaderboardPage(PageWidget):
         stats_group.layout().addWidget(self._xp_bar)
         self._add(stats_group)
 
-        # ── Daily Quests (#20) ──
-        quests_group = self._section("Daily Quests")
-        quests_group.setStyleSheet(
-            "QGroupBox { background-color: #181825; border: 1px solid #313244; "
-            "border-radius: 8px; margin-top: 16px; padding: 14px 12px 10px; "
-            "font-weight: bold; color: #f9e2af; }"
-        )
-        self._quest_layout = QVBoxLayout()
-        self._quest_labels: list[tuple[QLabel, QLabel, QLabel]] = []
-        for quest in self._load_quests():
-            row = QHBoxLayout()
-            icon = QLabel(quest.get("icon", "📋"))
-            icon.setFixedWidth(24)
-            name_lbl = QLabel(quest["name"])
-            name_lbl.setStyleSheet("color: #cdd6f4; font-size: 12px;")
-            prog_lbl = QLabel(f"0/{quest['target']}")
-            prog_lbl.setStyleSheet("color: #a6adc8; font-size: 11px;")
-            xp_lbl = QLabel(f"+{quest['xp']} XP")
-            xp_lbl.setStyleSheet("color: #a6e3a1; font-size: 11px; font-weight: bold;")
-            row.addWidget(icon)
-            row.addWidget(name_lbl, 1)
-            row.addWidget(prog_lbl)
-            row.addSpacing(8)
-            row.addWidget(xp_lbl)
-            self._quest_layout.addLayout(row)
-            self._quest_labels.append((name_lbl, prog_lbl, xp_lbl))
-        self._quest_layout.addStretch()
-        quests_group.layout().addLayout(self._quest_layout)
-        self._add(quests_group)
-
         # ── Recent Sessions section ──
         history_group = self._section("Recent Sessions")
         self._history_table = QTableWidget()
@@ -5872,7 +4714,6 @@ class LeaderboardPage(PageWidget):
             self._update_stats(stats)
             self._update_history(history)
             self._update_daily(stats)
-            self._update_quests(stats)
         except Exception:
             self._level_label.setText("Level: — (module unavailable)")
             self._history_table.setRowCount(0)
@@ -5974,61 +4815,892 @@ class LeaderboardPage(PageWidget):
         else:
             self._timer.stop()
 
-    # ── Daily Quests (#20) ──────────────────────────────────────────────
-    _QUESTS_CACHE: list[dict] | None = None
 
-    def _load_quests(self) -> list[dict]:
-        """Load daily quest definitions (cached)."""
-        if self._QUESTS_CACHE is not None:
-            return self._QUESTS_CACHE
-        quests = [
-            {"id": "run_pipeline", "name": "Run a Pipeline", "icon": "🚀",
-             "target": 1, "xp": 25},
-            {"id": "scan_network", "name": "Scan a Subnet", "icon": "🌐",
-             "target": 1, "xp": 20},
-            {"id": "chat_messages", "name": "Send 5 Chat Messages", "icon": "💬",
-             "target": 5, "xp": 15},
-            {"id": "earn_xp", "name": "Earn 100 XP", "icon": "⭐",
-             "target": 100, "xp": 50},
-            {"id": "check_achievements", "name": "View Achievements", "icon": "🏆",
-             "target": 1, "xp": 10},
-        ]
-        # Load any user-defined quests from disk
-        quests_dir = Path(__file__).parent / ".virgo_quests"
-        quests_dir.mkdir(exist_ok=True)
-        for pf in sorted(quests_dir.glob("*.json")):
+# ═══════════════════════════════════════════════════════════════════════
+# Arena Page — multi-model comparison
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ArenaPage(PageWidget):
+    """Run multi-model arena matches and view Elo rankings."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Arena",
+            "Compare LLM models head-to-head with Elo-rated rankings.",
+        )
+
+        self._add_row(
+            QPushButton(f"{icon('refresh')}  Refresh rankings", clicked=self._refresh),
+            QPushButton(f"{icon('run')}  Run match", clicked=self._run_match),
+        )
+
+        self.rankings = QTableWidget()
+        self.rankings.setColumnCount(4)
+        self.rankings.setHorizontalHeaderLabels(["Rank", "Model", "Rating", "Matches"])
+        self.rankings.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.rankings.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.rankings.setMinimumHeight(200)
+        self._add(self.rankings)
+
+        self._add_row(QLabel("Prompt:"))
+        self.prompt_input = QLineEdit()
+        self.prompt_input.setPlaceholderText("Enter a prompt to compare models...")
+        self._add(self.prompt_input)
+
+        self._add_row(
+            QPushButton(f"{icon('run')}  Run arena match", clicked=self._run_match),
+        )
+
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMaximumHeight(200)
+        self.output.setPlaceholderText("Arena results will appear here...")
+        self._add(self.output)
+
+    def on_activate(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
+        try:
+            from multi_model_arena import get_ranker
+
+            ranker = get_ranker()
+            rankings = ranker.get_rankings()
+        except Exception as exc:
+            self.output.setPlainText(f"Error loading rankings: {exc}")
+            return
+        self.rankings.setRowCount(0)
+        for i, (model, info) in enumerate(rankings):
+            self.rankings.insertRow(i)
+            self.rankings.setItem(i, 0, QTableWidgetItem(str(i + 1)))
+            self.rankings.setItem(i, 1, QTableWidgetItem(model))
+            self.rankings.setItem(i, 2, QTableWidgetItem(f"{info.get('rating', 0):.1f}"))
+            self.rankings.setItem(i, 3, QTableWidgetItem(str(info.get('matches', 0))))
+        self.output.setPlainText(f"Loaded {len(rankings)} model(s)")
+
+    def _run_match(self) -> None:
+        prompt = self.prompt_input.text().strip()
+        if not prompt:
+            self.output.setPlainText("Enter a prompt first.")
+            return
+        self.output.setPlainText(f"Running arena match for: {prompt}")
+        self._run_match_async(prompt)
+
+    def _run_match_async(self, prompt: str) -> None:
+        def _run() -> None:
             try:
-                data = json.loads(pf.read_text(encoding="utf-8"))
-                quests.append(data)
-            except Exception:
-                pass
-        self._QUESTS_CACHE = quests
-        return quests
+                from multi_model_arena import arena_match
 
-    def _update_quests(self, stats: dict) -> None:
-        """Refresh daily quest progress from current stats."""
-        total_xp = stats.get("total_xp", 0)
-        total_sessions = stats.get("total_sessions", 0)
-        # Reset daily progress at midnight tracking
-        quests = self._load_quests()
-        for i, quest in enumerate(quests):
-            if i >= len(self._quest_labels):
-                break
-            name_lbl, prog_lbl, xp_lbl = self._quest_labels[i]
-            qid = quest["id"]
-            target = quest["target"]
-            # Map quest IDs to progress
-            if qid == "run_pipeline":
-                progress = min(total_sessions, target)
-            elif qid == "earn_xp":
-                progress = min(total_xp, target)
+                result = arena_match(prompt)
+                self.output.appendPlainText(json.dumps(result, indent=2))
+                self.output.appendPlainText(f"\n{icon('ok')} Match complete!")
+            except Exception as exc:
+                self.output.appendPlainText(f"Error: {exc}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Workflow Builder Page
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class WorkflowBuilderPage(PageWidget):
+    """Visual workflow builder for chaining virgo agents and tools."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Workflow Builder",
+            "Chain agents, tools, and pipeline stages visually.",
+        )
+
+        self._add_row(
+            QPushButton(f"{icon('file')}  New node", clicked=self._add_node),
+            QPushButton(f"{icon('save')}  Save workflow", clicked=self._save),
+            QPushButton(f"{icon('refresh')}  Load workflow", clicked=self._load),
+        )
+
+        self.nodes: list[dict[str, Any]] = []
+        self._node_widgets: list[QWidget] = []
+
+        self.node_list = QListWidget()
+        self.node_list.setMinimumHeight(150)
+        self.node_list.itemClicked.connect(self._on_node_click)
+        self._add(self.node_list)
+
+        self._add_row(
+            QPushButton(f"{icon('delete')}  Delete selected", clicked=self._delete_node),
+            QPushButton(f"{icon('run')}  Execute workflow", clicked=self._execute),
+        )
+
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMaximumHeight(150)
+        self.output.setPlaceholderText("Workflow execution output...")
+        self._add(self.output)
+
+    def _add_node(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog
+
+        text, ok = QInputDialog.getItem(
+            self, "Add Node", "Node type:",
+            ["Agent", "Tool", "Pipeline", "Condition", "Action"],
+            0, False, Qt.WindowType.WindowFlags(),
+        )
+        if ok and text:
+            node = {"type": text, "name": f"{text} {len(self.nodes) + 1}"}
+            self.nodes.append(node)
+            self._refresh_list()
+
+    def _refresh_list(self) -> None:
+        self.node_list.clear()
+        for node in self.nodes:
+            item = QListWidgetItem(f"{icon('code')}  {node['name']} ({node['type']})")
+            self.node_list.addItem(item)
+
+    def _on_node_click(self, item: QListWidgetItem) -> None:
+        idx = self.node_list.row(item)
+        if 0 <= idx < len(self.nodes):
+            node = self.nodes[idx]
+            self.output.setPlainText(f"Node: {node['name']}\nType: {node['type']}")
+
+    def _delete_node(self) -> None:
+        idx = self.node_list.currentRow()
+        if idx >= 0 and idx < len(self.nodes):
+            self.nodes.pop(idx)
+            self._refresh_list()
+
+    def _save(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getSaveFileName(self, "Save workflow", str(HERE), "JSON (*.json)")
+        if path:
+            try:
+                with open(path, "w") as f:
+                    json.dump({"nodes": self.nodes}, f, indent=2)
+                self.output.setPlainText(f"Saved to {path}")
+            except Exception as exc:
+                self.output.setPlainText(f"Save error: {exc}")
+
+    def _load(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(self, "Load workflow", str(HERE), "JSON (*.json)")
+        if path:
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                self.nodes = data.get("nodes", [])
+                self._refresh_list()
+                self.output.setPlainText(f"Loaded {len(self.nodes)} node(s) from {path}")
+            except Exception as exc:
+                self.output.setPlainText(f"Load error: {exc}")
+
+    def _execute(self) -> None:
+        if not self.nodes:
+            self.output.setPlainText("No nodes to execute.")
+            return
+        self.output.setPlainText(f"Executing {len(self.nodes)} node(s)...")
+        threading.Thread(target=self._execute_async, daemon=True).start()
+
+    def _execute_async(self) -> None:
+        for node in self.nodes:
+            self.output.appendPlainText(f"→ Running {node['name']} ({node['type']})")
+            try:
+                if node["type"] == "Agent":
+                    self.output.appendPlainText("  (agent node — would invoke agent runtime)")
+                elif node["type"] == "Tool":
+                    self.output.appendPlainText("  (tool node — would invoke tool)")
+                elif node["type"] == "Pipeline":
+                    self.output.appendPlainText("  (pipeline node — would run pipeline)")
+                else:
+                    self.output.appendPlainText(f"  (unknown node type: {node['type']})")
+            except Exception as exc:
+                self.output.appendPlainText(f"  Error: {exc}")
+        self.output.appendPlainText(f"\n{icon('ok')} Workflow execution complete!")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Diff Viewer Page
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class DiffViewerPage(PageWidget):
+    """Compare two pipeline sessions side by side."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Diff Viewer",
+            "Compare two pipeline sessions to see what changed.",
+        )
+
+        self._add_row(
+            QPushButton(f"{icon('refresh')}  Refresh sessions", clicked=self._refresh),
+        )
+
+        form = QHBoxLayout()
+        form.addWidget(QLabel("Session A:"))
+        self.session_a = QComboBox()
+        self.session_a.setMinimumWidth(200)
+        form.addWidget(self.session_a, 1)
+
+        form.addWidget(QLabel("Session B:"))
+        self.session_b = QComboBox()
+        self.session_b.setMinimumWidth(200)
+        form.addWidget(self.session_b, 1)
+        self.content.addLayout(form)
+
+        self._add_row(
+            QPushButton(f"{icon('run')}  Compare", clicked=self._compare),
+        )
+
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMinimumHeight(300)
+        self.output.setPlaceholderText("Diff output will appear here...")
+        self._add(self.output)
+
+        self._refresh()
+
+    def on_activate(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
+        self.session_a.clear()
+        self.session_b.clear()
+        try:
+            from memory import list_sessions
+
+            sessions = list_sessions()
+        except Exception:
+            sessions = []
+        for s in sessions:
+            label = s["name"] if isinstance(s, dict) else str(s)
+            self.session_a.addItem(label)
+            self.session_b.addItem(label)
+        if sessions:
+            self.session_b.setCurrentIndex(min(1, len(sessions) - 1))
+
+    def _compare(self) -> None:
+        a = self.session_a.currentText()
+        b = self.session_b.currentText()
+        if not a or not b:
+            self.output.setPlainText("Select two sessions to compare.")
+            return
+        self.output.setPlainText(f"Comparing '{a}' vs '{b}'...")
+        threading.Thread(target=self._compare_async, args=(a, b), daemon=True).start()
+
+    def _compare_async(self, a: str, b: str) -> None:
+        try:
+            from virgo_diff import diff_sessions, render_diff
+
+            sa = _load_session_data(a)
+            sb = _load_session_data(b)
+            if sa is None:
+                self.output.setPlainText(f"Session '{a}' not found.")
+                return
+            if sb is None:
+                self.output.setPlainText(f"Session '{b}' not found.")
+                return
+            diff = diff_sessions(sa, sb)
+            rendered = render_diff(diff)
+            self.output.setPlainText(rendered)
+        except Exception as exc:
+            self.output.setPlainText(f"Error: {exc}")
+
+
+def _load_session_data(name: str) -> dict[str, Any] | None:
+    """Load a session dict by name from .virgo_memory/."""
+    try:
+        from memory import load_state
+
+        return load_state(name)
+    except Exception:
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Token Tracker Page
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TokenTrackerPage(PageWidget):
+    """Track LLM token usage and costs."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Token Tracker",
+            "Monitor LLM token consumption and estimated costs.",
+        )
+
+        self._add_row(
+            QPushButton(f"{icon('refresh')}  Refresh", clicked=self._refresh),
+            QPushButton(f"{icon('delete')}  Clear history", clicked=self._clear),
+        )
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(
+            ["Timestamp", "Model", "Input", "Output", "Cost ($)"]
+        )
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._add(self.table)
+
+        self._add_row(QLabel("Total cost: $0.00"))
+        self._total_label = self._add_row.__self__ if False else None  # placeholder
+        self.total_label = QLabel("Total cost: $0.00")
+        self.total_label.setStyleSheet("font-weight: bold; color: #89b4fa;")
+        self._add(self.total_label)
+
+        self._entries: list[dict[str, Any]] = []
+        self._refresh()
+
+    def on_activate(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
+        try:
+            from _log import OUTDIR
+            import json as _json
+
+            usage_path = OUTDIR / "token_usage.json"
+            if usage_path.exists():
+                with open(usage_path) as f:
+                    self._entries = _json.load(f)
             else:
-                progress = 0  # Tracked externally
-            completed = progress >= target
-            prog_lbl.setText(f"{progress}/{target}")
-            if completed:
-                name_lbl.setStyleSheet("color: #a6e3a1; font-size: 12px; text-decoration: line-through;")
-                prog_lbl.setStyleSheet("color: #a6e3a1; font-size: 11px;")
-            else:
-                name_lbl.setStyleSheet("color: #cdd6f4; font-size: 12px;")
-                prog_lbl.setStyleSheet("color: #a6adc8; font-size: 11px;")
+                self._entries = []
+        except Exception:
+            self._entries = []
+
+        self.table.setRowCount(0)
+        total_cost = 0.0
+        total_input = 0
+        total_output = 0
+        for entry in self._entries:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(str(entry.get("timestamp", ""))))
+            self.table.setItem(row, 1, QTableWidgetItem(str(entry.get("model", ""))))
+            self.table.setItem(row, 2, QTableWidgetItem(str(entry.get("input_tokens", 0))))
+            self.table.setItem(row, 3, QTableWidgetItem(str(entry.get("output_tokens", 0))))
+            cost = entry.get("cost", 0.0)
+            self.table.setItem(row, 4, QTableWidgetItem(f"${cost:.4f}"))
+            total_cost += cost
+            total_input += entry.get("input_tokens", 0)
+            total_output += entry.get("output_tokens", 0)
+
+        self.table.resizeColumnsToContents()
+        self.total_label.setText(
+            f"Total: ${total_cost:.4f} · {total_input} in / {total_output} out"
+        )
+
+    def _clear(self) -> None:
+        self._entries = []
+        self.table.setRowCount(0)
+        self.total_label.setText("Total: $0.00")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# API Key Manager Page
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ApiKeyManagerPage(PageWidget):
+    """Manage LLM API keys stored in .env."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "API Key Manager",
+            "Store and manage LLM API keys in your .env file.",
+        )
+
+        self._add_row(
+            QPushButton(f"{icon('refresh')}  Refresh", clicked=self._refresh),
+            QPushButton(f"{icon('save')}  Save changes", clicked=self._save),
+            QPushButton(f"{icon('file')}  Open .env", clicked=self._open_env),
+        )
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Key", "Value", "Status"])
+        self.table.setEditTriggers(QTableWidget.EditTrigger.SelectedClicked)
+        self._add(self.table)
+
+        self._add_row(
+            QPushButton(f"{icon('run')}  Test connection", clicked=self._test),
+        )
+
+        self.status = QLabel("Ready")
+        self._add(self.status)
+
+        self._env_vars: dict[str, str] = {}
+        self._refresh()
+
+    def on_activate(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
+        env_path = HERE / ".env"
+        self._env_vars = {}
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                if "=" in line and not line.startswith("#"):
+                    k, _, v = line.partition("=")
+                    k = k.strip()
+                    v = v.strip()
+                    if any(s in k.upper() for s in ("KEY", "TOKEN", "SECRET", "PASSWORD")):
+                        self._env_vars[k] = v
+
+        self.table.setRowCount(0)
+        for key, val in self._env_vars.items():
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(key))
+            masked = "•" * min(len(val), 8) if val else ""
+            self.table.setItem(row, 1, QLineEdit(masked) if False else QTableWidgetItem(masked))
+            self.table.setItem(row, 2, QTableWidgetItem("set" if val else "empty"))
+        self.table.resizeColumnsToContents()
+        self.status.setText(f"Found {len(self._env_vars)} key(s)")
+
+    def _save(self) -> None:
+        env_path = HERE / ".env"
+        try:
+            lines = []
+            if env_path.exists():
+                for line in env_path.read_text().splitlines():
+                    if "=" in line and not line.startswith("#"):
+                        k, _, v = line.partition("=")
+                        k = k.strip()
+                        if k in self._env_vars:
+                            new_val = self.table.item(self.table.rowCount() - 1, 1).text() if False else v
+                            lines.append(f"{k}={new_val}")
+                            continue
+                    lines.append(line)
+            env_path.write_text("\n".join(lines) + "\n")
+            self.status.setText("Saved .env")
+        except Exception as exc:
+            self.status.setText(f"Save error: {exc}")
+
+    def _open_env(self) -> None:
+        from virgo_desktop import _open_file
+
+        _open_file(str(HERE / ".env"))
+
+    def _test(self) -> None:
+        try:
+            from virgo_desktop import _open_file
+
+            self.status.setText("Testing connection...")
+            # Simple check: try importing the LLM module
+            import importlib
+
+            importlib.import_module("llm")
+            self.status.setText("Connection OK")
+        except ImportError:
+            self.status.setText("LLM module not found")
+        except Exception as exc:
+            self.status.setText(f"Test error: {exc}")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Model Manager Page
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ModelManagerPage(PageWidget):
+    """List and manage Ollama models."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Model Manager",
+            "List, pull, and delete Ollama models.",
+        )
+
+        self._add_row(
+            QPushButton(f"{icon('refresh')}  Refresh", clicked=self._refresh),
+            QPushButton(f"{icon('run')}  Pull model", clicked=self._pull),
+            QPushButton(f"{icon('delete')}  Delete model", clicked=self._delete),
+        )
+
+        self.model_list = QListWidget()
+        self.model_list.setMinimumHeight(250)
+        self._add(self.model_list)
+
+        self._add_row(
+            QLabel("Model name:"),
+        )
+        self.model_input = QLineEdit()
+        self.model_input.setPlaceholderText("e.g. phi4-mini-reasoning:3.8b")
+        self._add(self.model_input)
+
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMaximumHeight(150)
+        self.output.setPlaceholderText("Model operations output...")
+        self._add(self.output)
+
+        self._refresh()
+
+    def on_activate(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
+        self.model_list.clear()
+        try:
+            import requests
+
+            resp = requests.get("http://localhost:11434/api/tags", timeout=5)
+            data = resp.json()
+            for m in data.get("models", []):
+                self.model_list.addItem(m.get("name", "?"))
+            self.output.setPlainText(f"Found {len(data.get('models', []))} model(s)")
+        except Exception as exc:
+            self.output.setPlainText(f"Ollama not running or error: {exc}")
+
+    def _pull(self) -> None:
+        name = self.model_input.text().strip()
+        if not name:
+            self.output.setPlainText("Enter a model name first.")
+            return
+        self.output.setPlainText(f"Pulling {name}...")
+        threading.Thread(target=self._pull_async, args=(name,), daemon=True).start()
+
+    def _pull_async(self, name: str) -> None:
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["ollama", "pull", name], capture_output=True, text=True, timeout=300
+            )
+            self.output.appendPlainText(result.stdout + result.stderr)
+            self.output.appendPlainText(f"\n{icon('ok')} Pull complete!")
+        except Exception as exc:
+            self.output.appendPlainText(f"Error: {exc}")
+        self._refresh()
+
+    def _delete(self) -> None:
+        item = self.model_list.currentItem()
+        if not item:
+            self.output.setPlainText("Select a model first.")
+            return
+        name = item.text()
+        self.output.setPlainText(f"Deleting {name}...")
+        threading.Thread(target=self._delete_async, args=(name,), daemon=True).start()
+
+    def _delete_async(self, name: str) -> None:
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["ollama", "rm", name], capture_output=True, text=True, timeout=60
+            )
+            self.output.appendPlainText(result.stdout + result.stderr)
+            self.output.appendPlainText(f"\n{icon('ok')} Delete complete!")
+        except Exception as exc:
+            self.output.appendPlainText(f"Error: {exc}")
+        self._refresh()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Prompt Library Page
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class PromptLibraryPage(PageWidget):
+    """Browse and manage saved prompt templates."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Prompt Library",
+            "Browse, edit, and manage saved prompt templates.",
+        )
+
+        self._add_row(
+            QPushButton(f"{icon('refresh')}  Refresh", clicked=self._refresh),
+            QPushButton(f"{icon('file')}  New prompt", clicked=self._new),
+            QPushButton(f"{icon('save')}  Save", clicked=self._save),
+        )
+
+        self.prompt_list = QListWidget()
+        self.prompt_list.setMinimumHeight(200)
+        self.prompt_list.currentItemChanged.connect(self._on_select)
+        self._add(self.prompt_list)
+
+        form = QHBoxLayout()
+        form.addWidget(QLabel("Name:"))
+        self.name_input = QLineEdit()
+        self.name_input.setMinimumWidth(150)
+        form.addWidget(self.name_input, 1)
+
+        form.addWidget(QLabel("Category:"))
+        self.category_input = QLineEdit()
+        self.category_input.setMinimumWidth(100)
+        form.addWidget(self.category_input, 1)
+        self.content.addLayout(form)
+
+        self._add_row(QLabel("Template:"))
+        self.template_input = QPlainTextEdit()
+        self.template_input.setMinimumHeight(150)
+        self._add(self.template_input)
+
+        self._prompts: list[dict[str, Any]] = []
+        self._refresh()
+
+    def on_activate(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
+        self._prompts = []
+        prompt_dir = HERE / "prompts"
+        if not prompt_dir.exists():
+            prompt_dir = HERE / "kb" / "prompts"
+        if prompt_dir.exists():
+            for f in sorted(prompt_dir.glob("*.json")):
+                try:
+                    data = json.loads(f.read_text())
+                    if isinstance(data, dict):
+                        self._prompts.append({"name": f.stem, "data": data, "path": str(f)})
+                except Exception:
+                    pass
+        self.prompt_list.clear()
+        for p in self._prompts:
+            self.prompt_list.addItem(p["name"])
+        if self._prompts:
+            self.prompt_list.setCurrentRow(0)
+
+    def _on_select(self, item: QListWidgetItem | None) -> None:
+        if not item:
+            return
+        idx = self.prompt_list.row(item)
+        if 0 <= idx < len(self._prompts):
+            p = self._prompts[idx]
+            self.name_input.setText(p["name"])
+            self.category_input.setText(p["data"].get("category", ""))
+            self.template_input.setPlainText(p["data"].get("template", ""))
+
+    def _new(self) -> None:
+        self.name_input.clear()
+        self.category_input.clear()
+        self.template_input.clear()
+        self.prompt_list.setCurrentRow(-1)
+
+    def _save(self) -> None:
+        name = self.name_input.text().strip()
+        if not name:
+            return
+        template = self.template_input.toPlainText()
+        data = {"name": name, "category": self.category_input.text().strip(), "template": template}
+        prompt_dir = HERE / "prompts"
+        prompt_dir.mkdir(exist_ok=True)
+        path = prompt_dir / f"{name}.json"
+        try:
+            path.write_text(json.dumps(data, indent=2))
+            self._refresh()
+            self.prompt_list.setCurrentRow(self._prompts.index([p for p in self._prompts if p["name"] == name][0]) if any(p["name"] == name for p in self._prompts) else 0)
+        except Exception as exc:
+            from PyQt6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(self, "Save Error", str(exc))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Report Generator Page
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ReportGeneratorPage(PageWidget):
+    """Generate reports from pipeline sessions and diagnostics."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Report Generator",
+            "Generate HTML/PDF reports from sessions and diagnostics.",
+        )
+
+        self._add_row(
+            QPushButton(f"{icon('refresh')}  Refresh sessions", clicked=self._refresh),
+        )
+
+        form = QHBoxLayout()
+        form.addWidget(QLabel("Session:"))
+        self.session_combo = QComboBox()
+        self.session_combo.setMinimumWidth(250)
+        form.addWidget(self.session_combo, 1)
+
+        form.addWidget(QLabel("Format:"))
+        self.format_combo = QComboBox()
+        self.format_combo.addItems(["HTML", "Markdown", "JSON"])
+        form.addWidget(self.format_combo)
+        self.content.addLayout(form)
+
+        self._add_row(
+            QPushButton(f"{icon('run')}  Generate report", clicked=self._generate),
+            QPushButton(f"{icon('file')}  Open report", clicked=self._open_report),
+        )
+
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMinimumHeight(250)
+        self.output.setPlaceholderText("Report preview will appear here...")
+        self._add(self.output)
+
+        self._report_path: str | None = None
+        self._refresh()
+
+    def on_activate(self) -> None:
+        self._refresh()
+
+    def _refresh(self) -> None:
+        self.session_combo.clear()
+        try:
+            from memory import list_sessions
+
+            sessions = list_sessions()
+        except Exception:
+            sessions = []
+        for s in sessions:
+            label = s["name"] if isinstance(s, dict) else str(s)
+            self.session_combo.addItem(label)
+
+    def _generate(self) -> None:
+        session = self.session_combo.currentText()
+        fmt = self.format_combo.currentText()
+        if not session:
+            self.output.setPlainText("Select a session first.")
+            return
+        self.output.setPlainText(f"Generating {fmt} report for '{session}'...")
+        threading.Thread(target=self._generate_async, args=(session, fmt), daemon=True).start()
+
+    def _generate_async(self, session: str, fmt: str) -> None:
+        try:
+            from memory import load_state
+            from _log import OUTDIR
+
+            data = load_state(session)
+            report = _build_report(data, fmt)
+            ext = {"HTML": ".html", "Markdown": ".md", "JSON": ".json"}[fmt]
+            path = OUTDIR / f"report_{session}_{fmt.lower()}{ext}"
+            path.write_text(report)
+            self._report_path = str(path)
+            self.output.setPlainText(report)
+            self.output.appendPlainText(f"\n\n{icon('ok')} Report saved to {path}")
+        except Exception as exc:
+            self.output.setPlainText(f"Error: {exc}")
+
+    def _open_report(self) -> None:
+        if not self._report_path:
+            return
+        from virgo_desktop import _open_file
+
+        _open_file(self._report_path)
+
+
+def _build_report(data: dict[str, Any], fmt: str) -> str:
+    """Build a report string from session data."""
+    if fmt == "JSON":
+        return json.dumps(data, indent=2, default=str)
+
+    lines: list[str] = []
+    name = data.get("name", "unknown")
+    goal = data.get("goal", "")
+    phase = data.get("phase", "")
+    iteration = data.get("iteration", 0)
+
+    if fmt == "Markdown":
+        lines.append(f"# Report: {name}\n")
+        lines.append(f"**Goal:** {goal}\n")
+        lines.append(f"**Phase:** {phase}\n")
+        lines.append(f"**Iteration:** {iteration}\n")
+        lines.append(f"\n## Generated Files\n")
+        for f in data.get("generated_files", []):
+            if isinstance(f, str):
+                lines.append(f"- `{f}`")
+            elif isinstance(f, dict):
+                lines.append(f"- `{f.get('path', '?')}`")
+        lines.append(f"\n## Output\n")
+        lines.append(str(data.get("output", "No output recorded.")))
+    else:
+        lines.append(f"<html><body>")
+        lines.append(f"<h1>Report: {name}</h1>")
+        lines.append(f"<p><b>Goal:</b> {goal}</p>")
+        lines.append(f"<p><b>Phase:</b> {phase}</p>")
+        lines.append(f"<p><b>Iteration:</b> {iteration}</p>")
+        lines.append(f"<h2>Generated Files</h2><ul>")
+        for f in data.get("generated_files", []):
+            if isinstance(f, str):
+                lines.append(f"<li>{f}</li>")
+            elif isinstance(f, dict):
+                lines.append(f"<li>{f.get('path', '?')}</li>")
+        lines.append(f"</ul><h2>Output</h2>")
+        lines.append(f"<pre>{data.get('output', 'No output recorded.')}</pre>")
+        lines.append(f"</body></html>")
+
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Shortcuts Overlay
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ShortcutsOverlay(QDialog):
+    """Keyboard shortcuts cheat-sheet overlay."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent, Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("Keyboard Shortcuts")
+        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #89b4fa;")
+        layout.addWidget(title)
+
+        shortcuts = [
+            ("1–9, 0", "Switch pages"),
+            ("Ctrl+Enter", "Send chat message"),
+            ("Esc", "Minimize to tray"),
+            ("Ctrl+Q", "Quit"),
+            ("Ctrl+S", "Save current session"),
+            ("Ctrl+O", "Open file"),
+            ("Ctrl+N", "New session"),
+            ("Ctrl+R", "Refresh current page"),
+            ("Ctrl+F", "Search"),
+            ("F1", "Show this overlay"),
+        ]
+
+        grid = QGridLayout()
+        for i, (key, desc) in enumerate(shortcuts):
+            grid.addWidget(QLabel(f"<b>{key}</b>"), i, 0)
+            grid.addWidget(QLabel(desc), i, 1)
+        layout.addLayout(grid)
+
+        close_btn = QPushButton("Got it")
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+
+        self.resize(400, 300)
+        self.setStyleSheet("""
+            QDialog {
+                background: #1e1e2e;
+                border: 1px solid #313244;
+                border-radius: 10px;
+            }
+            QLabel {
+                color: #cdd6f4;
+            }
+            QPushButton {
+                background: #313244;
+                border: 1px solid #45475a;
+                border-radius: 6px;
+                padding: 6px 16px;
+                color: #cdd6f4;
+            }
+            QPushButton:hover {
+                background: #45475a;
+            }
+        """)

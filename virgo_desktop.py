@@ -570,22 +570,31 @@ from virgo_desktop_pages import (
     AboutPage,
     ActivityFeedPage,
     AlertsPage,
+    ApiKeyManagerPage,
+    ArenaPage,
     BenchmarkPage,
     ChatPage,
     DashboardPage,
     DiagnosticsPage,
+    DiffViewerPage,
     FilesPage,
     LeaderboardPage,
     LogsPage,
     MascotChatPage,
+    ModelManagerPage,
     NetworkPage,
     PipelinePage,
     PluginsPage,
     ProcessMonitorPage,
+    PromptLibraryPage,
+    ReportGeneratorPage,
     ScaffoldPage,
     SessionPage,
     SettingsPage,
+    ShortcutsOverlay,
     SwarmPage,
+    TokenTrackerPage,
+    WorkflowBuilderPage,
 )
 
 # ── Constants ────────────────────────────────────────────────────────
@@ -600,6 +609,7 @@ HEIGHT = 720
 DESKTOP_ICONS = {
     "pipeline": "\U0001f680",  # 🚀
     "chat": "\U0001f4ac",  # 💬
+    "arena": "\U0001f3c0",  # 🏀
     "dashboard": "\U0001f5a5",  # 🖥
     "files": "\U0001f4c1",  # 📁
     "network": "\U0001f310",  # 🌐
@@ -617,6 +627,13 @@ DESKTOP_ICONS = {
     "mascot_chat": "\U0001f43e",  # 🐾
     "activity_feed": "\U0001f4ca",  # 📊
     "leaderboard": "\U0001f3c6",  # 🏆
+    "models": "\U0001f9e0",  # 🧠
+    "prompts": "\U0001f4cb",  # 📋
+    "tokens": "\U0001f4b0",  # 💰
+    "apikeys": "\U0001f511",  # 🔑
+    "diff": "\U0001f50d",  # 🔍
+    "report": "\U0001f4c4",  # 📄
+    "workflow": "\U0001f3d7",  # 🏗
 }
 
 SIDEBAR_ITEMS = [
@@ -627,16 +644,23 @@ SIDEBAR_ITEMS = [
     ("activity_feed", "Activity Feed", DESKTOP_ICONS["activity_feed"]),
     ("leaderboard", "Leaderboard", DESKTOP_ICONS["leaderboard"]),
     ("files", "Files", DESKTOP_ICONS["files"]),
+    ("diff", "Diff Viewer", DESKTOP_ICONS["diff"]),
     ("network", "Network", DESKTOP_ICONS["network"]),
     ("diagnostics", "Diagnostics", DESKTOP_ICONS["diagnostics"]),
     ("alerts", "Alerts", DESKTOP_ICONS["alerts"]),
     ("scaffold", "Scaffolds", DESKTOP_ICONS["scaffold"]),
     ("sessions", "Sessions", DESKTOP_ICONS["sessions"]),
     ("swarm", "Swarm", DESKTOP_ICONS["swarm"]),
+    ("workflow", "Workflow", DESKTOP_ICONS["workflow"]),
     ("logs", "Logs", DESKTOP_ICONS["logs"]),
     ("plugins", "Plugins", DESKTOP_ICONS["plugins"]),
     ("procs", "Procs", DESKTOP_ICONS["procs"]),
     ("bench", "Bench", DESKTOP_ICONS["bench"]),
+    ("models", "Models", DESKTOP_ICONS["models"]),
+    ("prompts", "Prompts", DESKTOP_ICONS["prompts"]),
+    ("tokens", "Tokens", DESKTOP_ICONS["tokens"]),
+    ("apikeys", "API Keys", DESKTOP_ICONS["apikeys"]),
+    ("report", "Report", DESKTOP_ICONS["report"]),
     ("settings", "Settings", DESKTOP_ICONS["settings"]),
     ("about", "About", DESKTOP_ICONS["about"]),
 ]
@@ -786,6 +810,34 @@ class VirgoDesktopWindow(QMainWindow):
         self.nav_list.customContextMenuRequested.connect(self._nav_context_menu)
         sidebar_layout.addWidget(self.nav_list, 1)
 
+        # ── Quick Action Bar ─────────────────────────────────────
+        quick_bar = QWidget()
+        quick_layout = QHBoxLayout(quick_bar)
+        quick_layout.setContentsMargins(4, 4, 4, 4)
+        quick_layout.setSpacing(4)
+
+        quick_actions = [
+            ("🚀", "Run Pipeline", "pipeline"),
+            ("💬", "Chat", "chat"),
+            ("🧠", "Models", "models"),
+            ("📋", "Prompts", "prompts"),
+            ("⚙", "Settings", "settings"),
+        ]
+        for emoji, tooltip, page_id in quick_actions:
+            btn = QPushButton(emoji)
+            btn.setFixedSize(32, 28)
+            btn.setToolTip(tooltip)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(
+                "QPushButton { background: #313244; border: none; border-radius: 4px; font-size: 14px; }"
+                "QPushButton:hover { background: #45475a; }"
+            )
+            btn.clicked.connect(lambda _checked=False, pid=page_id: self._navigate(pid))
+            quick_layout.addWidget(btn)
+        quick_layout.addStretch()
+        sidebar_layout.addWidget(quick_bar)
+        self._quick_bar = quick_bar
+
         quit_btn = QPushButton(f"{icon('exit')}  Quit")
         quit_btn.setObjectName("quitBtn")
         quit_btn.clicked.connect(self.close)
@@ -803,6 +855,7 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(DashboardPage(), "dashboard")
         self._register(PipelinePage(), "pipeline")
         self._register(ChatPage(), "chat")
+        self._register(ArenaPage(), "arena")
         self._register(FilesPage(), "files")
         self._register(NetworkPage(), "network")
         self._register(DiagnosticsPage(), "diagnostics")
@@ -819,6 +872,13 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(ActivityFeedPage(), "activity_feed")
         self._register(LeaderboardPage(), "leaderboard")
         self._register(AboutPage(), "about")
+        self._register(ModelManagerPage(), "models")
+        self._register(PromptLibraryPage(), "prompts")
+        self._register(TokenTrackerPage(), "tokens")
+        self._register(ApiKeyManagerPage(), "apikeys")
+        self._register(DiffViewerPage(), "diff")
+        self._register(ReportGeneratorPage(), "report")
+        self._register(WorkflowBuilderPage(), "workflow")
 
         self.splitter.addWidget(self.stack)
 
@@ -1849,62 +1909,9 @@ class VirgoDesktopWindow(QMainWindow):
             pass
 
     def _show_shortcuts_overlay(self) -> None:
-        """Show a dialog listing all keyboard shortcuts."""
-        t = self.themes.get(getattr(self, "_active_theme", self._theme_name), self.themes["mocha"])
-        lines = [
-            ("Key", "Action"),
-            ("", ""),
-            ("1 – 9, 0", "Navigate sidebar pages (in order)"),
-            ("Ctrl+P", "Quick page switcher (fuzzy)"),
-            ("Ctrl+Shift+P", "Command palette (actions + pages)"),
-            ("Ctrl+Shift+L", "Prompt library panel"),
-            ("Ctrl+Shift+I", "Performance overlay"),
-            ("Ctrl+B", "Collapse / expand sidebar"),
-            ("Ctrl+F", "Search within chat log"),
-            ("Ctrl+Return", "Send chat message"),
-            ("Ctrl++ / Ctrl+-", "Zoom chat font"),
-            ("?", "Show this help overlay"),
-            ("Escape", "Close dialogs / overlays"),
-            ("", ""),
-            ("Drag sidebar items", "Reorder pages"),
-            ("Drag sidebar edge", "Resize sidebar"),
-            ("Right-click page", "Pop out page to a new window"),
-        ]
-        html = "<table style='width:100%; border-collapse:collapse;'>"
-        for key, action in lines:
-            if key == "":
-                html += (
-                    "<tr><td colspan='2' style='border-bottom:1px solid "
-                    + t["border"]
-                    + "'></td></tr>"
-                )
-            else:
-                html += (
-                    f"<tr><td style='padding:4px 12px; color:{t['accent']}; "
-                    f"font-weight:bold; white-space:nowrap;'>{key}</td>"
-                    f"<td style='padding:4px 12px; color:{t['text']};'>{action}</td></tr>"
-                )
-        html += "</table>"
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Keyboard Shortcuts")
-        dlg.resize(440, 360)
-        label = QLabel(html)
-        label.setWordWrap(True)
-        label.setStyleSheet(
-            f"background:{t['surface']}; color:{t['text']}; "
-            f"border:1px solid {t['border']}; border-radius:8px; padding:16px;"
-        )
-        layout = QVBoxLayout(dlg)
-        layout.addWidget(label)
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dlg.accept)
-        close_btn.setStyleSheet(
-            f"background:{t['border']}; color:{t['text']}; "
-            f"border:1px solid {t['border2']}; border-radius:6px; padding:6px 24px;"
-        )
-        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-        dlg.exec()
+        """Show the keyboard shortcuts cheat sheet overlay."""
+        overlay = ShortcutsOverlay(self)
+        overlay.show()
 
     def hideEvent(self, event) -> None:
         """Persist UI state when the window is hidden (minimised / tray)."""

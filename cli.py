@@ -50,6 +50,19 @@ from datetime import UTC
 from logo import print_logo
 
 try:
+    from local_rag import local_add_dir, local_retrieve, local_status, local_clear
+except ImportError:
+    # Fallback if local_rag.py is missing
+    def local_add_dir(p: str) -> str:
+        return f"Local RAG not available: {p}"
+    def local_retrieve(q: str, top_k: int = 5) -> list[str]:
+        return []
+    def local_status() -> dict:
+        return {"dir_count": 0, "chunk_count": 0}
+    def local_clear() -> str:
+        return "Local RAG not available"
+
+try:
     from _console import icon
 except Exception:  # pragma: no cover
 
@@ -1098,10 +1111,14 @@ def _cmd_chat_help() -> None:
     /write <path> <text>   Write text to a local file
     /web <url>        Fetch a web page
     /py <code>        Run a line of Python
+    /rag-index <path>  Add a folder to the local RAG search index
+    /rag-search <q>    Search your local index
+    /rag-status        Show local index status
+    /rag-clear         Clear the local index
     /save, /s         Save current chat session
     /history          List saved chat sessions
     /help             Show this help
-    /clear            Clear chat history
+    /clear            Clear the chat history
     exit, quit        Exit chat
 
   Agentic tool-use:
@@ -1115,7 +1132,8 @@ def _cmd_chat_help() -> None:
   Examples:
     /upload log.txt
     /upload src/*.py
-    /upload config.json README.md
+    /rag-index ~/Documents
+    /rag-search authentication
 """)
 
 
@@ -1362,6 +1380,61 @@ def cmd_chat(args: argparse.Namespace) -> None:
             continue
         if user_input.lower().startswith("/py "):
             print("  " + _run_chat_tool("py", {"code": user_input[len("/py ") :].strip()}))
+            continue
+
+        # Plugin chat tools
+        try:
+            from chat_tools import discover_chat_tools
+
+            for _ct in discover_chat_tools():
+                low_inp = user_input.lower()
+                if low_inp.startswith(_ct.slash + " ") or low_inp == _ct.slash:
+                    raw = user_input[len(_ct.slash) :].strip()
+                    print(f"  {_ct(raw)}")
+                    break
+            else:
+                raise StopIteration
+            continue
+        except StopIteration:
+            pass
+
+        # Local RAG commands
+        if user_input.lower().startswith("/rag-index "):
+            path = user_input[len("/rag-index ") :].strip()
+            print("  " + local_add_dir(path))
+            continue
+        if user_input.lower().startswith("/rag-search "):
+            query = user_input[len("/rag-search ") :].strip()
+            hits = local_retrieve(query, top_k=5)
+            if hits:
+                for h in hits:
+                    print(f"  {h}")
+            else:
+                print("  [No local docs indexed — try /rag-index <path>]")
+            continue
+        if user_input.lower() == "/rag-status":
+            st = local_status()
+            print(f"  Indexed: {st['dir_count']} dirs, {st['chunk_count']} chunks")
+            continue
+        if user_input.lower() == "/rag-clear":
+            print("  " + local_clear())
+            continue
+
+        if user_input.lower() == "/auto-fix":
+            print("  Running auto-remediation chain...")
+            try:
+                from auto_remediate import auto_fix
+                result = auto_fix(enable_rollback=True)
+                for step in result.steps:
+                    print(f"  {step}")
+                if result.success:
+                    print("  Auto-fix completed successfully")
+                else:
+                    print("  Auto-fix failed")
+                if result.rollback:
+                    print("  Rollbacks applied")
+            except ImportError:
+                print("  [auto_remediate not available]")
             continue
 
         if client:

@@ -65,6 +65,8 @@ setup(
         "virgo_watcher",
         "virgo_web_search",
         "virgo_webhook",
+        "virgo_desktop",
+        "virgo_desktop_pages",
         "workflow",
         "workflow_check",
     ],
