@@ -433,6 +433,24 @@ class PipelinePage(PageWidget):
 
     # ── Pipeline execution ──────────────────────────────────────────────
 
+    def run_with_goal(self, goal: str, max_iter: str = "5", use_llm: bool = True) -> None:
+        """Public entry point for the command center / tray: run the pipeline."""
+        if self._running:
+            return
+        if goal:
+            self.goal_input.setText(goal)
+        self.iter_input.setText(max_iter)
+        self.use_llm.setChecked(use_llm)
+        self._run_pipeline()
+
+    def stop(self) -> None:
+        """Public stop for the command center / tray."""
+        self._stop_pipeline()
+
+    @property
+    def is_running(self) -> bool:
+        return bool(self._running or self._process)
+
     def _run_pipeline(self) -> None:
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -505,6 +523,12 @@ class PipelinePage(PageWidget):
             w = self.window()
             if hasattr(w, "_achievement_check"):
                 w._achievement_check("pipeline", rc)
+            goal = self.goal_input.text().strip() or "pipeline"
+            if hasattr(w, "_notify_tray"):
+                if rc not in (0, None):
+                    w._notify_tray("Pipeline failed", f"'{goal}' exited with code {rc}", critical=True)
+                else:
+                    w._notify_tray("Pipeline finished", f"'{goal}' completed successfully")
             _beep("error" if rc not in (0, None) else "done")
 
     def _cleanup_run(self, msg: str) -> None:

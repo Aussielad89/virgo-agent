@@ -153,6 +153,30 @@ class DashboardPage(PageWidget):
         actions_group.layout().addLayout(actions_row)
         self._add(actions_group)
 
+        # ── Pipeline command center (runs the real PipelinePage) ──
+        pipe_group = self._section("Pipeline Command Center")
+        prow = QHBoxLayout()
+        prow.setSpacing(8)
+        prow.addWidget(QLabel("Goal:"))
+        self.pipe_goal = QLineEdit("auto-fix")
+        self.pipe_goal.setStyleSheet(
+            "QLineEdit { background: #181825; border: 1px solid #313244; "
+            "border-radius: 6px; padding: 6px 10px; color: #cdd6f4; }"
+        )
+        self.pipe_run = QPushButton("▶  Run")
+        self.pipe_run.clicked.connect(self._run_pipeline)
+        self.pipe_stop = QPushButton("⏹  Stop")
+        self.pipe_stop.setEnabled(False)
+        self.pipe_stop.clicked.connect(self._stop_pipeline_cmd)
+        prow.addWidget(self.pipe_goal, 1)
+        prow.addWidget(self.pipe_run)
+        prow.addWidget(self.pipe_stop)
+        pipe_group.layout().addLayout(prow)
+        self.pipe_status = QLabel("● Idle")
+        self.pipe_status.setStyleSheet("color: #6c7086; font-size: 11px; padding: 2px;")
+        pipe_group.layout().addWidget(self.pipe_status)
+        self._add(pipe_group)
+
         # ── Command center: jump-to nav row ──
         jump_row = QHBoxLayout()
         jump_row.setSpacing(8)
@@ -205,6 +229,7 @@ class DashboardPage(PageWidget):
         self._refresh_activity()
         self._refresh_focus()
         self._refresh_live()
+        self._refresh_pipeline_ui()
 
     def _refresh_live(self) -> None:
         """Update the command-center live strip (Ollama, event bus, pipeline)."""
@@ -362,7 +387,31 @@ class DashboardPage(PageWidget):
             self._focus_label.setText("")
 
     def _run_pipeline(self) -> None:
-        subprocess.Popen([sys.executable, os.path.join(str(HERE), "cli.py"), "run", "--goal", "auto-fix"])
+        """Command-center run: drive the real PipelinePage (goal + live DAG)."""
+        p = self._pipeline_page()
+        if p is None:
+            self.pipe_status.setText("Pipeline page unavailable")
+            return
+        p.run_with_goal(self.pipe_goal.text().strip())
+        self._jump_to("pipeline")
+
+    def _stop_pipeline_cmd(self) -> None:
+        p = self._pipeline_page()
+        if p is not None:
+            p.stop()
+
+    def _pipeline_page(self):
+        w = self.window()
+        if w is None:
+            return None
+        return getattr(w, "pages", {}).get("pipeline")
+
+    def _refresh_pipeline_ui(self) -> None:
+        p = self._pipeline_page()
+        running = bool(p is not None and p.is_running)
+        self.pipe_run.setEnabled(not running)
+        self.pipe_stop.setEnabled(running)
+        self.pipe_status.setText("🟡 Running…" if running else "● Idle")
 
     def _run_network_scan(self) -> None:
         subprocess.Popen([sys.executable, os.path.join(str(HERE), "virgo_network_scanner.py")])

@@ -74,6 +74,27 @@ class BenchmarkPage(PageWidget):
         # Disable sorting initially so row inserts stay orderly
         self._add(self._table)
 
+        # ── Rank actions: promote a podium model + export results ──
+        rank_row = QHBoxLayout()
+        rank_row.addWidget(QLabel("Set default:"))
+        self.rank_combo = QComboBox()
+        self.rank_combo.setMinimumWidth(150)
+        rank_row.addWidget(self.rank_combo)
+        self.promote_btn = QPushButton("🏆  Set as default model")
+        self.promote_btn.setEnabled(False)
+        self.promote_btn.clicked.connect(self._promote_selected)
+        rank_row.addWidget(self.promote_btn)
+        rank_row.addStretch()
+        self.csv_btn = QPushButton("💾  Export CSV")
+        self.csv_btn.setEnabled(False)
+        self.csv_btn.clicked.connect(lambda: self._export("csv"))
+        rank_row.addWidget(self.csv_btn)
+        self.md_btn = QPushButton("💾  Export MD")
+        self.md_btn.setEnabled(False)
+        self.md_btn.clicked.connect(lambda: self._export("md"))
+        rank_row.addWidget(self.md_btn)
+        self.content.addLayout(rank_row)
+
         # — Full output viewer (expandable) —
         self._output_view = QPlainTextEdit()
         self._output_view.setReadOnly(True)
@@ -233,11 +254,9 @@ class BenchmarkPage(PageWidget):
                 item.setData(Qt.ItemDataRole.UserRole, model)
             self._table.setItem(row, col, item)
 
-    def _finish(self) -> None:
-        """All models done — rank best → worst, re-sort the table, show the podium."""
-        self._run_all_btn.setEnabled(True)
-        self._stop_btn.setVisible(False)
-        ranked = sorted(
+    def _ranked(self) -> list[tuple[str, dict]]:
+        """Current results sorted best → worst (quality, then speed)."""
+        return sorted(
             self._results.items(),
             key=lambda kv: (
                 float(kv[1]["quality"].split("/")[0]) if kv[1]["quality"] != "—" else 0,
@@ -245,6 +264,12 @@ class BenchmarkPage(PageWidget):
             ),
             reverse=True,
         )
+
+    def _finish(self) -> None:
+        """All models done — rank best → worst, re-sort the table, show the podium."""
+        self._run_all_btn.setEnabled(True)
+        self._stop_btn.setVisible(False)
+        ranked = self._ranked()
         # Rebuild the table so the best model sits on top
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
@@ -253,6 +278,15 @@ class BenchmarkPage(PageWidget):
         # The "1. 🥇 model" text sorts numerically, so force column 0 ascending
         self._table.setSortingEnabled(True)
         self._table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+
+        # Rank actions become available once a run completes
+        medals = ["🥇 1st", "🥈 2nd", "🥉 3rd"]
+        self.rank_combo.clear()
+        for i, (model, _r) in enumerate(ranked[:3]):
+            self.rank_combo.addItem(f"{medals[i] if i < 3 else ''} {model}".strip())
+        self.promote_btn.setEnabled(bool(ranked))
+        self.csv_btn.setEnabled(bool(ranked))
+        self.md_btn.setEnabled(bool(ranked))
 
         # Status line: top of the podium + total (the table carries the full order)
         parts = [
@@ -268,6 +302,83 @@ class BenchmarkPage(PageWidget):
                 "🏁 Done — best → worst: " + "  →  ".join(parts[:3])
                 + f"  →  … ({len(ranked)} models ranked)"
             )
+
+    def _promote_selected(self) -> None:
+        """Set the podium pick as the default model (virgo.toml + live chat switch)."""
+        ranked = self._ranked()
+        idx = self.rank_combo.currentIndex()
+        if not ranked or idx < 0 or idx >= len(ranked):
+            return
+        model = ranked[idx][0]
+        medal = {0: "🥇", 1: "🥈", 2: "🥉"}.get(idx, "")
+        toml = HERE / "virgo.toml"
+        try:
+            lines = toml.read_text(encoding="utf-8").splitlines(keepends=True)
+            section: str | None = None
+            changed = False
+            for i, ln in enumerate(lines):
+                s = ln.strip()
+                if s.startswith("[") and s.endswith("]"):
+                    section = s[1:-1].strip()
+                    continue
+                if section not in ("model", "chat"):
+                    continue
+                key = s.split("=", 1)[0].strip()
+                if (section == "model" and key == "generator") or (
+                    section == "chat" and key == "model"
+                ):
+                    lines[i] = re.sub(r'=.*', f'= "{model}"', ln)
+                    changed = True
+            if changed:
+                toml.write_text("".join(lines), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            self._status_label.setText(f"Could not update virgo.toml: {exc}")
+            return
+        # Live-switch the chat page if it is open
+        win = self.window()
+        if win is not None:
+            chat = getattr(win, "pages", {}).get("chat")
+            if chat is not None and hasattr(chat, "model_combo"):
+                chat.model_combo.setCurrentText(model)
+            if hasattr(win, "_notify_tray"):
+                win._notify_tray("Default model updated", f"{medal} {model} is now the chat default")
+        self._status_label.setText(f"{medal} Default model → {model}")
+
+    def _export(self, fmt: str) -> None:
+        """Write the ranked results to OUTDIR as CSV or Markdown."""
+        import time as _time
+
+        ranked = self._ranked()
+        if not ranked:
+            self._status_label.setText("Nothing to export yet.")
+            return
+        ts = _time.strftime("%Y%m%d-%H%M%S")
+        path = OUTDIR / f"bench_results_{ts}.{fmt}"
+        rows = []
+        for i, (model, r) in enumerate(ranked, 1):
+            rows.append((i, model, r["latency"], r["tokens"], r["tok_s"], r["quality"]))
+        if fmt == "csv":
+            import csv as _csv
+            import io
+
+            buf = io.StringIO()
+            w = _csv.writer(buf)
+            w.writerow(["rank", "model", "latency", "tokens", "tok_s", "quality"])
+            w.writerows(rows)
+            text = buf.getvalue()
+        else:
+            head = "| # | Model | Latency | Tokens | Tok/s | Quality |\n|---|---|---|---|---|---|\n"
+            body = "".join(
+                f"| {i} | {m} | {lat} | {tok} | {tps} | {q} |\n"
+                for i, m, lat, tok, tps, q in rows
+            )
+            text = head + body
+        try:
+            OUTDIR.mkdir(exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            self._status_label.setText(f"Exported → {path}")
+        except Exception as exc:  # noqa: BLE001
+            self._status_label.setText(f"Export failed: {exc}")
 
     @staticmethod
     def _score_output(prompt: str, output: str) -> int:

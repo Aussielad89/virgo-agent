@@ -1428,6 +1428,20 @@ class VirgoDesktopWindow(QMainWindow):
         self.tray.setContextMenu(menu)
         self.tray.show()
 
+    def _notify_tray(self, title: str, message: str, critical: bool = False) -> None:
+        """Pop a system-tray notification when the tray is live."""
+        try:
+            tray = getattr(self, "tray", None)
+            if tray is not None and tray.isVisible():
+                ico = (
+                    QSystemTrayIcon.MessageIcon.Critical
+                    if critical
+                    else QSystemTrayIcon.MessageIcon.Information
+                )
+                tray.showMessage(title, message, ico, 6000)
+        except Exception:
+            pass
+
     def _quit(self) -> None:
         self._real_close = True
         self.close()

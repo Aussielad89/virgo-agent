@@ -573,6 +573,7 @@ class AlertsPage(PageWidget):
         self._timer.setInterval(30000)
         self._timer.timeout.connect(self._evaluate)
 
+        self._last_alerts = ""
         self._add(self.status)
 
     def _toggle_auto(self, on: bool) -> None:
@@ -628,6 +629,19 @@ class AlertsPage(PageWidget):
         self.status.setText(
             f"{self.alerts_list.count()} alert(s)" if self.alerts_list.count() else "No alerts"
         )
+        # Live alert: tray-notify only when the alert set CHANGES and is non-empty
+        is_clear = "no alerts triggered" in text.lower()
+        changed = text != self._last_alerts
+        self._last_alerts = text
+        if changed and not is_clear and self.alerts_list.count():
+            first = next((l for l in text.split("\n") if l.strip()), "alerts triggered")
+            w = self.window()
+            if w is not None and hasattr(w, "_notify_tray"):
+                w._notify_tray(
+                    f"⚠ {self.alerts_list.count()} Virgo alert(s)",
+                    first[:140],
+                    critical="critical" in first.lower() or "critical" in text.lower(),
+                )
 
     def _clear(self) -> None:
         self.alerts_list.clear()
