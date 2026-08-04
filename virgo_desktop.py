@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -237,6 +238,18 @@ def _build_stylesheet(t: dict[str, str]) -> str:
         border: none;
         outline: 0;
     }
+    QLineEdit#navFilter {
+        background: @border@;
+        border: 1px solid @border2@;
+        border-radius: 6px;
+        padding: 5px 10px;
+        color: @text@;
+        font-size: 12px;
+        selection-background-color: @accent@;
+    }
+    QLineEdit#navFilter:focus {
+        border-color: @accent@;
+    }
     #navList::item {
         padding: 8px 12px;
         border-radius: 6px;
@@ -271,6 +284,22 @@ def _build_stylesheet(t: dict[str, str]) -> str:
         border-top: 1px solid @border@;
         padding: 3px 10px;
         font-size: 12px;
+    }
+    #askBar {
+        background: @surface@;
+        border-top: 1px solid @border@;
+    }
+    QLineEdit#askInput {
+        background: @border@;
+        border: 1px solid @border2@;
+        border-radius: 6px;
+        padding: 6px 12px;
+        color: @text@;
+        font-size: 13px;
+        selection-background-color: @accent@;
+    }
+    QLineEdit#askInput:focus {
+        border-color: @accent@;
     }
     QPushButton {
         background: @border@;
@@ -542,8 +571,9 @@ def _ensure_pyqt6() -> None:
 # ── Ensure a PyQt6-capable interpreter, then import GUI deps ───────
 _ensure_pyqt6()  # re-execs under a PyQt6 Python if needed
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal, qInstallMessageHandler
-from PyQt6.QtGui import QFont, QIcon, QKeySequence, QShortcut
+from PyQt6.QtCore import QCoreApplication, QSize, Qt, QTimer, pyqtSignal, qInstallMessageHandler
+from PyQt6.QtCore import Q_ARG, QMetaObject, pyqtSlot
+from PyQt6.QtGui import QBrush, QColor, QFont, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -556,6 +586,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QStackedWidget,
@@ -573,20 +604,81 @@ from virgo_desktop_pages import (
     BenchmarkPage,
     ChatPage,
     DashboardPage,
+    EventBusPage,
     DiagnosticsPage,
     FilesPage,
     LeaderboardPage,
     LogsPage,
     MascotChatPage,
     NetworkPage,
+    NotificationsPage,
     PipelinePage,
     PluginsPage,
     ProcessMonitorPage,
     ScaffoldPage,
     SessionPage,
-    SettingsPage,
     SwarmPage,
+    SettingsPage,
+    AboutPage,
 )
+# ── New feature pages (standalone modules, top-3 brainstorm build) ──
+try:
+    from virgo_model_manager import ModelManagerPage
+except Exception:  # noqa: BLE001
+    ModelManagerPage = None
+try:
+    from virgo_desktop_automation import DesktopAutomationPage
+except Exception:  # noqa: BLE001
+    DesktopAutomationPage = None
+try:
+    from virgo_desktop_sync import SyncPage
+except Exception:  # noqa: BLE001
+    SyncPage = None
+try:
+    from virgo_font_picker import FontPickerPage
+except Exception:  # noqa: BLE001
+    FontPickerPage = None
+
+# ── Build-on-top feature pages ──
+try:
+    from virgo_agent_pages import (
+        ArtifactsPage,
+        BudgetPage,
+        MemoryPage,
+        RagPage,
+        RunTimelinePage,
+    )
+except Exception as exc:  # noqa: BLE001
+    print(f"virgo_desktop: agent pages unavailable ({exc})")
+    ArtifactsPage = BudgetPage = MemoryPage = RagPage = RunTimelinePage = None
+
+# Embedded web dashboard tab (requires PyQt6-WebEngine; optional).
+# QtWebEngine demands AA_ShareOpenGLContexts be set before a QApplication
+# exists — do it here (module level) so the import below succeeds.
+QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+WebViewPage = None
+try:
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+
+    class WebViewPage(QWidget):
+        """Embed the Virgo web dashboard (virgo serve) inside the app."""
+
+        def __init__(self, url: str = "http://127.0.0.1:8765") -> None:
+            super().__init__()
+            self._url = url
+            lay = QVBoxLayout(self)
+            lay.setContentsMargins(0, 0, 0, 0)
+            self.view = QWebEngineView()
+            lay.addWidget(self.view)
+
+        def on_activate(self) -> None:
+            if self.view.url().isEmpty():
+                self.view.setUrl(QUrl(self._url))
+
+except Exception as exc:  # noqa: BLE001
+    print(f"virgo_desktop: web dashboard tab unavailable ({exc})")
+    WebViewPage = None
 
 # ── Constants ────────────────────────────────────────────────────────
 
@@ -601,6 +693,7 @@ DESKTOP_ICONS = {
     "pipeline": "\U0001f680",  # 🚀
     "chat": "\U0001f4ac",  # 💬
     "dashboard": "\U0001f5a5",  # 🖥
+    "eventbus": "\U0001f4e1",  # 📡
     "files": "\U0001f4c1",  # 📁
     "network": "\U0001f310",  # 🌐
     "diagnostics": "\U0001f527",  # 🔧
@@ -617,28 +710,57 @@ DESKTOP_ICONS = {
     "mascot_chat": "\U0001f43e",  # 🐾
     "activity_feed": "\U0001f4ca",  # 📊
     "leaderboard": "\U0001f3c6",  # 🏆
+    "notifications": "\U0001f4e3",  # 📣
+    "timeline": "\U0001f4c8",  # 📈
+    "artifacts": "\U0001f5c3\ufe0f",  # 🗃️
+    "memory": "\U0001f9e0",  # 🧠
+    "budget": "\U0001f4b0",  # 💰
+    "rag": "\U0001f50d",  # 🔍
+    "webview": "\U0001f9ed",  # 🧭
+    "models": "\U0001f916",  # 🤖
+    "automation": "\U0001f5b1\ufe0f",  # 🖱️
+    "sync": "\U0001f504",  # 🔄
+    "fonts": "\U0001f520",  # 🔠
 }
 
+# Sidebar layout: (page_id, label, emoji, group). Groups render as
+# non-clickable section headers; filter box + drag-reorder still work.
 SIDEBAR_ITEMS = [
-    ("pipeline", "Pipeline", DESKTOP_ICONS["pipeline"]),
-    ("chat", "Chat", DESKTOP_ICONS["chat"]),
-    ("dashboard", "Dashboard", DESKTOP_ICONS["dashboard"]),
-    ("mascot_chat", "Mascot Chat", DESKTOP_ICONS["mascot_chat"]),
-    ("activity_feed", "Activity Feed", DESKTOP_ICONS["activity_feed"]),
-    ("leaderboard", "Leaderboard", DESKTOP_ICONS["leaderboard"]),
-    ("files", "Files", DESKTOP_ICONS["files"]),
-    ("network", "Network", DESKTOP_ICONS["network"]),
-    ("diagnostics", "Diagnostics", DESKTOP_ICONS["diagnostics"]),
-    ("alerts", "Alerts", DESKTOP_ICONS["alerts"]),
-    ("scaffold", "Scaffolds", DESKTOP_ICONS["scaffold"]),
-    ("sessions", "Sessions", DESKTOP_ICONS["sessions"]),
-    ("swarm", "Swarm", DESKTOP_ICONS["swarm"]),
-    ("logs", "Logs", DESKTOP_ICONS["logs"]),
-    ("plugins", "Plugins", DESKTOP_ICONS["plugins"]),
-    ("procs", "Procs", DESKTOP_ICONS["procs"]),
-    ("bench", "Bench", DESKTOP_ICONS["bench"]),
-    ("settings", "Settings", DESKTOP_ICONS["settings"]),
-    ("about", "About", DESKTOP_ICONS["about"]),
+    # ── Core ──
+    ("pipeline", "Pipeline", DESKTOP_ICONS["pipeline"], "Core"),
+    ("chat", "Chat", DESKTOP_ICONS["chat"], "Core"),
+    ("dashboard", "Dashboard", DESKTOP_ICONS["dashboard"], "Core"),
+    ("eventbus", "Event Bus", DESKTOP_ICONS["eventbus"], "Core"),
+    # ── Agents ──
+    ("mascot_chat", "Mascot Chat", DESKTOP_ICONS["mascot_chat"], "Agents"),
+    ("activity_feed", "Activity Feed", DESKTOP_ICONS["activity_feed"], "Agents"),
+    ("leaderboard", "Leaderboard", DESKTOP_ICONS["leaderboard"], "Agents"),
+    ("sessions", "Sessions", DESKTOP_ICONS["sessions"], "Agents"),
+    ("swarm", "Swarm", DESKTOP_ICONS["swarm"], "Agents"),
+    ("bench", "Bench", DESKTOP_ICONS["bench"], "Agents"),
+    ("timeline", "Run Timeline", DESKTOP_ICONS["timeline"], "Agents"),
+    ("artifacts", "Artifacts", DESKTOP_ICONS["artifacts"], "Agents"),
+    ("memory", "Memory", DESKTOP_ICONS["memory"], "Agents"),
+    ("budget", "Budget", DESKTOP_ICONS["budget"], "Agents"),
+    ("rag", "Knowledge Base", DESKTOP_ICONS["rag"], "Agents"),
+    # ── System ──
+    ("files", "Files", DESKTOP_ICONS["files"], "System"),
+    ("network", "Network", DESKTOP_ICONS["network"], "System"),
+    ("diagnostics", "Diagnostics", DESKTOP_ICONS["diagnostics"], "System"),
+    ("alerts", "Alerts", DESKTOP_ICONS["alerts"], "System"),
+    ("notifications", "Notifications", DESKTOP_ICONS["notifications"], "System"),
+    ("logs", "Logs", DESKTOP_ICONS["logs"], "System"),
+    ("plugins", "Plugins", DESKTOP_ICONS["plugins"], "System"),
+    ("procs", "Procs", DESKTOP_ICONS["procs"], "System"),
+    # ── Extras ──
+    ("scaffold", "Scaffolds", DESKTOP_ICONS["scaffold"], "Extras"),
+    ("models", "Models", DESKTOP_ICONS["models"], "Extras"),
+    ("automation", "Automation", DESKTOP_ICONS["automation"], "Extras"),
+    ("sync", "Sync", DESKTOP_ICONS["sync"], "Extras"),
+    ("fonts", "Fonts", DESKTOP_ICONS["fonts"], "Extras"),
+    ("webview", "Web Dashboard", DESKTOP_ICONS["webview"], "Extras"),
+    ("settings", "Settings", DESKTOP_ICONS["settings"], "Extras"),
+    ("about", "About", DESKTOP_ICONS["about"], "Extras"),
 ]
 
 
@@ -715,7 +837,7 @@ class VirgoDesktopWindow(QMainWindow):
             self._theme_name = "mocha"
         self._custom_css = self._config.get("custom_css", "")
         self._sidebar_collapsed = bool(self._config.get("sidebar_collapsed", False))
-        default_order = [pid for pid, _l, _e in SIDEBAR_ITEMS]
+        default_order = [pid for pid, _l, _e, _g in SIDEBAR_ITEMS]
         saved_order = self._config.get("sidebar_order", default_order)
         # Merge saved order with default order: keep saved positions for known
         # items, insert any new items (not in saved) at their default position.
@@ -741,13 +863,32 @@ class VirgoDesktopWindow(QMainWindow):
         # ── Central widget + resizable splitter ──────────────────
         central = QWidget()
         self.setCentralWidget(central)
-        root = QHBoxLayout(central)
+        root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setHandleWidth(4)
         root.addWidget(self.splitter, 1)
+
+        # ── Ask Virgo global inline bar ──────────────────────────
+        ask_bar = QWidget()
+        ask_bar.setObjectName("askBar")
+        ask_lay = QHBoxLayout(ask_bar)
+        ask_lay.setContentsMargins(10, 6, 10, 6)
+        ask_lay.setSpacing(8)
+        ask_prompt = QLabel("💡")
+        ask_prompt.setToolTip("Ask Virgo — sends to the Chat page")
+        ask_lay.addWidget(ask_prompt)
+        self.ask_input = QLineEdit()
+        self.ask_input.setObjectName("askInput")
+        self.ask_input.setPlaceholderText("Ask Virgo… (Enter sends to Chat)")
+        self.ask_input.returnPressed.connect(self._ask_virgo)
+        ask_lay.addWidget(self.ask_input, 1)
+        ask_btn = QPushButton("Send")
+        ask_btn.clicked.connect(self._ask_virgo)
+        ask_lay.addWidget(ask_btn)
+        root.addWidget(ask_bar)
 
         # ── Sidebar ──────────────────────────────────────────────
         sidebar = QWidget()
@@ -778,6 +919,14 @@ class VirgoDesktopWindow(QMainWindow):
         sidebar_layout.addWidget(header)
         sidebar_layout.addSpacing(12)
 
+        # Filter-as-you-type box (grouped nav needs search)
+        self.nav_filter = QLineEdit()
+        self.nav_filter.setObjectName("navFilter")
+        self.nav_filter.setPlaceholderText("🔍  Filter pages…")
+        self.nav_filter.setClearButtonEnabled(True)
+        self.nav_filter.textChanged.connect(self._filter_nav)
+        sidebar_layout.addWidget(self.nav_filter)
+
         self.nav_list = NavList()
         self.nav_list.setObjectName("navList")
         self.nav_list.currentItemChanged.connect(lambda cur, _prev: self._on_nav_selected(cur))
@@ -801,6 +950,7 @@ class VirgoDesktopWindow(QMainWindow):
         self.pages: dict[str, QWidget] = {}
 
         self._register(DashboardPage(), "dashboard")
+        self._register(EventBusPage(), "eventbus")
         self._register(PipelinePage(), "pipeline")
         self._register(ChatPage(), "chat")
         self._register(FilesPage(), "files")
@@ -819,6 +969,29 @@ class VirgoDesktopWindow(QMainWindow):
         self._register(ActivityFeedPage(), "activity_feed")
         self._register(LeaderboardPage(), "leaderboard")
         self._register(AboutPage(), "about")
+        self._register(NotificationsPage(), "notifications")
+        # ── New brainstorm features (top 3) ──
+        if ModelManagerPage is not None:
+            self._register(ModelManagerPage(), "models")
+        if DesktopAutomationPage is not None:
+            self._register(DesktopAutomationPage(), "automation")
+        if SyncPage is not None:
+            self._register(SyncPage(), "sync")
+        if FontPickerPage is not None:
+            self._register(FontPickerPage(), "fonts")
+        # ── Build-on-top feature pages ──
+        if RunTimelinePage is not None:
+            self._register(RunTimelinePage(), "timeline")
+        if ArtifactsPage is not None:
+            self._register(ArtifactsPage(), "artifacts")
+        if MemoryPage is not None:
+            self._register(MemoryPage(), "memory")
+        if BudgetPage is not None:
+            self._register(BudgetPage(), "budget")
+        if RagPage is not None:
+            self._register(RagPage(), "rag")
+        if WebViewPage is not None:
+            self._register(WebViewPage(), "webview")
 
         self.splitter.addWidget(self.stack)
 
@@ -866,21 +1039,63 @@ class VirgoDesktopWindow(QMainWindow):
         self._sound_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #313244; border-radius: 4px; }")
         self.status_bar.addPermanentWidget(self._sound_btn)
 
+        # ── Live status widgets (item: status bar) ───────────────
+        # Ollama health dot (async via QNetworkAccessManager — never blocks UI)
+        self._ollama_dot = QLabel("●")
+        self._ollama_dot.setToolTip("Ollama: checking…")
+        self._ollama_dot.setStyleSheet("color: #6c7086; font-size: 13px; padding: 0 4px;")
+        self.status_bar.addPermanentWidget(self._ollama_dot)
+        self._ollama_label = QLabel("ollama")
+        self._ollama_label.setToolTip("Ollama runtime health")
+        self._ollama_label.setStyleSheet("color: #6c7086; font-size: 11px; padding: 0 2px;")
+        self.status_bar.addPermanentWidget(self._ollama_label)
+        self._ollama_ok: bool | None = None
+        try:
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest
+
+            self._ollama_nam = QNetworkAccessManager(self)
+            self._ollama_nam.finished.connect(self._on_ollama_reply)
+        except Exception:
+            self._ollama_nam = None
+
+        # Budget burn
+        self._budget_label = QLabel("💰 –")
+        self._budget_label.setToolTip("Today's estimated spend / limit")
+        self._budget_label.setStyleSheet("color: #6c7086; font-size: 11px; padding: 0 6px;")
+        self.status_bar.addPermanentWidget(self._budget_label)
+
+        # Pipeline state
+        self._pipeline_label = QLabel("🚀 –")
+        self._pipeline_label.setToolTip("Pipeline state")
+        self._pipeline_label.setStyleSheet("color: #6c7086; font-size: 11px; padding: 0 6px;")
+        self.status_bar.addPermanentWidget(self._pipeline_label)
+
+        # Event bus state
+        self._bus_label = QLabel("📡 –")
+        self._bus_label.setToolTip("Event bus status")
+        self._bus_label.setStyleSheet("color: #6c7086; font-size: 11px; padding: 0 6px;")
+        self.status_bar.addPermanentWidget(self._bus_label)
+
         # Status bar refresh timer
         self._status_timer = QTimer()
         self._status_timer.setInterval(5000)
         self._status_timer.timeout.connect(self._refresh_status_bar)
         self._status_timer.start()
+        self._check_ollama()
 
         # ── System tray ──────────────────────────────────────────
         self._setup_tray()
+
+        # ── Human-in-the-loop approval hook (agent tool gate) ────
+        self._install_approval_hook()
 
         # ── Shortcuts ────────────────────────────────────────────
         self._setup_shortcuts()
 
         # ── Navigate to last-used page (or pipeline) ───────────────
         last = self._config.get("last_page", "pipeline")
-        if last not in [p for p, _l, _e in SIDEBAR_ITEMS]:
+        if last not in [p for p, _l, _e, _g in SIDEBAR_ITEMS]:
             last = "pipeline"
         self._navigate(last)
 
@@ -926,32 +1141,73 @@ class VirgoDesktopWindow(QMainWindow):
 
     # ── Navigation ────────────────────────────────────────────────
     def _init_sidebar_items(self) -> None:
-        """(Re)build the nav list from self.nav_order."""
+        """(Re)build the nav list from self.nav_order (grouped, registered-only)."""
         self.nav_list.clear()
         self._nav_items.clear()
-        meta = {pid: (label, emoji) for pid, label, emoji in SIDEBAR_ITEMS}
+        self._nav_headers: dict[str, QListWidgetItem] = {}
+        meta = {pid: (label, emoji, group) for pid, label, emoji, group in SIDEBAR_ITEMS}
+        last_group = None
         for pid in self.nav_order:
-            label, emoji = meta.get(pid, (pid, "•"))
+            if pid not in self.pages:
+                continue  # optional pages (e.g. webview w/o QtWebEngine) are skipped
+            label, emoji, group = meta.get(pid, (pid, "•", "Other"))
+            if group != last_group:
+                h = QListWidgetItem(f"  {group.upper()}")
+                h.setFlags(Qt.ItemFlag.NoItemFlags)
+                h.setSizeHint(QSize(0, 24))
+                f = h.font()
+                f.setBold(True)
+                f.setPointSize(8)
+                h.setFont(f)
+                h.setForeground(QBrush(QColor("#6c7086")))
+                self.nav_list.addItem(h)
+                self._nav_headers[group] = h
+                last_group = group
             text = emoji if self._sidebar_collapsed else f"{emoji}  {label}"
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, pid)
             item.setSizeHint(QSize(0, 42))
             self.nav_list.addItem(item)
             self._nav_items[pid] = item
+        self._filter_nav(self.nav_filter.text())
 
     def _on_nav_selected(self, item: QListWidgetItem | None) -> None:
         if item is None:
             return
         pid = item.data(Qt.ItemDataRole.UserRole)
+        if pid is None:
+            return  # group header, not navigable
         self._navigate(pid)
 
     def _on_nav_reordered(self) -> None:
         self.nav_order = [
             self.nav_list.item(i).data(Qt.ItemDataRole.UserRole)
             for i in range(self.nav_list.count())
+            if self.nav_list.item(i).data(Qt.ItemDataRole.UserRole) is not None
         ]
         self._config["sidebar_order"] = self.nav_order
         self._save_config()
+
+    def _filter_nav(self, text: str) -> None:
+        """Filter-as-you-type over sidebar pages; keeps group headers tidy."""
+        q = text.strip().lower()
+        self.nav_list.setDragEnabled(not q)
+        if not q:
+            for pid, item in self._nav_items.items():
+                item.setHidden(False)
+            for h in self._nav_headers.values():
+                h.setHidden(self._sidebar_collapsed)
+            return
+        visible_groups: set[str] = set()
+        for pid, item in self._nav_items.items():
+            label = next((l for p, l, _e, _g in SIDEBAR_ITEMS if p == pid), pid)
+            show = q in label.lower() or q in pid
+            item.setHidden(not show)
+            if show:
+                group = next((g for p, _l, _e, g in SIDEBAR_ITEMS if p == pid), "")
+                visible_groups.add(group)
+        for group, h in self._nav_headers.items():
+            h.setHidden(group not in visible_groups)
 
     def _nav_context_menu(self, pos) -> None:
         item = self.nav_list.itemAt(pos)
@@ -987,6 +1243,21 @@ class VirgoDesktopWindow(QMainWindow):
         """Update the bottom status bar text."""
         self.status_bar.showMessage(text)
 
+    def _ask_virgo(self) -> None:
+        """Route the Ask Virgo bar text into the Chat page and fire it."""
+        msg = self.ask_input.text().strip()
+        if not msg:
+            return
+        self.ask_input.clear()
+        try:
+            self._navigate("chat")
+            page = self.pages.get("chat")
+            if page is not None and hasattr(page, "msg_input") and hasattr(page, "_send"):
+                page.msg_input.setText(msg)
+                page._send()
+        except Exception:
+            pass
+
     # ── Sidebar collapse + resize ─────────────────────────────────
     def _toggle_sidebar(self) -> None:
         self._sidebar_collapsed = not self._sidebar_collapsed
@@ -1002,8 +1273,11 @@ class VirgoDesktopWindow(QMainWindow):
             widths = [w, max(240, self.width() - w)]
         self.splitter.setSizes(widths)
         for pid, item in self._nav_items.items():
-            label, emoji = next(((l, e) for p, l, e in SIDEBAR_ITEMS if p == pid), (pid, "•"))
+            label, emoji = next(((l, e) for p, l, e, _g in SIDEBAR_ITEMS if p == pid), (pid, "•"))
             item.setText(emoji if self._sidebar_collapsed else f"{emoji}  {label}")
+        for h in self._nav_headers.values():
+            h.setHidden(self._sidebar_collapsed)
+        self.nav_filter.setVisible(not self._sidebar_collapsed)
         self.sidebar_title.setVisible(not self._sidebar_collapsed)
         self.quit_btn.setText("\U0001f6f8" if self._sidebar_collapsed else f"{icon('exit')}  Quit")
 
@@ -1039,8 +1313,9 @@ class VirgoDesktopWindow(QMainWindow):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(lambda pid=page_id: self._navigate(pid))
 
-        # Ctrl+P quick page switcher
+        # Ctrl+P / Ctrl+K quick page switcher
         QShortcut(QKeySequence("Ctrl+P"), self).activated.connect(self._show_quick_switcher)
+        QShortcut(QKeySequence("Ctrl+K"), self).activated.connect(self._show_quick_switcher)
         QShortcut(QKeySequence("Ctrl+Shift+P"), self).activated.connect(self._command_palette)
         # Ctrl+B toggle sidebar collapse
         QShortcut(QKeySequence("Ctrl+B"), self).activated.connect(self._toggle_sidebar)
@@ -1079,6 +1354,8 @@ class VirgoDesktopWindow(QMainWindow):
         chat_action.triggered.connect(lambda: (self.showNormal(), self._navigate("chat")))
         pipeline_action = menu.addAction("Run Pipeline")
         pipeline_action.triggered.connect(lambda: (self.showNormal(), self._navigate("pipeline")))
+        agent_action = menu.addAction("Run Agent (live timeline)")
+        agent_action.triggered.connect(lambda: (self.showNormal(), self._navigate("timeline")))
         swarm_action = menu.addAction("Launch Swarm")
         swarm_action.triggered.connect(lambda: (self.showNormal(), self._navigate("swarm")))
         menu.addSeparator()
@@ -1090,6 +1367,47 @@ class VirgoDesktopWindow(QMainWindow):
     def _quit(self) -> None:
         self._real_close = True
         self.close()
+
+    # ── Human-in-the-loop approval (agent tool gate) ─────────────────
+    def _install_approval_hook(self) -> None:
+        """Register a dialog-based approval hook for risky agent tool calls.
+
+        Agent runs execute on worker threads, so the dialog is marshalled
+        back onto the GUI thread with a blocking queued invocation.
+        """
+        try:
+            from approval import set_global_hook
+
+            def _hook(tool: str, args: str, risk: int) -> bool:
+                result = QMetaObject.invokeMethod(
+                    self,
+                    "_approval_dialog",
+                    Qt.ConnectionType.BlockingQueuedConnection,
+                    Q_ARG(str, tool),
+                    Q_ARG(str, args[:200]),
+                    Q_ARG(int, risk),
+                )
+                return bool(result)
+
+            set_global_hook(_hook)
+        except Exception as exc:  # pragma: no cover
+            log.info("approval hook not installed (%s)", exc)
+
+    @pyqtSlot(str, str, int, result=bool)
+    def _approval_dialog(self, tool: str, args: str, risk: int) -> bool:
+        """Modal approve/deny dialog shown on the GUI thread."""
+        risk_names = {0: "unknown", 1: "safe", 2: "low", 3: "medium", 4: "high", 5: "critical"}
+        label = risk_names.get(risk, str(risk))
+        snippet = (args or "").replace("\n", " ")[:120]
+        box = QMessageBox(self)
+        box.setWindowTitle("Agent approval required")
+        box.setText(f"Virgo wants to call tool: {tool}  (risk: {label})")
+        box.setInformativeText(f"Arguments: {snippet}\n\nApprove this call?")
+        approve = box.addButton("Approve", QMessageBox.ButtonRole.AcceptRole)
+        deny = box.addButton("Deny", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(deny)
+        box.exec()
+        return box.clickedButton() is approve
 
     def notify(self, title: str, message: str) -> None:
         """Show a system tray notification (falls back to the status bar)."""
@@ -1350,7 +1668,7 @@ class VirgoDesktopWindow(QMainWindow):
         lst = QListWidget()
         layout.addWidget(lst)
 
-        entries = [(pid, label, emoji) for pid, label, emoji in SIDEBAR_ITEMS]
+        entries = [(pid, label, emoji) for pid, label, emoji, _g in SIDEBAR_ITEMS]
 
         def _refresh(text: str) -> None:
             q = text.strip()
@@ -1411,7 +1729,7 @@ class VirgoDesktopWindow(QMainWindow):
             "Tools": [],
         }
 
-        for pid, label, emoji in SIDEBAR_ITEMS:
+        for pid, label, emoji, _g in SIDEBAR_ITEMS:
             categories["Navigation"].append(
                 (f"{emoji}  Go to {label}", "page", lambda p=pid: self._navigate(p))
             )
@@ -1453,6 +1771,17 @@ class VirgoDesktopWindow(QMainWindow):
             ("🔊  Sound: Toggle", "cmd", lambda: self._sound_toggle_fast()),
             ("🎉  Celebrate!", "cmd", lambda: self._show_celebration("success")),
         ]
+
+        # Build-on-top commands
+        act_actions += [
+            ("📈  Run Agent (timeline)", "cmd", lambda: self._navigate("timeline")),
+            ("📦  Artifacts", "cmd", lambda: self._navigate("artifacts")),
+            ("🧠  Memory / profile", "cmd", lambda: self._navigate("memory")),
+            ("💰  Budget", "cmd", lambda: self._navigate("budget")),
+            ("🔍  Knowledge Base (RAG)", "cmd", lambda: self._navigate("rag")),
+        ]
+        if "webview" in self.pages:
+            act_actions.append(("🌐  Web Dashboard tab", "cmd", lambda: self._navigate("webview")))
 
         flat_actions = []
         for cat_name, items in categories.items():
@@ -1707,6 +2036,93 @@ class VirgoDesktopWindow(QMainWindow):
             self._chaos_btn.setStyleSheet(
                 "QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #313244; border-radius: 4px; }"
             )
+        except Exception:
+            pass
+
+        # ── Live status widgets ──
+        # Budget burn (local file read — fast, safe on UI thread)
+        try:
+            from budget import get_budget
+
+            bt = get_budget()
+            cost = sum(float(r.get("cost", 0.0)) for r in bt._records)
+            lim = float(getattr(bt, "limit", 0.0) or 0.0)
+            pct = int(cost / lim * 100) if lim > 0 else 0
+            color = "#a6e3a1" if pct < 70 else ("#f9e2af" if pct < 90 else "#f38ba8")
+            self._budget_label.setText(f"💰 ${cost:.2f} ({pct}%)")
+            self._budget_label.setToolTip(f"Estimated spend ${cost:.2f} / limit ${lim:.2f}")
+            self._budget_label.setStyleSheet(f"color: {color}; font-size: 11px; padding: 0 6px;")
+        except Exception:
+            pass
+
+        # Pipeline state (reads the UI state file the pipeline writes)
+        try:
+            state_path = Path(__file__).parent / ".virgo_pipeline_ui.json"
+            state = "idle"
+            if state_path.exists():
+                d = json.loads(state_path.read_text())
+                state = str(d.get("state", d.get("status", "idle"))).lower()
+            color = "#f9e2af" if state in ("running", "active", "busy") else "#6c7086"
+            self._pipeline_label.setText(f"🚀 {state}")
+            self._pipeline_label.setToolTip("Pipeline state (from .virgo_pipeline_ui.json)")
+            self._pipeline_label.setStyleSheet(f"color: {color}; font-size: 11px; padding: 0 6px;")
+        except Exception:
+            pass
+
+        # Event bus status
+        try:
+            from virgo_eventbus import get_bus
+
+            s = get_bus().status()
+            running = bool(s.get("running", s.get("active", False)))
+            subs = s.get("listeners", s.get("sources", 0))
+            color = "#a6e3a1" if running else "#6c7086"
+            self._bus_label.setText(f"📡 {'on' if running else 'off'}" + (f" · {subs}" if subs else ""))
+            self._bus_label.setToolTip("Event bus status")
+            self._bus_label.setStyleSheet(f"color: {color}; font-size: 11px; padding: 0 6px;")
+        except Exception:
+            pass
+
+    def _check_ollama(self) -> None:
+        """Fire an async GET to the Ollama API (non-blocking health probe)."""
+        if self._ollama_nam is None:
+            return
+        try:
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtNetwork import QNetworkRequest
+
+            req = QNetworkRequest(QUrl("http://localhost:11434/api/tags"))
+            req.setTransferTimeout(2500)
+            self._ollama_nam.get(req)
+        except Exception:
+            pass
+
+    def _on_ollama_reply(self, reply) -> None:
+        """Colour the Ollama health dot from the probe result."""
+        try:
+            err = reply.error()
+            ok = err == reply.NetworkError.NoError
+            self._ollama_ok = ok
+            color = "#a6e3a1" if ok else "#f38ba8"
+            self._ollama_dot.setStyleSheet(f"color: {color}; font-size: 13px; padding: 0 4px;")
+            self._ollama_dot.setToolTip("Ollama: online" if ok else "Ollama: unreachable")
+            self._ollama_label.setStyleSheet(
+                f"color: {'#a6e3a1' if ok else '#f38ba8'}; font-size: 11px; padding: 0 2px;"
+            )
+        except Exception:
+            pass
+        finally:
+            try:
+                reply.deleteLater()
+            except Exception:
+                pass
+        # Re-arm the probe every 10 s (separate slow timer)
+        try:
+            self._ollama_timer = QTimer()
+            self._ollama_timer.setSingleShot(True)
+            self._ollama_timer.setInterval(10000)
+            self._ollama_timer.timeout.connect(self._check_ollama)
+            self._ollama_timer.start()
         except Exception:
             pass
 
@@ -2338,7 +2754,7 @@ class PopOutWindow(QMainWindow):
         self.page_id = page_id
         self.page = page
         self.main = parent
-        label = next((l for pid, l, _e in SIDEBAR_ITEMS if pid == page_id), page_id)
+        label = next((l for pid, l, _e, _g in SIDEBAR_ITEMS if pid == page_id), page_id)
         self.setWindowTitle(f"Virgo · {label}")
         import os
 
@@ -2402,6 +2818,15 @@ def _qt_message_handler(msgtype, context, msg: str) -> None:
 
 def main() -> None:
     qInstallMessageHandler(_qt_message_handler)
+    # PyQt6 aborts the whole app (BEX64 0xc0000409) when a slot raises.
+    # Print the traceback and keep running so one bad page can't kill Virgo.
+    def _safe_excepthook(etype, val, tb) -> None:
+        try:
+            traceback.print_exception(etype, val, tb)
+        except Exception:
+            pass
+
+    sys.excepthook = _safe_excepthook
     app = QApplication(sys.argv)
     app.setFont(QFont("Segoe UI", 10))
     app.setApplicationName(APP_NAME)
