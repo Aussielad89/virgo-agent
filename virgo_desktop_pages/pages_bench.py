@@ -185,13 +185,25 @@ class BenchmarkPage(PageWidget):
         self, model: str, lat: str, toks: str,
         tps: str, qual: str, status: str, preview: str,
     ) -> None:
+        self._results[model] = {
+            "latency": lat, "tokens": toks, "tok_s": tps,
+            "quality": qual, "output": preview,
+        }
+        self._insert_row(model, self._results[model])
+
+        self._running.discard(model)
+        if not self._running and not self._cancelled:
+            self._finish()
+
+    def _insert_row(self, model: str, r: dict, rank: int | None = None) -> None:
+        """Append one result row (rank = podium position, shown when set)."""
         _color = QColor
         row = self._table.rowCount()
         self._table.insertRow(row)
 
         # Colour-code latency (green < 5s, yellow < 20s, red >= 20s)
         try:
-            lat_val = float(lat.rstrip("s"))
+            lat_val = float(r["latency"].rstrip("s"))
             if lat_val < 5:
                 bg = _color("#1a3a2a")
             elif lat_val < 20:
@@ -201,44 +213,54 @@ class BenchmarkPage(PageWidget):
         except Exception:
             bg = _color("#1e1e2e")
 
+        medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, "")
+        name = " ".join(p for p in (f"{rank}." if rank else "", medal, model) if p)
         items = [
-            (model, _color("#89b4fa")),
-            (lat, _color("#cdd6f4")),
-            (toks, _color("#a6adc8")),
-            (tps, _color("#a6e3a1")),
-            (qual, _color("#f5c2e7")),
-            (status, _color("#a6adc8")),
-            (preview, _color("#6c7086")),
+            (name, _color("#89b4fa")),
+            (r["latency"], _color("#cdd6f4")),
+            (r["tokens"], _color("#a6adc8")),
+            (r["tok_s"], _color("#a6e3a1")),
+            (r["quality"], _color("#f5c2e7")),
+            (r.get("status", "✅ Done"), _color("#a6adc8")),
+            (r["output"], _color("#6c7086")),
         ]
         for col, (text, fg) in enumerate(items):
             item = QTableWidgetItem(text)
             item.setForeground(fg)
             item.setBackground(bg)
+            if col == 0:
+                item.setData(Qt.ItemDataRole.UserRole, model)
             self._table.setItem(row, col, item)
 
-        self._results[model] = {
-            "latency": lat, "tokens": toks, "tok_s": tps,
-            "quality": qual, "output": preview,
-        }
+    def _finish(self) -> None:
+        """All models done — rank best → worst, re-sort the table, show the podium."""
+        self._run_all_btn.setEnabled(True)
+        self._stop_btn.setVisible(False)
+        ranked = sorted(
+            self._results.items(),
+            key=lambda kv: (
+                float(kv[1]["quality"].split("/")[0]) if kv[1]["quality"] != "—" else 0,
+                -float(kv[1]["latency"].rstrip("s")) if kv[1]["latency"] != "—" else 0,
+            ),
+            reverse=True,
+        )
+        # Rebuild the table so the best model sits on top
+        self._table.setSortingEnabled(False)
+        self._table.setRowCount(0)
+        for i, (model, r) in enumerate(ranked, 1):
+            self._insert_row(model, r, rank=i)
+        # The "1. 🥇 model" text sorts numerically, so force column 0 ascending
+        self._table.setSortingEnabled(True)
+        self._table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
 
-        self._running.discard(model)
-        if not self._running and not self._cancelled:
-            self._run_all_btn.setEnabled(True)
-            self._stop_btn.setVisible(False)
-            # Rank by quality then speed
-            ranked = sorted(
-                self._results.items(),
-                key=lambda kv: (
-                    float(kv[1]["quality"].split("/")[0]) if kv[1]["quality"] != "—" else 0,
-                    -float(kv[1]["latency"].rstrip("s")) if kv[1]["latency"] != "—" else 0,
-                ),
-                reverse=True,
-            )
-            self._status_label.setText(
-                f"Done — best: {ranked[0][0]} ({ranked[0][1]['quality']}, "
-                f"{ranked[0][1]['latency']})"
-                if ranked else "Done."
-            )
+        # Status line: full best → worst ranking
+        parts = [
+            f"{i}. {model} ({r['quality']}, {r['latency']})"
+            for i, (model, r) in enumerate(ranked, 1)
+        ]
+        self._status_label.setText(
+            ("🏁 Done — best → worst: " + "  →  ".join(parts)) if parts else "Done."
+        )
 
     @staticmethod
     def _score_output(prompt: str, output: str) -> int:
@@ -261,7 +283,7 @@ class BenchmarkPage(PageWidget):
         model_item = self._table.item(row, 0)
         if not model_item:
             return
-        model = model_item.text()
+        model = model_item.data(Qt.ItemDataRole.UserRole) or model_item.text()
         result = self._results.get(model)
         if not result:
             return
