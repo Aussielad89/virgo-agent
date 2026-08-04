@@ -667,14 +667,50 @@ try:
         def __init__(self, url: str = "http://127.0.0.1:8765") -> None:
             super().__init__()
             self._url = url
+            self._server_started = False
             lay = QVBoxLayout(self)
             lay.setContentsMargins(0, 0, 0, 0)
             self.view = QWebEngineView()
             lay.addWidget(self.view)
 
         def on_activate(self) -> None:
+            self._ensure_dashboard_server()
             if self.view.url().isEmpty():
                 self.view.setUrl(QUrl(self._url))
+
+        def _ensure_dashboard_server(self) -> None:
+            """Auto-start `virgo serve` (port 8765) in a daemon thread if down."""
+            if self._server_started:
+                return
+            self._server_started = True  # set first — avoid double-start races
+            try:
+                import socket
+
+                probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                try:
+                    probe.bind(("127.0.0.1", 8765))
+                    free = True
+                except OSError:
+                    free = False  # something already listening
+                finally:
+                    probe.close()
+                if not free:
+                    return
+                import threading
+
+                threading.Thread(
+                    target=self._run_server, name="virgo-dashboard", daemon=True
+                ).start()
+            except Exception as exc:  # noqa: BLE001
+                print(f"virgo_desktop: could not auto-start dashboard server ({exc})")
+
+        def _run_server(self) -> None:
+            try:
+                import server
+
+                server.serve(host="127.0.0.1", port=8765)
+            except Exception as exc:  # noqa: BLE001
+                print(f"virgo_desktop: dashboard server exited ({exc})")
 
 except Exception as exc:  # noqa: BLE001
     print(f"virgo_desktop: web dashboard tab unavailable ({exc})")
