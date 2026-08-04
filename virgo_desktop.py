@@ -966,6 +966,7 @@ class VirgoDesktopWindow(QMainWindow):
         self.nav_list = NavList()
         self.nav_list.setObjectName("navList")
         self.nav_list.currentItemChanged.connect(lambda cur, _prev: self._on_nav_selected(cur))
+        self.nav_list.itemClicked.connect(self._on_nav_header_click)
         self.nav_list.reordered.connect(self._on_nav_reordered)
         self.nav_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.nav_list.customContextMenuRequested.connect(self._nav_context_menu)
@@ -1181,6 +1182,12 @@ class VirgoDesktopWindow(QMainWindow):
         self.nav_list.clear()
         self._nav_items.clear()
         self._nav_headers: dict[str, QListWidgetItem] = {}
+        saved = self._config.get("sidebar_collapsed_groups")
+        if saved is None:
+            # Core stays open; the long secondary groups fold shut by default.
+            self._group_collapsed = {"Core": False, "Agents": True, "System": True, "Extras": True}
+        else:
+            self._group_collapsed = {g: (g in saved) for g in ("Core", "Agents", "System", "Extras")}
         meta = {pid: (label, emoji, group) for pid, label, emoji, group in SIDEBAR_ITEMS}
         last_group = None
         for pid in self.nav_order:
@@ -1188,7 +1195,8 @@ class VirgoDesktopWindow(QMainWindow):
                 continue  # optional pages (e.g. webview w/o QtWebEngine) are skipped
             label, emoji, group = meta.get(pid, (pid, "•", "Other"))
             if group != last_group:
-                h = QListWidgetItem(f"  {group.upper()}")
+                arrow = "▸" if self._group_collapsed.get(group, False) else "▾"
+                h = QListWidgetItem(f"  {arrow}  {group.upper()}")
                 h.setFlags(Qt.ItemFlag.NoItemFlags)
                 h.setSizeHint(QSize(0, 24))
                 f = h.font()
@@ -1206,6 +1214,28 @@ class VirgoDesktopWindow(QMainWindow):
             self.nav_list.addItem(item)
             self._nav_items[pid] = item
         self._filter_nav(self.nav_filter.text())
+
+    def _on_nav_header_click(self, item: QListWidgetItem) -> None:
+        """Click a group header to fold/unfold its pages."""
+        group = next((g for g, h in self._nav_headers.items() if h is item), None)
+        if group is None:
+            return
+        self._group_collapsed[group] = not self._group_collapsed.get(group, False)
+        h = self._nav_headers[group]
+        h.setText(f"  {'▸' if self._group_collapsed[group] else '▾'}  {group.upper()}")
+        self._config["sidebar_collapsed_groups"] = [g for g, c in self._group_collapsed.items() if c]
+        self._save_config()
+        if not self.nav_filter.text().strip():
+            self._apply_group_visibility()
+
+    def _apply_group_visibility(self) -> None:
+        """Show/hide page items per collapse state (used when the filter is empty)."""
+        for pid, item in self._nav_items.items():
+            group = next((g for p, _l, _e, g in SIDEBAR_ITEMS if p == pid), "")
+            folded = self._group_collapsed.get(group, False) and not self._sidebar_collapsed
+            item.setHidden(folded)
+        for h in self._nav_headers.values():
+            h.setHidden(self._sidebar_collapsed)
 
     def _on_nav_selected(self, item: QListWidgetItem | None) -> None:
         if item is None:
@@ -1229,10 +1259,7 @@ class VirgoDesktopWindow(QMainWindow):
         q = text.strip().lower()
         self.nav_list.setDragEnabled(not q)
         if not q:
-            for pid, item in self._nav_items.items():
-                item.setHidden(False)
-            for h in self._nav_headers.values():
-                h.setHidden(self._sidebar_collapsed)
+            self._apply_group_visibility()
             return
         visible_groups: set[str] = set()
         for pid, item in self._nav_items.items():
@@ -1311,6 +1338,7 @@ class VirgoDesktopWindow(QMainWindow):
         for pid, item in self._nav_items.items():
             label, emoji = next(((l, e) for p, l, e, _g in SIDEBAR_ITEMS if p == pid), (pid, "•"))
             item.setText(emoji if self._sidebar_collapsed else f"{emoji}  {label}")
+        self._apply_group_visibility()
         for h in self._nav_headers.values():
             h.setHidden(self._sidebar_collapsed)
         self.nav_filter.setVisible(not self._sidebar_collapsed)
