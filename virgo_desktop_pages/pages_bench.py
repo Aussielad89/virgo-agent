@@ -214,7 +214,8 @@ class BenchmarkPage(PageWidget):
             bg = _color("#1e1e2e")
 
         medal = {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, "")
-        name = " ".join(p for p in (f"{rank}." if rank else "", medal, model) if p)
+        # Zero-pad so the text sort ("01." < "02." < ... < "10.") matches the rank order
+        name = " ".join(p for p in (f"{rank:02d}." if rank else "", medal, model) if p)
         items = [
             (name, _color("#89b4fa")),
             (r["latency"], _color("#cdd6f4")),
@@ -253,14 +254,20 @@ class BenchmarkPage(PageWidget):
         self._table.setSortingEnabled(True)
         self._table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
 
-        # Status line: full best → worst ranking
+        # Status line: top of the podium + total (the table carries the full order)
         parts = [
             f"{i}. {model} ({r['quality']}, {r['latency']})"
             for i, (model, r) in enumerate(ranked, 1)
         ]
-        self._status_label.setText(
-            ("🏁 Done — best → worst: " + "  →  ".join(parts)) if parts else "Done."
-        )
+        if not parts:
+            self._status_label.setText("Done.")
+        elif len(parts) <= 3:
+            self._status_label.setText("🏁 Done — best → worst: " + "  →  ".join(parts))
+        else:
+            self._status_label.setText(
+                "🏁 Done — best → worst: " + "  →  ".join(parts[:3])
+                + f"  →  … ({len(ranked)} models ranked)"
+            )
 
     @staticmethod
     def _score_output(prompt: str, output: str) -> int:
