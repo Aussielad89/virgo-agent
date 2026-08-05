@@ -1,0 +1,55 @@
+name: virgo-agent
+
+# Run Virgo's autonomous agent as a CI job. Trigger on workflow_dispatch
+# with a goal, or on pushes to branches that set a goal via the input.
+on:
+  workflow_dispatch:
+    inputs:
+      goal:
+        description: "Goal for the autonomous agent"
+        required: true
+        type: string
+      llm:
+        description: "Enable LLM-backed reasoning (needs LLM_BASE_URL reachable from CI)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install virgo
+        run: |
+          pip install -e .
+          pip install pyyaml
+
+      - name: Run autonomous agent
+        id: agent
+        env:
+          VIRGO_CI_GOAL: ${{ github.event.inputs.goal }}
+          VIRGO_CI_LLM: ${{ github.event.inputs.llm && '1' || '0' }}
+        run: |
+          python ci_agent.py
+        continue-on-error: true
+
+      - name: Upload agent session artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: virgo-session
+          path: |
+            .virgo_memory/sessions/
+            .virgo_memory/artifacts/
+          if-no-files-found: ignore
+
+      - name: Fail on unmet goal
+        if: steps.agent.outcome == 'failure'
+        run: |
+          echo "::error::Agent did not satisfy the goal — see the step summary above."
+          exit 1

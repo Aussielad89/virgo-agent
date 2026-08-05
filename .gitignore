@@ -97,3 +97,12 @@ _test_*.png
 _render_test.py
 _test_virgo_structure.py
 .hermes/
+
+# local junk
+virgo-env/
+nope/
+_agent_result.txt
+top_llm_repos.csv
+urllib.txt
+virgo_app_screenshot.png
+analyze_virgo_ui.py

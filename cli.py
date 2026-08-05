@@ -972,6 +972,18 @@ def cmd_agent(args: argparse.Namespace) -> None:
     client = None
     if args.llm:
         try:
+            # Benchmark-driven auto-routing when requested.
+            if getattr(args, "route", False):
+                try:
+                    from model_router import get_router
+
+                    router = get_router()
+                    routed = router.route("agent", hint=args.goal)
+                    if routed:
+                        os.environ["MODEL_AGENT"] = routed
+                        print(f"  [virgo] routed to model: {routed}")
+                except Exception as exc:
+                    print(f"  [virgo] routing unavailable ({exc})")
             client = _main.get_client_for("agent")
         except Exception as exc:
             print(f"[virgo] LLM client unavailable ({exc}) — running deterministic loop")
@@ -988,9 +1000,18 @@ def cmd_agent(args: argparse.Namespace) -> None:
         use_experience=not args.no_experience,
         mcp_specs=args.mcp or None,
         stream=_main.STREAM_OUTPUT,
+        session_id=getattr(args, "session_id", None),
+        resume_from=getattr(args, "resume", None),
+        checkpoint_every=getattr(args, "checkpoint_every", 0),
+        save_session=not getattr(args, "no_session", False),
+        ask_approval=getattr(args, "ask", False),
     )
 
     print(f"\n  {icon('rocket')}  Virgo Agent — goal: {args.goal}")
+    if config.resume_from:
+        print(f"  {icon('history')}  Resuming session: {config.resume_from}")
+    if config.ask_approval:
+        print(f"  {icon('shield')}  Human approval enabled for risky tools")
     runtime = build_runtime(client=client, config=config, include_mcp=not args.no_mcp)
     result = runtime.run(args.goal)
 
@@ -1001,6 +1022,8 @@ def cmd_agent(args: argparse.Namespace) -> None:
         ev = result.evaluation
         print(f"  Score:   {getattr(ev, 'score', 'n/a')}")
         print(f"  Why:     {getattr(ev, 'rationale', '')[:200]}")
+    if getattr(result, "session_id", None):
+        print(f"  Session: {result.session_id}  (resume with --resume {result.session_id})")
     print(f"  {'=' * 60}")
     if result.lessons:
         print("  Lessons learned:")
@@ -1020,6 +1043,322 @@ def cmd_agent(args: argparse.Namespace) -> None:
         print(f"\n  [virgo] Transcript saved: {out_path}")
     except Exception as exc:  # pragma: no cover
         print(f"\n  [virgo] Could not save transcript: {exc}")
+
+    # ── New: artifacts, budget, benchmark evidence ──────────────────
+    try:
+        from artifact_store import get_artifacts
+
+        get_artifacts().store(
+            f"agent/{result.session_id or 'run'}",
+            {"goal": result.goal, "passed": result.passed,
+             "score": getattr(getattr(result, "evaluation", None), "score", None),
+             "transcript": result.transcript[:20000]},
+            meta={"tool": "agent", "status": "pass" if result.passed else "fail"},
+        )
+    except Exception as exc:  # pragma: no cover
+        print(f"  [virgo] Artifact store failed: {exc}")
+
+    budget_limit = getattr(args, "budget", None)
+    try:
+        from budget import get_budget
+
+        tracker = get_budget(limit=budget_limit)
+        model = getattr(client, "model", None) or config.model
+        tracker.spend(model, result.transcript, goal=result.goal)
+        print(f"  [virgo] {tracker.status_text()}")
+    except Exception as exc:  # pragma: no cover
+        print(f"  [virgo] Budget tracking failed: {exc}")
+
+    if getattr(args, "route", False):
+        try:
+            from model_router import get_router
+
+            router = get_router()
+            ev = result.evaluation
+            router.record(
+                model=getattr(client, "model", None) or config.model,
+                task_type="agent",
+                passed=result.passed,
+                score=float(getattr(ev, "score", 0.0) or 0.0),
+                cost=0.0,
+                latency_s=0.0,
+            )
+        except Exception as exc:  # pragma: no cover
+            print(f"  [virgo] Benchmark record failed: {exc}")
+
+
+# ── New brainstorm feature commands ────────────────────────────────────
+
+
+def cmd_sessions(args: argparse.Namespace) -> None:
+    """List / show / resume / delete checkpointed agent sessions."""
+    from session_store import get_store
+
+    store = get_store()
+    if args.sessions_command == "list":
+        rows = store.list_sessions()
+        if not rows:
+            print("  No saved sessions yet. Run 'virgo agent --checkpoint-every 1 <goal>'.")
+            return
+        print(f"\n  {icon('history')}  Saved sessions ({len(rows)}):\n")
+        for r in rows:
+            print(f"    {r['session_id']}")
+            print(f"      {r['status']}  steps={r['steps_used']}  tools={', '.join(r['tools_used']) or 'none'}")
+            print(f"      goal: {r['goal'][:80]}")
+            print(f"      started: {r['started_at']}")
+    elif args.sessions_command == "show":
+        snap = store.load_checkpoint(args.session)
+        if snap is None:
+            print(f"  No session found: {args.session}")
+            return
+        print(f"\n  Session: {snap.session_id}  [{snap.status}]")
+        print(f"  Goal:    {snap.goal}")
+        print(f"  Steps:   {snap.steps_used}  |  Tools: {', '.join(snap.tools_used) or 'none'}")
+        print(f"  Started: {snap.started_at}\n")
+        events = store.read_events(snap.session_id)
+        for ev in events[-30:]:
+            detail = f"  ({ev.get('detail') or ''})" if ev.get("detail") else ""
+            print(f"    [{ev['phase']}] {ev['message']}{detail}")
+        tpath = store._transcript_path(snap.session_id)
+        if tpath.exists():
+            print(f"\n  Transcript: {tpath}")
+    elif args.sessions_command == "resume":
+        from agent_runtime import AgentConfig, build_runtime
+
+        cfg = AgentConfig(
+            resume_from=args.session,
+            max_steps=args.steps,
+            max_retries=args.retries,
+            use_experience=True,
+        )
+        import main as _main
+
+        client = None
+        if args.llm:
+            try:
+                client = _main.get_client_for("agent")
+            except Exception as exc:
+                print(f"[virgo] LLM client unavailable ({exc})")
+        runtime = build_runtime(client=client, config=cfg, include_mcp=not args.no_mcp)
+        snap = store.load_checkpoint(args.session)
+        result = runtime.run(snap.goal if snap else "resume")
+        print(f"\n  Result: {'PASS' if result.passed else 'FAIL'} ({result.steps} steps)")
+    elif args.sessions_command == "delete":
+        ok = store.delete(args.session)
+        print(f"  Deleted session {args.session}" if ok else f"  No session found: {args.session}")
+
+
+def cmd_artifacts(args: argparse.Namespace) -> None:
+    """List / show / store / diff / delete versioned artifacts."""
+    from artifact_store import get_artifacts
+
+    store = get_artifacts()
+    if args.artifacts_command == "list":
+        rows = store.list()
+        if not rows:
+            print("  No artifacts yet.")
+            return
+        print(f"\n  {icon('file')}  Artifacts ({len(rows)}):\n")
+        for r in rows:
+            meta = f"  meta={r['meta']}" if r["meta"] else ""
+            print(f"    {r['name']}  v{r['latest']}/{r['versions']}  @ {r['updated_at']}{meta}")
+    elif args.artifacts_command == "show":
+        try:
+            art = store.get(args.name, args.version)
+        except KeyError as exc:
+            print(f"  {exc}")
+            return
+        print(f"\n  {art['version']} @ {art['ts']}  meta={art['meta']}")
+        print("  " + "=" * 40)
+        text = art["data"]
+        if not isinstance(text, str):
+            import json as _json
+
+            text = _json.dumps(text, ensure_ascii=False, indent=2)
+        print(text[:4000])
+    elif args.artifacts_command == "store":
+        version = store.store(args.name, args.data, as_text=True)
+        print(f"  Stored {args.name} as v{version}")
+    elif args.artifacts_command == "diff":
+        print(store.diff(args.name, args.v1, args.v2))
+    elif args.artifacts_command == "delete":
+        ok = store.delete(args.name)
+        print(f"  Deleted {args.name}" if ok else f"  No artifact: {args.name}")
+
+
+def cmd_recall(args: argparse.Namespace) -> None:
+    """Unified memory recall across experience, learning, semantic backends."""
+    from memory_store import get_unified
+
+    mem = get_unified()
+    hits = mem.recall(" ".join(args.query), k=args.k)
+    if not hits:
+        print("  (nothing relevant remembered yet)")
+        return
+    print(f"\n  {icon('search')}  Recalled {len(hits)} memory entr(ies):\n")
+    for e in hits:
+        status = "OK" if e.get("success") else "FAIL"
+        print(f"    [{status}][{e.get('source','?')}] {str(e.get('goal',''))[:90]}")
+        lesson = e.get("lesson") or e.get("outcome") or ""
+        if lesson:
+            print(f"      lesson: {str(lesson)[:160]}")
+
+
+def cmd_profile(args: argparse.Namespace) -> None:
+    """Long-term user profile: list / get / set / remove facts."""
+    from memory_store import get_unified
+
+    profile = get_unified().profile
+    if args.profile_command == "list":
+        facts = profile.facts()
+        if not facts:
+            print("  (no profile facts yet — use 'virgo profile set key value')")
+            return
+        print(f"\n  {icon('virgo')}  Profile facts:\n")
+        for f in facts:
+            print(f"    {f['key']}: {f['value']}   (learned {f['ts']})")
+    elif args.profile_command == "get":
+        print(f"  {args.key}: {profile.get(args.key, '(not set)')}")
+    elif args.profile_command == "set":
+        profile.set(args.key, args.value)
+        print(f"  Remembered {args.key} = {args.value}")
+    elif args.profile_command == "remove":
+        ok = profile.remove(args.key)
+        print(f"  Removed {args.key}" if ok else f"  No fact: {args.key}")
+
+
+def cmd_runbook(args: argparse.Namespace) -> None:
+    """Generate or list runbooks distilled from repeated failures."""
+    from runbook import get_runbooks
+
+    gen = get_runbooks()
+    if args.runbook_command == "generate":
+        written = gen.generate(min_failures=args.min_failures)
+        if not written:
+            print("  No repeated-failure clusters found yet (need >= 2 similar failures).")
+        else:
+            print(f"\n  {icon('sparkle')}  Wrote {len(written)} runbook(s):")
+            for p in written:
+                print(f"    - {p}")
+    elif args.runbook_command == "list":
+        files = gen.list_runbooks()
+        if not files:
+            print("  No runbooks yet. Run 'virgo runbook generate'.")
+            return
+        print(f"\n  {icon('sparkle')}  Runbooks ({len(files)}):")
+        for p in files:
+            print(f"    - {p}")
+
+
+def cmd_route(args: argparse.Namespace) -> None:
+    """Pick a model for a task, or record/report benchmark evidence."""
+    from model_router import get_router
+
+    router = get_router()
+    if args.route_command == "pick":
+        picked = router.route(args.task, hint=args.hint or "")
+        print(f"  → {picked}  (for task type '{args.task}')")
+        print("  (benchmark evidence: " +
+              ("yes" if router._records else "none — using config defaults + size heuristic") + ")")
+    elif args.route_command == "record":
+        router.record(
+            model=args.model,
+            task_type=args.task,
+            passed=args.pass_run,
+            score=args.score,
+            cost=args.cost,
+            latency_s=args.latency,
+        )
+        print(f"  Recorded benchmark: {args.task} <- {args.model} ({'PASS' if args.pass_run else 'FAIL'})")
+    elif args.route_command == "report":
+        print(router.report(task_type=args.task or None))
+
+
+def cmd_rag(args: argparse.Namespace) -> None:
+    """Query the local knowledge base (+ virtual notes), or manage it."""
+    from local_rag import get_rag
+
+    rag = get_rag()
+    if args.rag_command == "query":
+        q = " ".join(args.query)
+        hits = rag.query(q, k=args.k)
+        if not hits:
+            print("  (no relevant knowledge found)")
+            return
+        print(f"\n  {icon('search')}  Knowledge hits for: {q}\n")
+        for h in hits:
+            print(f"    [from {h['source']}]")
+            print(f"      {h['text'][:300].replace(chr(10), ' ')}")
+            print()
+    elif args.rag_command == "status":
+        st = rag.status()
+        print(f"\n  RAG backend:   {st.get('backend', '?')}")
+        print(f"  KB docs:       {st.get('doc_count', 0)}")
+        print(f"  Chunks:        {st.get('chunk_count', 0)}")
+        print(f"  Virtual docs:  {st.get('virtual_docs', 0)}")
+        print(f"  Total:         {st.get('total_docs', 0)}")
+    elif args.rag_command == "note":
+        rag.add_virtual(args.name, args.text)
+        print(f"  Added virtual note '{args.name}' ({len(args.text)} chars)")
+    elif args.rag_command == "notes":
+        docs = rag.virtual_docs()
+        if not docs:
+            print("  No virtual notes.")
+            return
+        for name, text in docs.items():
+            print(f"    {name}: {text[:100]}")
+
+
+def cmd_heal(args: argparse.Namespace) -> None:
+    """Supervise a command: restart on death/stall with backoff."""
+    from autoheal import supervise_forever
+
+    cmd = [args.command] + args.arg
+    print(f"  {icon('shield')}  Supervising: {' '.join(cmd)}")
+    print(f"  Restart budget: {args.max_restarts} per {args.window}s | stall > {args.stall}s\n")
+    supervise_forever(
+        args.name,
+        cmd,
+        stall_seconds=args.stall,
+        max_restarts=args.max_restarts,
+        window_seconds=args.window,
+    )
+
+
+def cmd_budget(args: argparse.Namespace) -> None:
+    """Show / set / list spend for the budget tracker."""
+    from budget import get_budget
+
+    tracker = get_budget()
+    if args.budget_command == "status":
+        print(f"\n  {tracker.status_text()}")
+        v = tracker.check()
+        if v["limit"]:
+            print(f"  Remaining today: ${v['remaining']:.4f}")
+    elif args.budget_command == "set":
+        tracker.set_limit(args.limit)
+        print(f"  Daily budget limit set to ${args.limit:.2f}")
+    elif args.budget_command == "recent":
+        rows = tracker.recent(args.limit)
+        if not rows:
+            print("  No spend recorded yet.")
+            return
+        print(f"\n  Recent spend ({len(rows)}):")
+        for r in rows:
+            print(f"    {r['ts']}  {r['model']}  ${r['cost']:.4f}  ({r['estimated_tokens']} tok)  goal={r['goal'][:50]}")
+
+
+def cmd_sandbox_docker(args: argparse.Namespace) -> None:
+    """Run a command inside a throwaway container (isolated execution)."""
+    from docker_sandbox import DockerSandbox, docker_available
+
+    if not docker_available():
+        print("  ERROR: Docker is not available. Install Docker and ensure the daemon is running.")
+        return
+    box = DockerSandbox(image=args.image, timeout=args.timeout, mount=args.mount)
+    print(f"  {icon('shield')}  Container ({args.image}) — mount: {args.mount} (read-only)\n")
+    out = box.run_capture(args.command, env={"VIRGO_CONTAINER": "1"})
+    print(out)
 
 
 def _cmd_chat_upload(history: list[dict[str, str]], arg: str) -> None:
@@ -2349,7 +2688,177 @@ def main() -> None:
     p_agent.add_argument(
         "--no-stream", action="store_true", help="Disable streaming (default: on when interactive)"
     )
+    # ── New: session checkpoint/resume, approval, budget, routing ──
+    p_agent.add_argument(
+        "--resume", default=None,
+        help="Resume a previously saved agent session by its session id",
+    )
+    p_agent.add_argument(
+        "--session-id", default=None,
+        help="Explicit session id (default: auto-generated from the goal)",
+    )
+    p_agent.add_argument(
+        "--checkpoint-every", type=int, default=0,
+        help="Save a checkpoint every N ReAct steps (default: 0 = off)",
+    )
+    p_agent.add_argument(
+        "--no-session", action="store_true",
+        help="Do not record events/checkpoints for this run",
+    )
+    p_agent.add_argument(
+        "--ask", action="store_true",
+        help="Ask a human to approve risky tool calls (shell/python_run) before they run",
+    )
+    p_agent.add_argument(
+        "--budget", type=float, default=None,
+        help="Daily spend limit in USD for this and future runs (0 = unlimited)",
+    )
+    p_agent.add_argument(
+        "--route", action="store_true",
+        help="Auto-route the role model via benchmark evidence (ModelRouter)",
+    )
+    p_agent.add_argument(
+        "--rag", action="store_true",
+        help="Inject retrieved knowledge-base context into the agent prompt",
+    )
     p_agent.set_defaults(func=cmd_agent)
+
+    # ── New: sessions (checkpoint/resume) ──
+    p_sessions = sub.add_parser("sessions", help="Manage checkpointed agent sessions")
+    sessions_sub = p_sessions.add_subparsers(dest="sessions_command", required=True)
+    p_sess_list = sessions_sub.add_parser("list", help="List saved sessions")
+    p_sess_list.set_defaults(func=cmd_sessions)
+    p_sess_show = sessions_sub.add_parser("show", help="Show a session's events + transcript")
+    p_sess_show.add_argument("session", help="Session id")
+    p_sess_show.set_defaults(func=cmd_sessions)
+    p_sess_resume = sessions_sub.add_parser("resume", help="Resume a paused/interrupted session")
+    p_sess_resume.add_argument("session", help="Session id to resume")
+    p_sess_resume.add_argument("--llm", action="store_true", help="Use LLM-backed policies")
+    p_sess_resume.add_argument("--steps", "-i", type=int, default=12)
+    p_sess_resume.add_argument("--retries", "-r", type=int, default=2)
+    p_sess_resume.add_argument("--no-mcp", action="store_true", help="Disable MCP bridge")
+    p_sess_resume.set_defaults(func=cmd_sessions)
+    p_sess_del = sessions_sub.add_parser("delete", help="Delete a session")
+    p_sess_del.add_argument("session", help="Session id")
+    p_sess_del.set_defaults(func=cmd_sessions)
+
+    # ── New: artifacts (versioned outputs + diff) ──
+    p_art = sub.add_parser("artifacts", help="Manage versioned run artifacts")
+    art_sub = p_art.add_subparsers(dest="artifacts_command", required=True)
+    p_art_list = art_sub.add_parser("list", help="List artifacts")
+    p_art_list.set_defaults(func=cmd_artifacts)
+    p_art_show = art_sub.add_parser("show", help="Show an artifact version")
+    p_art_show.add_argument("name", help="Artifact name")
+    p_art_show.add_argument("--version", "-v", type=int, default=None, help="Version (default: latest)")
+    p_art_show.set_defaults(func=cmd_artifacts)
+    p_art_store = art_sub.add_parser("store", help="Store a new artifact version")
+    p_art_store.add_argument("name", help="Artifact name")
+    p_art_store.add_argument("data", help="Text payload")
+    p_art_store.set_defaults(func=cmd_artifacts)
+    p_art_diff = art_sub.add_parser("diff", help="Diff two versions of an artifact")
+    p_art_diff.add_argument("name", help="Artifact name")
+    p_art_diff.add_argument("--v1", type=int, default=None, help="Older version (default: second-newest)")
+    p_art_diff.add_argument("--v2", type=int, default=None, help="Newer version (default: newest)")
+    p_art_diff.set_defaults(func=cmd_artifacts)
+    p_art_del = art_sub.add_parser("delete", help="Delete an artifact")
+    p_art_del.add_argument("name", help="Artifact name")
+    p_art_del.set_defaults(func=cmd_artifacts)
+
+    # ── New: unified memory recall ──
+    p_recall = sub.add_parser("recall", help="Recall past lessons across all memory backends")
+    p_recall.add_argument("query", nargs="+", help="What to recall")
+    p_recall.add_argument("--k", type=int, default=3, help="Max results (default: 3)")
+    p_recall.set_defaults(func=cmd_recall)
+
+    # ── New: long-term user profile ──
+    p_prof = sub.add_parser("profile", help="Manage the long-term user profile")
+    prof_sub = p_prof.add_subparsers(dest="profile_command", required=True)
+    p_prof_list = prof_sub.add_parser("list", help="List remembered facts")
+    p_prof_list.set_defaults(func=cmd_profile)
+    p_prof_get = prof_sub.add_parser("get", help="Get one fact")
+    p_prof_get.add_argument("key")
+    p_prof_get.set_defaults(func=cmd_profile)
+    p_prof_set = prof_sub.add_parser("set", help="Remember a fact")
+    p_prof_set.add_argument("key")
+    p_prof_set.add_argument("value")
+    p_prof_set.set_defaults(func=cmd_profile)
+    p_prof_rm = prof_sub.add_parser("remove", help="Forget a fact")
+    p_prof_rm.add_argument("key")
+    p_prof_rm.set_defaults(func=cmd_profile)
+
+    # ── New: runbooks from repeated failures ──
+    p_rb = sub.add_parser("runbook", help="Distill repeated failures into runbooks")
+    rb_sub = p_rb.add_subparsers(dest="runbook_command", required=True)
+    p_rb_gen = rb_sub.add_parser("generate", help="Write runbooks for failure clusters")
+    p_rb_gen.add_argument("--min-failures", "-m", type=int, default=2, help="Cluster size threshold")
+    p_rb_gen.set_defaults(func=cmd_runbook)
+    p_rb_list = rb_sub.add_parser("list", help="List existing runbooks")
+    p_rb_list.set_defaults(func=cmd_runbook)
+
+    # ── New: model router ──
+    p_route = sub.add_parser("route", help="Benchmark-driven model routing")
+    route_sub = p_route.add_subparsers(dest="route_command", required=True)
+    p_route_pick = route_sub.add_parser("pick", help="Pick the best model for a task type")
+    p_route_pick.add_argument("task", help="Task type (planner/generator/fixer/chat/agent)")
+    p_route_pick.add_argument("--hint", default="", help="Extra hint (big/code/reason)")
+    p_route_pick.set_defaults(func=cmd_route)
+    p_route_rec = route_sub.add_parser("record", help="Record a benchmark result")
+    p_route_rec.add_argument("model", help="Model name")
+    p_route_rec.add_argument("task", help="Task type")
+    p_route_rec.add_argument("--pass", dest="pass_run", action="store_true", default=False, help="Run passed")
+    p_route_rec.add_argument("--score", type=float, default=0.0)
+    p_route_rec.add_argument("--cost", type=float, default=0.0)
+    p_route_rec.add_argument("--latency", type=float, default=0.0)
+    p_route_rec.set_defaults(func=cmd_route)
+    p_route_rep = route_sub.add_parser("report", help="Show routing evidence")
+    p_route_rep.add_argument("--task", default=None, help="Filter by task type")
+    p_route_rep.set_defaults(func=cmd_route)
+
+    # ── New: local RAG ──
+    p_rag = sub.add_parser("rag", help="Query the local knowledge base")
+    rag_sub = p_rag.add_subparsers(dest="rag_command", required=True)
+    p_rag_q = rag_sub.add_parser("query", help="Search kb/ + virtual notes")
+    p_rag_q.add_argument("query", nargs="+")
+    p_rag_q.add_argument("--k", type=int, default=3)
+    p_rag_q.set_defaults(func=cmd_rag)
+    p_rag_s = rag_sub.add_parser("status", help="Index/backend status")
+    p_rag_s.set_defaults(func=cmd_rag)
+    p_rag_n = rag_sub.add_parser("note", help="Add a virtual note to the corpus")
+    p_rag_n.add_argument("name")
+    p_rag_n.add_argument("text")
+    p_rag_n.set_defaults(func=cmd_rag)
+    p_rag_l = rag_sub.add_parser("notes", help="List virtual notes")
+    p_rag_l.set_defaults(func=cmd_rag)
+
+    # ── New: auto-healing supervision ──
+    p_heal = sub.add_parser("heal", help="Supervise a command (restart on death/stall)")
+    p_heal.add_argument("name", help="Supervision name")
+    p_heal.add_argument("command", help="Command to run")
+    p_heal.add_argument("arg", nargs="*", default=[], help="Command arguments")
+    p_heal.add_argument("--stall", type=int, default=30, help="Stall timeout seconds (default: 30)")
+    p_heal.add_argument("--max-restarts", type=int, default=3, help="Restart budget per window")
+    p_heal.add_argument("--window", type=int, default=300, help="Restart window seconds")
+    p_heal.set_defaults(func=cmd_heal)
+
+    # ── New: budget tracking ──
+    p_budget = sub.add_parser("budget", help="Cost tracking with overrun alerts")
+    budget_sub = p_budget.add_subparsers(dest="budget_command", required=True)
+    p_bud_s = budget_sub.add_parser("status", help="Current spend vs limit")
+    p_bud_s.set_defaults(func=cmd_budget)
+    p_bud_set = budget_sub.add_parser("set", help="Set the daily limit (USD)")
+    p_bud_set.add_argument("limit", type=float)
+    p_bud_set.set_defaults(func=cmd_budget)
+    p_bud_r = budget_sub.add_parser("recent", help="Recent spend entries")
+    p_bud_r.add_argument("--limit", type=int, default=10)
+    p_bud_r.set_defaults(func=cmd_budget)
+
+    # ── New: docker sandbox ──
+    p_docker = sub.add_parser("sandbox-docker", help="Run a command in a throwaway container")
+    p_docker.add_argument("command", help="Command to run inside the container")
+    p_docker.add_argument("--image", default="python:3.11-slim", help="Container image")
+    p_docker.add_argument("--timeout", type=int, default=60, help="Seconds before timeout")
+    p_docker.add_argument("--mount", default=None, help="Host dir to mount (default: cwd)")
+    p_docker.set_defaults(func=cmd_sandbox_docker)
 
     # chat
     p_chat = sub.add_parser("chat", help="Interactive chat with virgo")
