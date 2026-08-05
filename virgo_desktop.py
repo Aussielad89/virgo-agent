@@ -311,6 +311,14 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     QPushButton:hover {
         background: @border2@;
     }
+    QPushButton:disabled {
+        background: @border@;
+        border-color: @border@;
+        color: @disabled@;
+    }
+    QPushButton:focus {
+        border: 1px solid @accent@;
+    }
     QPushButton#sendBtn {
         background: @accent@;
         color: @bg@;
@@ -320,6 +328,10 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     }
     QPushButton#sendBtn:hover {
         background: @accentbb@;
+    }
+    QPushButton#sendBtn:disabled {
+        background: @border@;
+        color: @disabled@;
     }
     QPushButton:pressed {
         background: @sidebar_active@;
@@ -471,6 +483,80 @@ def _build_stylesheet(t: dict[str, str]) -> str:
         background: @border@; border: 1px solid @border2@;
         border-radius: 4px; color: @text@;
         padding: 4px 8px; font-size: 12px;
+    }
+    QTableWidget {
+        background: @surface@;
+        border: 1px solid @border@;
+        border-radius: 6px;
+        color: @text@;
+        gridline-color: @border@;
+        selection-background-color: @border2@;
+        selection-color: @text@;
+        alternate-background-color: @accent25@;
+    }
+    QTableWidget::item { padding: 4px 8px; }
+    QTableWidget::item:hover { background: @border@; }
+    QTableCornerButton::section { background: @surface@; border: none; }
+    QHeaderView::section {
+        background: @surface@;
+        color: @subtext@;
+        border: none;
+        border-bottom: 2px solid @border@;
+        border-right: 1px solid @border@;
+        padding: 6px 8px;
+        font-weight: bold;
+    }
+    QHeaderView::section:hover { background: @border@; color: @text@; }
+    QMenu {
+        background: @surface@;
+        border: 1px solid @border2@;
+        border-radius: 8px;
+        padding: 4px;
+    }
+    QMenu::item {
+        padding: 6px 22px 6px 12px;
+        border-radius: 5px;
+        color: @text@;
+    }
+    QMenu::item:selected { background: @border2@; color: @accent@; }
+    QMenu::item:disabled { color: @disabled@; }
+    QMenu::separator { height: 1px; background: @border@; margin: 4px 8px; }
+    QMessageBox, QDialog {
+        background-color: @bg@;
+        color: @text@;
+    }
+    QMessageBox QLabel { color: @text@; }
+    QStatusBar {
+        background: @surface@;
+        color: @subtext@;
+        border-top: 1px solid @border@;
+    }
+    QStatusBar::item { border: none; }
+    QScrollArea { background: transparent; border: none; }
+    QScrollArea > QWidget > QWidget { background: transparent; }
+    QSpinBox {
+        background: @surface@;
+        border: 1px solid @border@;
+        border-radius: 6px;
+        padding: 4px 8px;
+        color: @text@;
+    }
+    QSpinBox::up-button, QSpinBox::down-button {
+        background: @border@;
+        border: none;
+        width: 18px;
+    }
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: @border2@; }
+    QRadioButton { color: @text@; spacing: 6px; }
+    QRadioButton::indicator {
+        width: 15px; height: 15px;
+        border: 1px solid @border2@;
+        border-radius: 8px;
+        background: @surface@;
+    }
+    QRadioButton::indicator:checked {
+        background: @accent@;
+        border: 3px solid @surface@;
     }
     """)
     for key, val in t.items():
@@ -1044,7 +1130,7 @@ class VirgoDesktopWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.status_bar.setObjectName("statusBar")
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Virgo Desktop · ready")
+        self.status_bar.showMessage(f"Virgo Desktop  v{APP_VERSION} · ready")
 
         # ── Status bar widgets ──
         # Persona switcher
@@ -1399,7 +1485,7 @@ class VirgoDesktopWindow(QMainWindow):
             return
         self._real_close = False
         self.tray = QSystemTrayIcon(self)
-        self.tray.setToolTip(APP_NAME)
+        self.tray.setToolTip(f"{APP_NAME}  v{APP_VERSION}")
         # Use the branded mark when available, otherwise a solid fallback
         import os
 
