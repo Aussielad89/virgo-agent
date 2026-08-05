@@ -20,7 +20,7 @@ authors = [
 ]
 
 [project.optional-dependencies]
-web = ["fastapi", "uvicorn", "jinja2", "sse-starlette"]
+web = ["fastapi", "uvicorn", "jinja2", "sse-starlette", "flask"]
 desktop = ["PyQt6>=6.6", "psutil>=5.9"]
 dev = ["pytest>=7", "pytest-cov>=4", "pytest-xdist>=3", "mypy>=1", "ruff>=0.5"]
 bot = ["python-telegram-bot>=21"]

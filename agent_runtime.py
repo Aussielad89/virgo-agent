@@ -71,6 +71,16 @@ except Exception as exc:  # type: ignore
     def evaluate(*a, **k):  # type: ignore
         return None
 
+try:
+    from session_store import LIVE_ID, SessionStore, get_store
+except Exception as exc:  # pragma: no cover
+    log.warning("agent_runtime: session_store unavailable (%s)", exc)
+    LIVE_ID = "live"  # type: ignore
+    SessionStore = None  # type: ignore
+
+    def get_store(*a, **k) -> None:  # type: ignore
+        return None
+
 
 # ── Config / result types ─────────────────────────────────────────────
 
@@ -84,6 +94,12 @@ class AgentConfig:
     use_experience: bool = True
     mcp_specs: Optional[list[str]] = None
     stream: bool = False
+    # ── session checkpoint/resume ──
+    session_id: Optional[str] = None       # explicit id (default: auto)
+    resume_from: Optional[str] = None      # session id to resume
+    checkpoint_every: int = 0              # 0 = disabled; N = steps between saves
+    save_session: bool = True              # record events/checkpoints at all
+    ask_approval: bool = False             # prompt a human for risky tools
 
 
 @dataclass
@@ -95,6 +111,7 @@ class AgentResult:
     tools_used: list[str] = field(default_factory=list)
     evaluation: Optional[Any] = None
     lessons: list[str] = field(default_factory=list)
+    session_id: Optional[str] = None
 
 
 # ── System prompt ─────────────────────────────────────────────────────
@@ -137,14 +154,17 @@ class AgentRuntime:
         memory: Any = None,
         config: Optional[AgentConfig] = None,
         learning: Any = None,
+        store: Any = None,
     ) -> None:
         self.registry = registry or (make_builtin_registry() if make_builtin_registry else ToolRegistry())
         self.client = client
         self.memory = memory or (get_memory() if get_memory else None)
         self.learning = learning or (get_learning() if get_learning else None)
         self.config = config or AgentConfig()
+        self.store = store if store is not None else (get_store() if get_store else None)
         self.transcript: list[str] = []
         self.tools_used: list[str] = []
+        self.session_id: Optional[str] = None
 
     # -- public API ------------------------------------------------------
     def run(self, goal: str, *, progress_callback: Optional[ProgressCallback] = None) -> AgentResult:
@@ -165,6 +185,33 @@ class AgentRuntime:
         log.info("agent: starting goal=%r", goal)
         self.transcript = []
         self.tools_used = []
+        self._attempts_used = 0
+
+        # ── Session store wiring: resume or create, then feed events ──
+        snap = None
+        if self.store is not None and self.config.save_session:
+            try:
+                if self.config.resume_from:
+                    snap = self.store.load_checkpoint(self.config.resume_from)
+                    if snap is None:
+                        _progress("error", f"No checkpoint found for '{self.config.resume_from}'")
+                    else:
+                        self.session_id = snap.session_id
+                        self.transcript = list(snap.transcript)
+                        self.tools_used = list(snap.tools_used)
+                        self._attempts_used = snap.retries_used
+                        goal = snap.goal
+                        _progress("step", f"Resumed session {snap.session_id} (steps used: {snap.steps_used})")
+                if snap is None:
+                    snap = self.store.new_session(goal, session_id=self.config.session_id)
+                    self.session_id = snap.session_id
+            except Exception as exc:  # pragma: no cover
+                log.warning("agent: session init failed: %s", exc)
+                self.session_id = None
+        if self.session_id is None:
+            self.session_id = self.config.session_id or None
+
+        _progress = self._wrap_progress(_progress, snap)
 
         _progress("step", f"Starting goal: {goal[:80]}")
         experience_block = ""
@@ -199,10 +246,11 @@ class AgentRuntime:
             {"role": "user", "content": f"GOAL: {goal}"},
         ]
 
-        attempts = 0
+        attempts = max(0, self._attempts_used - 1)
         last_eval = None
         while attempts <= self.config.max_retries:
             attempts += 1
+            self._attempts_used = attempts
             if attempts > 1:
                 _progress("retry", f"Retry {attempts}/{self.config.max_retries + 1}",
                           detail="Previous attempt did not satisfy the goal")
@@ -238,6 +286,17 @@ class AgentRuntime:
         _progress("done", "Goal completed" if passed else f"Goal failed after {attempts} attempt(s)")
         transcript_text = "\n".join(self.transcript)
         passed = (last_eval.passed if last_eval else self._heuristic_pass(transcript_text))
+
+        # Finalize the session: status + transcript file.
+        if self.store is not None and self.session_id:
+            try:
+                self.store.mark_done(
+                    self.session_id,
+                    status="done" if passed else "failed",
+                    transcript_text=transcript_text,
+                )
+            except Exception as exc:  # pragma: no cover
+                log.warning("agent: session finalize failed: %s", exc)
 
         lessons = self._extract_lessons(transcript_text)
         if self.config.use_experience and self.memory is not None:
@@ -279,7 +338,46 @@ class AgentRuntime:
             tools_used=sorted(set(self.tools_used)),
             evaluation=last_eval,
             lessons=lessons,
+            session_id=self.session_id,
         )
+
+    # -- session-aware progress wrapper ----------------------------------
+    def _wrap_progress(self, progress: ProgressCallback, snap) -> ProgressCallback:
+        """Wrap a progress callback so events flow into the session store.
+
+        Also performs periodic checkpointing while the loop runs and
+        finalizes the session (status + transcript) at the end.
+        """
+        store = self.store
+        if store is None:
+            return progress
+
+        step_count = 0
+
+        def wrapped(phase: str, message: str, detail: Optional[str] = None) -> None:
+            nonlocal step_count
+            sid = self.session_id
+            if phase == "step":
+                step_count += 1
+            try:
+                store.append_event(sid or LIVE_ID, phase, message, detail)
+                if snap is not None:
+                    snap.steps_used = step_count
+                    snap.retries_used = self._attempts_used
+                    snap.transcript = list(self.transcript)
+                    snap.tools_used = list(self.tools_used)
+                    if phase in ("error", "done") or (
+                        self.config.checkpoint_every
+                        and step_count % self.config.checkpoint_every == 0
+                    ):
+                        if snap.status != "done":
+                            snap.status = "failed" if phase == "error" else "running"
+                        store.save_checkpoint(snap)
+            except Exception as exc:  # pragma: no cover
+                log.debug("agent: event feed failed: %s", exc)
+            progress(phase, message, detail)
+
+        return wrapped
 
     # -- internal loop ---------------------------------------------------
     def _loop(self, messages: list[dict], goal: str,
@@ -333,10 +431,9 @@ class AgentRuntime:
             return f"ERROR: unknown tool '{name}'. Available: " + ", ".join(
                 t.name for t in self.registry.list_tools()
             )
-        try:
-            return tool.run(args)
-        except Exception as exc:  # pragma: no cover
-            return f"ERROR: tool '{name}' raised {exc}"
+        # Route through the registry so the approval gate and error
+        # coercion apply consistently.
+        return self.registry.call(name, args)
 
     def _ask(self, messages: list[dict]) -> str:
         if self.client is None:
@@ -409,9 +506,17 @@ def build_runtime(
     client: Any = None,
     config: Optional[AgentConfig] = None,
     include_mcp: bool = True,
+    store: Any = None,
 ) -> AgentRuntime:
     """Assemble a runtime with builtin tools (+ MCP if available)."""
     registry = make_builtin_registry() if make_builtin_registry else ToolRegistry()
+    if config is not None and getattr(config, "ask_approval", False):
+        try:
+            from approval import ApprovalGate, InteractiveApproval
+
+            registry.approval_gate = ApprovalGate(hook=InteractiveApproval())
+        except Exception as exc:  # pragma: no cover
+            log.warning("agent: approval gate disabled (%s)", exc)
     if include_mcp:
         try:
             from mcp_bridge import build_mcp_registry
@@ -435,4 +540,4 @@ def build_runtime(
         except Exception:  # pragma: no cover
             learning = None
     return AgentRuntime(registry=registry, client=client, memory=memory,
-                        learning=learning, config=config)
+                        learning=learning, config=config, store=store)

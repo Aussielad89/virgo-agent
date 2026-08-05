@@ -26,6 +26,7 @@ import sys
 import threading
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,11 @@ _current_pipeline: Any = None  # reference to running pipeline (cancellable)
 # Rate limiting state: chat_id -> [(timestamp, ...)]
 _rate_buckets: dict[str, list[float]] = defaultdict(list)
 _rate_lock = threading.Lock()
+
+# External listeners (e.g. the Event Bus) that receive every authorized
+# inbound message as a normalized dict.  Never let a misbehaving listener
+# break the bot's own command handling.
+MESSAGE_LISTENERS: list[Callable[[dict], None]] = []
 
 
 # ===========================================================================
@@ -104,6 +110,41 @@ def _check_rate_limit(chat_id: str | int) -> bool:
             return False
         bucket.append(now)
     return True
+
+
+# ── External message listeners (Event Bus) ──────────────────────────────
+
+
+def add_message_listener(fn: Callable[[dict], None]) -> None:
+    """Register an external listener for authorized inbound messages.
+
+    Each listener receives a normalized dict on every inbound message::
+
+        {"chat_id": int, "text": str, "username": str | None,
+         "timestamp": str}
+
+    This is how the Event Bus triggers workflows from Telegram messages
+    without forking the bot's own polling loop.
+    """
+    if fn not in MESSAGE_LISTENERS:
+        MESSAGE_LISTENERS.append(fn)
+
+
+def remove_message_listener(fn: Callable[[dict], None]) -> None:
+    """Unregister a previously added message listener."""
+    try:
+        MESSAGE_LISTENERS.remove(fn)
+    except ValueError:
+        pass
+
+
+def _broadcast_message(data: dict) -> None:
+    """Fan an inbound message out to every registered external listener."""
+    for fn in list(MESSAGE_LISTENERS):
+        try:
+            fn(dict(data))
+        except Exception as exc:  # a bad listener must never break the bot
+            log.warning("telegram message listener error: %s", exc)
 
 
 def _get_status_text() -> str:
@@ -174,10 +215,14 @@ async def _ptb_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "I can run pipelines, show status, search the web, and more.\n\n"
         "Use the buttons below or type a command:\n"
         "• `/run <goal>` — Execute a pipeline\n"
+        "• `/agent <goal>` — Run the autonomous agent (ReAct loop)\n"
         "• `/chat <message>` — Chat with Virgo\n"
         "• `/status` — Show bot/system status\n"
         "• `/alerts` — Show latest alerts\n"
         "• `/search <query>` — Web search\n"
+        "• `/memory <query>` — Recall past lessons\n"
+        "• `/budget` — Spend vs limit\n"
+        "• `/artifacts` — List versioned artifacts\n"
         "• `/cancel` — Cancel a running pipeline\n"
         "• `/help` — Show all commands"
     )
@@ -186,6 +231,110 @@ async def _ptb_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         parse_mode="Markdown",
         reply_markup=_build_keyboard(),
     )
+
+
+async def _ptb_agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  # noqa: C901
+    """Handle /agent command — run the autonomous ReAct agent."""
+    cid = update.effective_chat.id if update.effective_chat else None
+    if cid is None:
+        return
+    if not _is_allowed(cid):
+        await update.message.reply_text("⛔ Unauthorized.")
+        return
+
+    text = update.message.text or ""
+    goal = text.removeprefix("/agent").strip()
+    if not goal:
+        await update.message.reply_text(
+            "❓ Please provide a goal. Example:\n`/agent write a web scraper`",
+            parse_mode="Markdown",
+        )
+        return
+
+    await update.message.reply_text(f"🤖 Agent starting: `{goal}`...", parse_mode="Markdown")
+
+    def _agent_worker() -> None:
+        try:
+            from agent_runtime import AgentConfig, build_runtime
+
+            config = AgentConfig(max_steps=10, max_retries=1, save_session=True)
+            runtime = build_runtime(config=config, include_mcp=False)
+            result = runtime.run(goal)
+            ev = result.evaluation
+            score = f"\nScore: {ev.score}" if ev is not None else ""
+            summary = (
+                f"*Agent complete*\n"
+                f"Goal: `{goal}`\n"
+                f"Result: {'✅ PASS' if result.passed else '❌ FAIL'}{score}\n"
+                f"Steps: {result.steps}\n"
+                f"Tools: {', '.join(result.tools_used) or 'none'}\n"
+                f"Session: `{result.session_id or 'n/a'}`"
+            )
+            asyncio_run(_ptb_send(cid, summary))
+        except Exception as exc:
+            asyncio_run(_ptb_send(cid, f"❌ Agent error: {exc}"))
+
+    threading.Thread(target=_agent_worker, daemon=True).start()
+
+
+async def _ptb_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /memory — recall past lessons from the unified memory."""
+    cid = update.effective_chat.id if update.effective_chat else None
+    if cid is None or not _is_allowed(cid):
+        return
+    text = update.message.text or ""
+    query = text.removeprefix("/memory").strip() or "recent lessons"
+    try:
+        from memory_store import get_unified
+
+        hits = get_unified().recall(query, k=5)
+    except Exception as exc:
+        await update.message.reply_text(f"❌ memory error: {exc}")
+        return
+    if not hits:
+        await update.message.reply_text("(nothing relevant remembered yet)")
+        return
+    lines = []
+    for e in hits:
+        status = "✅" if e.get("success") else "❌"
+        lines.append(f"{status} {str(e.get('goal', ''))[:80]}")
+        lesson = e.get("lesson") or e.get("outcome") or ""
+        if lesson:
+            lines.append(f"   ↳ {str(lesson)[:140]}")
+    await update.message.reply_text("🧠 *Recall:*\n" + "\n".join(lines), parse_mode="Markdown")
+
+
+async def _ptb_budget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /budget — spend vs limit."""
+    cid = update.effective_chat.id if update.effective_chat else None
+    if cid is None or not _is_allowed(cid):
+        return
+    try:
+        from budget import get_budget
+
+        tracker = get_budget()
+        await update.message.reply_text(f"💰 {tracker.status_text()}", parse_mode="Markdown")
+    except Exception as exc:
+        await update.message.reply_text(f"❌ budget error: {exc}")
+
+
+async def _ptb_artifacts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /artifacts — list versioned artifacts."""
+    cid = update.effective_chat.id if update.effective_chat else None
+    if cid is None or not _is_allowed(cid):
+        return
+    try:
+        from artifact_store import get_artifacts
+
+        rows = get_artifacts().list()
+    except Exception as exc:
+        await update.message.reply_text(f"❌ artifacts error: {exc}")
+        return
+    if not rows:
+        await update.message.reply_text("(no artifacts yet)")
+        return
+    lines = [f"• `{r['name']}` v{r['latest']}/{r['versions']} @ {r['updated_at']}" for r in rows[:10]]
+    await update.message.reply_text("📦 *Artifacts:*\n" + "\n".join(lines), parse_mode="Markdown")
 
 
 async def _ptb_run(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:  # noqa: C901
@@ -469,6 +618,28 @@ async def _ptb_error_handler(update: Any, context: ContextTypes.DEFAULT_TYPE) ->
     _save_telemetry({"event": "error", "error": str(context.error), "update": str(update)[:500]})
 
 
+async def _ptb_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Broadcast every authorized inbound message to external listeners.
+
+    Registered in ``group=-1`` so it fires before the command handlers but
+    never blocks them.  This is the integration point for the Event Bus.
+    """
+    msg = update.effective_message
+    if not msg:
+        return
+    cid = update.effective_chat.id if update.effective_chat else None
+    if cid is None or not _is_allowed(cid):
+        return
+    text = msg.text or ""
+    username = msg.from_user.username if msg.from_user else None
+    _broadcast_message({
+        "chat_id": cid,
+        "text": text,
+        "username": username,
+        "timestamp": datetime.now(UTC).isoformat(),
+    })
+
+
 # ===========================================================================
 # urllib fallback implementation (no python-telegram-bot)
 # ===========================================================================
@@ -536,6 +707,14 @@ def _handle_fallback_message(msg: dict[str, Any]) -> None:  # noqa: C901
     if not _check_rate_limit(cid):
         _send_message(cid, "⏳ Rate limit reached. Please wait a moment.")
         return
+
+    # Broadcast to external listeners (Event Bus) before command parsing.
+    _broadcast_message({
+        "chat_id": cid,
+        "text": text,
+        "username": msg.get("from", {}).get("username"),
+        "timestamp": datetime.now(UTC).isoformat(),
+    })
 
     # ── Parse commands ──────────────────────────────────────────────
     lower = text.lower()
@@ -772,6 +951,10 @@ def start_polling() -> None:
             # Register handlers
             app.add_handler(CommandHandler("start", _ptb_start))
             app.add_handler(CommandHandler("run", _ptb_run))
+            app.add_handler(CommandHandler("agent", _ptb_agent))
+            app.add_handler(CommandHandler("memory", _ptb_memory))
+            app.add_handler(CommandHandler("budget", _ptb_budget))
+            app.add_handler(CommandHandler("artifacts", _ptb_artifacts))
             app.add_handler(CommandHandler("chat", _ptb_chat))
             app.add_handler(CommandHandler("status", _ptb_status))
             app.add_handler(CommandHandler("alerts", _ptb_alerts))
@@ -784,6 +967,11 @@ def start_polling() -> None:
             from telegram.ext import MessageHandler, filters
 
             app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _ptb_fallback))
+
+            # Broadcast every message (commands included) to external
+            # listeners such as the Event Bus.  group=-1 runs it first but
+            # never stops the command handlers from also firing.
+            app.add_handler(MessageHandler(filters.ALL, _ptb_broadcast), group=-1)
 
             app.add_error_handler(_ptb_error_handler)
 

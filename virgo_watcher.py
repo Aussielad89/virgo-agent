@@ -52,6 +52,7 @@ class FileWatcher:
         ]
 
         self._snapshot: dict[str, tuple[float, int]] = {}  # path → (mtime, size)
+        self._stop_requested = False
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -66,7 +67,7 @@ class FileWatcher:
         print(f"  {'─' * 50}")
 
         self._snapshot = self._take_snapshot()
-        while True:
+        while not self._stop_requested:
             try:
                 time.sleep(self.interval)
                 fresh = self._take_snapshot()
@@ -89,6 +90,10 @@ class FileWatcher:
             except KeyboardInterrupt:
                 print(f"\n{icon('ok')} Watcher stopped.")
                 break
+
+    def stop(self) -> None:
+        """Request the watch loop to exit at the next poll interval."""
+        self._stop_requested = True
 
     # ── Internal ────────────────────────────────────────────────────
 

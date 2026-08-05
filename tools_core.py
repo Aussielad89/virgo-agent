@@ -234,6 +234,10 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
+        # Optional human-in-the-loop approval (see approval.py). When set,
+        # calls at/above approval_threshold are gated before execution.
+        self.approval_gate: object | None = None
+        self.approval_threshold: int = RISK_MEDIUM
 
     def register(self, tool: Tool) -> Tool:
         """Register *tool* under its ``name``."""
@@ -248,6 +252,10 @@ class ToolRegistry:
         """Return all registered tools (in insertion order)."""
         return list(self._tools.values())
 
+    def risk_of(self, name: str) -> int:
+        """Risk level for a tool name (0 = unknown)."""
+        return _TOOL_RISK.get(name, RISK_UNKNOWN)
+
     def call(self, name: str, args: str = "") -> str:
         """Run tool *name* with *args*.
 
@@ -258,6 +266,19 @@ class ToolRegistry:
         if tool is None:
             log.warning("Tool call to unknown tool %r", name)
             return f"ERROR: unknown tool {name}"
+        # Human-in-the-loop approval gate (risk at/above threshold).
+        gate = self.approval_gate
+        if gate is not None and self.risk_of(name) >= self.approval_threshold:
+            try:
+                allowed = bool(gate.approve(name, args, self.risk_of(name)))
+            except AttributeError:
+                allowed = bool(gate(name, args, self.risk_of(name)))
+            except Exception as exc:  # pragma: no cover - fail closed
+                log.warning("Approval gate errored for %r: %s", name, exc)
+                allowed = False
+            if not allowed:
+                log.info("Tool call %r denied by approval gate", name)
+                return f"ERROR: tool '{name}' requires approval and was denied"
         try:
             result = tool.run(args)
         except Exception as exc:  # pragma: no cover - defensive
