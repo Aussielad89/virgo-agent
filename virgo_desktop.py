@@ -708,7 +708,11 @@ try:
             try:
                 import server
 
-                server.serve(host="127.0.0.1", port=8765)
+                server.serve(
+                    host=os.environ.get("VIRGO_DASH_HOST", "127.0.0.1"),
+                    port=int(os.environ.get("VIRGO_DASH_PORT", "8765")),
+                    token=os.environ.get("VIRGO_DASH_TOKEN", ""),
+                )
             except Exception as exc:  # noqa: BLE001
                 print(f"virgo_desktop: dashboard server exited ({exc})")
 
@@ -1427,6 +1431,7 @@ class VirgoDesktopWindow(QMainWindow):
         quit_action.triggered.connect(self._quit)
         self.tray.setContextMenu(menu)
         self.tray.show()
+        QTimer.singleShot(15000, self._check_updates)
 
     def _notify_tray(self, title: str, message: str, critical: bool = False) -> None:
         """Pop a system-tray notification when the tray is live."""
@@ -1439,6 +1444,27 @@ class VirgoDesktopWindow(QMainWindow):
                     else QSystemTrayIcon.MessageIcon.Information
                 )
                 tray.showMessage(title, message, ico, 6000)
+        except Exception:
+            pass
+
+    def _check_updates(self) -> None:
+        """Check GitHub for a newer virgo-agent release; notify via tray."""
+        try:
+            import urllib.request
+
+            req = urllib.request.Request(
+                "https://api.github.com/repos/Aussielad89/virgo-agent/releases/latest",
+                headers={"User-Agent": "Virgo-Desktop"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8", "replace"))
+            latest = str(data.get("tag_name", "")).lstrip("v")
+            if not latest:
+                return
+            current = tuple(int(p) for p in APP_VERSION.split(".") if p.isdigit())
+            newest = tuple(int(p) for p in latest.split(".") if p.isdigit())
+            if newest and newest > current:
+                self._notify_tray("Virgo update available", f"{latest} — check GitHub")
         except Exception:
             pass
 

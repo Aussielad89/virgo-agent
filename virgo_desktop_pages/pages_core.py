@@ -214,6 +214,13 @@ class PipelinePage(PageWidget):
         self._elapsed_timer.setInterval(1000)
         self._elapsed_timer.timeout.connect(self._tick_elapsed)
 
+        # Auto focus-mode: starts lofi once a run exceeds 2 minutes.
+        self._focus_timer = QTimer()
+        self._focus_timer.setInterval(5000)
+        self._focus_timer.timeout.connect(self._focus_check)
+        self._focus_started = False
+        self._run_started: float | None = None
+
         self._log_line_count = 0
 
     # ── Helpers ──────────────────────────────────────────────────────────
@@ -467,6 +474,13 @@ class PipelinePage(PageWidget):
         self._anim_timer.start()
         self._elapsed_timer.start()
 
+        # Focus mode: track the run start so _focus_check can kick in later.
+        import time  # noqa: PLC0415 — lazy import
+
+        self._run_started = time.monotonic()
+        self._focus_started = False
+        self._focus_timer.start()
+
         args = [
             sys.executable, str(HERE / "cli.py"), "run",
             "--goal", self.goal_input.text().strip(),
@@ -531,10 +545,39 @@ class PipelinePage(PageWidget):
                     w._notify_tray("Pipeline finished", f"'{goal}' completed successfully")
             _beep("error" if rc not in (0, None) else "done")
 
+    def _focus_check(self) -> None:
+        """Auto-start focus mode (lofi) once a run has been going > 2 minutes."""
+        if self._focus_started:
+            return
+        try:
+            import time  # noqa: PLC0415 — lazy import
+
+            elapsed = time.monotonic() - self._run_started if self._run_started else 0.0
+            if elapsed <= 120:
+                return
+            try:
+                import virgo_focus  # noqa: PLC0415 — lazy import
+
+                virgo_focus.start("lofi")
+            except Exception:  # noqa: BLE001
+                pass  # focus mode is best-effort; never break the run
+            self._focus_started = True
+        except Exception:  # noqa: BLE001
+            pass
+
     def _cleanup_run(self, msg: str) -> None:
         self._timer.stop()
         self._anim_timer.stop()
         self._elapsed_timer.stop()
+        self._focus_timer.stop()
+        if self._focus_started:
+            try:
+                import virgo_focus  # noqa: PLC0415 — lazy import
+
+                virgo_focus.stop()
+            except Exception:  # noqa: BLE001
+                pass  # focus mode is best-effort
+            self._focus_started = False
         self._running = False
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
@@ -1087,9 +1130,10 @@ class ChatPage(PageWidget):
             ("/read <path>", "Read a file into context"),
             ("/web <url>", "Fetch a web page"),
             ("/py <code>", "Run a Python snippet"),
-            ("/search <query>", "Search the web and keep results as context"),
+            ("/search <query>", "Search local memory and the web"),
             ("/mem [query]", "Show recalled memory (or recall for a query)"),
             ("/remember", "Save the last exchange to experience memory"),
+            ("/remember <note>", "Save a note to persistent memory"),
         ]
         self.msg_input.textChanged.connect(self._update_token_count)
         self.msg_input.textChanged.connect(self._on_input_typed)
@@ -1153,7 +1197,7 @@ class ChatPage(PageWidget):
             self.chat_log.append(
                 "<i>Virgo chat — local LLM. Commands: /help, /tools, /clear, "
                 "/read &lt;path&gt;, /web &lt;url&gt;, /py &lt;code&gt;, "
-                "/search &lt;query&gt;, /mem, /remember. "
+                "/search &lt;query&gt; (memory + web), /mem, /remember &lt;note&gt;. "
                 "Use Attach to send files or photos.</i>"
             )
 
@@ -1276,11 +1320,17 @@ class ChatPage(PageWidget):
             self._busy = False
             return
         if low.startswith("/search "):
-            self._web_search_start(msg[len("/search ") :].strip())
+            query = msg[len("/search ") :].strip()
+            self._local_memory_search(query)
+            self._web_search_start(query)
             self._busy = False
             return
         if low == "/mem" or low.startswith("/mem "):
             self._show_memory(msg[len("/mem") :].strip())
+            self._busy = False
+            return
+        if low.startswith("/remember "):
+            self._remember_note(msg[len("/remember ") :].strip())
             self._busy = False
             return
         if low == "/remember":
@@ -1435,6 +1485,58 @@ class ChatPage(PageWidget):
             self.chat_log.append("<i>[Saved last exchange to experience memory]</i>")
         except Exception as exc:
             self.chat_log.append(f"<i>[Could not save memory: {exc}]</i>")
+
+    def _remember_note(self, note: str) -> None:
+        """Persist a free-form note into unified memory (/remember <note>)."""
+        if not note:
+            self.chat_log.append("<i>Usage: /remember &lt;note&gt;</i>")
+            return
+        try:
+            from memory_store import get_unified
+
+            get_unified().remember(
+                goal=note[:500],
+                approach="user chat note",
+                tools_used=[],
+                outcome=note,
+                success=True,
+                lesson=note,
+                task_type="chat",
+            )
+            self.chat_log.append(f"<i>[Remembered: {self._escape(note)}]</i>")
+        except Exception as exc:  # noqa: BLE001
+            self.chat_log.append(f"<i>[Could not remember note: {exc}]</i>")
+
+    def _local_memory_search(self, query: str) -> None:
+        """Search the local knowledge base (RAG) for memory hits (/search)."""
+        if not query:
+            self.chat_log.append("<i>Usage: /search &lt;query&gt;</i>")
+            return
+        try:
+            from local_rag import get_rag
+
+            rag = get_rag()
+            search = getattr(rag, "search", None)
+            hits = search(query) if callable(search) else rag.query(query, k=3)
+            hits = [h for h in (hits or []) if h]
+            if not hits:
+                self.chat_log.append("<i>No memory hits for that query.</i>")
+                return
+            for h in hits[:3]:
+                text = str(h.get("text", "") if isinstance(h, dict) else h)
+                score = self._memory_hit_score(query, text)
+                self.chat_log.append(f"🎯 {score:.2f} — {text[:120]}")
+        except Exception as exc:  # noqa: BLE001
+            self.chat_log.append(f"<i>[Memory search failed: {exc}]</i>")
+
+    @staticmethod
+    def _memory_hit_score(query: str, text: str) -> float:
+        """Recall-weighted token overlap, mirroring local_rag's scorer."""
+        q_tokens = set(re.findall(r"[a-zA-Z0-9_]{3,}", (query or "").lower()))
+        doc_tokens = set(re.findall(r"[a-zA-Z0-9_]{3,}", (text or "").lower()))
+        if not q_tokens or not doc_tokens:
+            return 0.0
+        return len(q_tokens & doc_tokens) / len(q_tokens)
 
     def _show_memory(self, query: str = "") -> None:
         """Show memory stats and optionally recall relevant experiences."""
@@ -2709,7 +2811,7 @@ class ChatPage(PageWidget):
         return (
             "Commands: /help, /tools, /clear, "
             "/read &lt;path&gt;, /web &lt;url&gt;, /py &lt;code&gt;, "
-            "/search &lt;query&gt; (web), /mem, /remember. "
+            "/search &lt;query&gt; (memory + web), /mem, /remember &lt;note&gt;. "
             "Otherwise just chat — the model can call tools via "
             "[[virgo.read path=...]] etc."
         )

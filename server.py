@@ -38,6 +38,14 @@ except ImportError as exc:
     _IMPORT_ERROR = exc
 
 
+# ---------------------------------------------------------------------------
+# Web-run bookkeeping (module-level, shared across requests)
+# ---------------------------------------------------------------------------
+
+_WEB_PROCS: dict[str, Any] = {}  # ts -> Popen for in-flight web runs
+_WEB_HISTORY: list[dict[str, Any]] = []  # {ts, goal, exit, duration_s} entries
+
+
 # ===========================================================================
 # HTML templates (embedded — no external files needed)
 # ===========================================================================
@@ -356,6 +364,23 @@ _SESSIONS_PAGE = """\
   <tr><td colspan="5" class="empty">no saved sessions yet</td></tr>
   {% endfor %}
 </table>
+
+<h2>web runs</h2>
+<table>
+  <tr><th>time</th><th>goal</th><th>status</th></tr>
+  {% for r in web_runs %}
+  <tr>
+    <td>{{ r.ts }}</td>
+    <td>{{ r.goal }}</td>
+    <td>
+      {% if r.exit == 'running' %}<span class="badge badge-run">running</span>
+      {% else %}{{ r.exit }}{% endif %}
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3" class="empty">no web runs yet</td></tr>
+  {% endfor %}
+</table>
 """
 
 _SESSION_PAGE = """\
@@ -467,15 +492,28 @@ _LOG_PAGE = """\
 # ===========================================================================
 
 
-def _build_app() -> Any:
+def _build_app(token: str = "") -> Any:
     """Create and return the FastAPI ASGI app."""
     import jinja2
-    from fastapi import FastAPI, Form
+    from fastapi import Depends, FastAPI, Form, HTTPException
     from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
     from sse_starlette.sse import EventSourceResponse
 
     app = FastAPI(title="virgo", version="0.6.0")
     env = jinja2.Environment(autoescape=True)
+
+    def _auth(request: Request):
+        """Reject protected routes unless the token matches (?token= or header).
+
+        No-op when *token* is empty so the dashboard behaves exactly as before.
+        """
+        if not token:
+            return None
+        q = request.query_params.get("token", "")
+        h = request.headers.get("x-virgo-token", "")
+        if q == token or h == token:
+            return None
+        raise HTTPException(status_code=401, detail="unauthorized")
 
     # Shared log buffer (thread-safe)
     log_buffer: list[str] = []
@@ -515,7 +553,9 @@ def _build_app() -> Any:
             )
         )
         return tpl.render(
-            sessions=sessions, stats={"count": len(sessions), "passed": passed, "failed": failed}
+            sessions=sessions,
+            stats={"count": len(sessions), "passed": passed, "failed": failed},
+            web_runs=list(reversed(_WEB_HISTORY)),
         )
 
     @app.get("/session/{name}", response_class=HTMLResponse)
@@ -541,7 +581,7 @@ def _build_app() -> Any:
             test_logs=data.get("test_logs", []),
         )
 
-    @app.get("/run", response_class=HTMLResponse)
+    @app.get("/run", response_class=HTMLResponse, dependencies=[Depends(_auth)])
     async def run_page():
         tpl = env.from_string(
             _LAYOUT.replace(
@@ -550,7 +590,7 @@ def _build_app() -> Any:
         )
         return tpl.render()
 
-    @app.post("/run", response_class=HTMLResponse)
+    @app.post("/run", response_class=HTMLResponse, dependencies=[Depends(_auth)])
     async def run_pipeline(goal: str = Form(...), use_llm: str = Form("0")):
         """Trigger a pipeline run asynchronously and stream output via SSE."""
         _log_line(f"Web run: {goal[:80]}" + (" (LLM)" if use_llm == "1" else ""))
@@ -563,21 +603,38 @@ def _build_app() -> Any:
         if use_llm == "1":
             cmd.append("--llm")
 
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        entry = {"ts": ts, "goal": goal[:80], "exit": "running", "duration_s": 0}
+        _WEB_HISTORY.append(entry)
+
         def _run():
+            started = time.time()
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                _log_line(f"Web run complete: exit {result.returncode}")
-                for line in (result.stdout or "").splitlines()[-50:]:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                _WEB_PROCS[ts] = proc
+                try:
+                    out, err = proc.communicate(timeout=300)
+                except subprocess.TimeoutExpired:
+                    _log_line("Web run timed out after 300s")
+                    entry["exit"] = "timeout"
+                    return
+                _log_line(f"Web run complete: exit {proc.returncode}")
+                entry["exit"] = proc.returncode
+                for line in (out or "").splitlines()[-50:]:
                     if line.strip():
                         _log_line(f"  {line.strip()[:120]}")
-                if result.stderr:
-                    for line in result.stderr.splitlines()[-20:]:
+                if err:
+                    for line in err.splitlines()[-20:]:
                         if line.strip():
                             _log_line(f"  err: {line.strip()[:120]}")
-            except subprocess.TimeoutExpired:
-                _log_line("Web run timed out after 300s")
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 _log_line(f"Web run error: {exc}")
+                entry["exit"] = "error"
+            finally:
+                entry["duration_s"] = round(time.time() - started, 1)
+                _WEB_PROCS.pop(ts, None)
 
         import threading
 
@@ -587,7 +644,7 @@ def _build_app() -> Any:
         return f"""<div class="log-line" style="color:#00ff88;">&#9654; started: {goal[:80]}</div>
 <div class="log-line">view output in the <a href="/log">live log</a></div>"""
 
-    @app.get("/status", response_class=HTMLResponse)
+    @app.get("/status", response_class=HTMLResponse, dependencies=[Depends(_auth)])
     async def status_page():
         from memory import list_sessions
 
@@ -630,7 +687,7 @@ def _build_app() -> Any:
             python_version=sys.version.split()[0],
         )
 
-    @app.get("/log", response_class=HTMLResponse)
+    @app.get("/log", response_class=HTMLResponse, dependencies=[Depends(_auth)])
     async def log_page():
         tpl = env.from_string(
             _LAYOUT.replace(
@@ -639,12 +696,12 @@ def _build_app() -> Any:
         )
         return tpl.render()
 
-    @app.get("/log-stream", response_class=PlainTextResponse)
+    @app.get("/log-stream", response_class=PlainTextResponse, dependencies=[Depends(_auth)])
     async def log_stream():
         lines = "\n".join(app.state.log_buffer[-100:]) or "waiting..."
         return lines
 
-    @app.get("/log-sse")
+    @app.get("/log-sse", dependencies=[Depends(_auth)])
     async def log_sse(request: Request):
         """Server-Sent Events endpoint for real-time log streaming."""
         queue: asyncio.Queue = asyncio.Queue()
@@ -672,13 +729,13 @@ def _build_app() -> Any:
 
     # ── JSON API ──────────────────────────────────────────────────
 
-    @app.get("/api/sessions")
+    @app.get("/api/sessions", dependencies=[Depends(_auth)])
     async def api_sessions():
         from memory import list_sessions
 
         return JSONResponse(list_sessions())
 
-    @app.get("/api/session/{name}")
+    @app.get("/api/session/{name}", dependencies=[Depends(_auth)])
     async def api_session(name: str):
         from memory import load_state
 
@@ -687,7 +744,7 @@ def _build_app() -> Any:
         except FileNotFoundError:
             return JSONResponse({"error": "not found"}, status_code=404)
 
-    @app.get("/api/status")
+    @app.get("/api/status", dependencies=[Depends(_auth)])
     async def api_status():
         from memory import list_sessions
 
@@ -707,6 +764,44 @@ def _build_app() -> Any:
             }
         )
 
+    @app.post("/api/stop", response_class=PlainTextResponse, dependencies=[Depends(_auth)])
+    async def api_stop():
+        """Terminate all in-flight web runs (terminate, then kill after 3s)."""
+        stopped = 0
+        for _ts, proc in list(_WEB_PROCS.items()):
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    proc.wait(timeout=3)
+                except Exception:  # noqa: BLE001
+                    try:
+                        proc.kill()
+                    except Exception:  # noqa: BLE001
+                        pass
+                stopped += 1
+        _log_line(f"Stopped {stopped} web run(s) via /api/stop")
+        return f"stopped {stopped} run(s)"
+
+    @app.get("/api/history", dependencies=[Depends(_auth)])
+    async def api_history():
+        """Return web-run history, newest first."""
+        return JSONResponse(list(reversed(_WEB_HISTORY)))
+
+    @app.post("/api/bench", response_class=HTMLResponse, dependencies=[Depends(_auth)])
+    async def api_bench():
+        """Write a bench trigger file for the desktop app to pick up."""
+        from _log import OUTDIR
+
+        OUTDIR.mkdir(exist_ok=True)
+        (OUTDIR / "BENCH_TRIGGER.txt").write_text(
+            time.strftime("%Y-%m-%d %H:%M:%S"), encoding="utf-8"
+        )
+        _log_line("Bench triggered from web")
+        return '<div class="log-line" style="color:#00ff88;">bench triggered in desktop app</div>'
+
     return app
 
 
@@ -715,8 +810,20 @@ def _build_app() -> Any:
 # ===========================================================================
 
 
-def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
-    """Start the virgo web dashboard."""
+def serve(host: str = "127.0.0.1", port: int = 8765, token: str = "") -> None:
+    """Start the virgo web dashboard.
+
+    Host/port/token can be overridden via VIRGO_DASH_HOST / VIRGO_DASH_PORT /
+    VIRGO_DASH_TOKEN environment variables.  When *token* is non-empty, all
+    control routes (/run, /api/*, /status, /log) require it via ``?token=``
+    or the ``X-Virgo-Token`` header.
+    """
+    host = os.environ.get("VIRGO_DASH_HOST", host)
+    try:
+        port = int(os.environ.get("VIRGO_DASH_PORT", port))
+    except ValueError:
+        pass
+    token = os.environ.get("VIRGO_DASH_TOKEN", token)
     if not _IMPORTS_OK:
         print(f"[virgo] Missing dependencies: {_IMPORT_ERROR}")
         try:
@@ -751,8 +858,10 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
 
     import uvicorn
 
-    app = _build_app()
+    app = _build_app(token=token)
     print(f"\n  [virgo] Dashboard at  http://{host}:{port}")
+    if token:
+        print("  [virgo] Auth: token required (X-Virgo-Token header or ?token=)")
     print("  [virgo] Routes:  /sessions  /run  /status  /log  /api/*")
     print("  [virgo] Ctrl+C to stop\n")
     uvicorn.run(app, host=host, port=port, log_level="info")

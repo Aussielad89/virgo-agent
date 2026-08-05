@@ -207,6 +207,20 @@ class SettingsPage(PageWidget):
         env_row.addWidget(save_env)
         env_section.layout().addLayout(env_row)  # type: ignore
 
+        # ── Backup & Restore ──────────────────────────────────────────
+        backup_section = self._section("Backup & Restore")
+        backup_row = QHBoxLayout()
+        backup_btn = QPushButton("💾  Backup now")
+        backup_btn.clicked.connect(self._do_backup)
+        restore_btn = QPushButton("♻  Restore from file…")
+        restore_btn.clicked.connect(self._do_restore)
+        backup_row.addWidget(backup_btn)
+        backup_row.addWidget(restore_btn)
+        backup_section.layout().addLayout(backup_row)  # type: ignore
+        self.backup_status = QLabel("")
+        self.backup_status.setWordWrap(True)
+        backup_section.layout().addWidget(self.backup_status)  # type: ignore
+
         btn_row = QHBoxLayout()
         save_btn = QPushButton(f"{icon('save')}  Save")
         save_btn.clicked.connect(self._save)
@@ -245,6 +259,29 @@ class SettingsPage(PageWidget):
         env_path = HERE / ".env"
         env_path.write_text(self.env_edit.toPlainText(), encoding="utf-8")
         self.save_status.setText(f"{icon('ok')} Raw .env saved")
+
+    def _do_backup(self) -> None:
+        try:
+            import virgo_backup
+
+            path = virgo_backup.backup()
+            self.backup_status.setText(f"{icon('ok')} Backup saved: {path}")
+        except Exception as exc:
+            self.backup_status.setText(f"{icon('error')} Backup failed: {exc}")
+
+    def _do_restore(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Restore Virgo backup", str(HERE), "Virgo backups (*.zip)"
+        )
+        if not path:
+            return
+        try:
+            import virgo_backup
+
+            count = virgo_backup.restore(path)
+            self.backup_status.setText(f"{icon('ok')} Restored {count} file(s) from {path}")
+        except Exception as exc:
+            self.backup_status.setText(f"{icon('error')} Restore failed: {exc}")
 
     def _test_connection(self) -> None:
         base = ""

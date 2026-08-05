@@ -1,6 +1,9 @@
 """Virgo Desktop pages — bench (split from the monolith)."""
 from __future__ import annotations
 
+import requests
+import threading
+
 from .base import *  # noqa: F401,F403 — shared Qt imports + helpers
 from .base import HERE, OUTDIR, icon, _beep, _set_layout_visible
 from .base import _StopStream, _GuiStream  # noqa: F401
@@ -84,6 +87,10 @@ class BenchmarkPage(PageWidget):
         self.promote_btn.setEnabled(False)
         self.promote_btn.clicked.connect(self._promote_selected)
         rank_row.addWidget(self.promote_btn)
+        self.pull_missing_btn = QPushButton("⬇  Pull missing models")
+        self.pull_missing_btn.setEnabled(False)
+        self.pull_missing_btn.clicked.connect(self._pull_missing)
+        rank_row.addWidget(self.pull_missing_btn)
         rank_row.addStretch()
         self.csv_btn = QPushButton("💾  Export CSV")
         self.csv_btn.setEnabled(False)
@@ -93,6 +100,9 @@ class BenchmarkPage(PageWidget):
         self.md_btn.setEnabled(False)
         self.md_btn.clicked.connect(lambda: self._export("md"))
         rank_row.addWidget(self.md_btn)
+        self.history_btn = QPushButton("📚  History")
+        self.history_btn.clicked.connect(self._show_history)
+        rank_row.addWidget(self.history_btn)
         self.content.addLayout(rank_row)
 
         # — Full output viewer (expandable) —
@@ -107,10 +117,18 @@ class BenchmarkPage(PageWidget):
         self._results: dict[str, dict] = {}
         self._cancelled = False
         self._bench_prompt = _BENCH_PROMPT
+        self._skip_archive = False
+
+        # ── Cross-agent contract: web dashboard drops BENCH_TRIGGER.txt ──
+        self._trigger_timer = QTimer(self)
+        self._trigger_timer.setInterval(5000)
+        self._trigger_timer.timeout.connect(self._check_web_trigger)
+        self._trigger_timer.start()
 
     def _run_all(self) -> None:
         """Kick off benchmarks on every available model in parallel."""
         prompt = self._prompt_input.text().strip() or self._bench_prompt
+        self._bench_prompt = prompt
 
         models = _live_ollama_models()
         if not models:
@@ -208,7 +226,7 @@ class BenchmarkPage(PageWidget):
     ) -> None:
         self._results[model] = {
             "latency": lat, "tokens": toks, "tok_s": tps,
-            "quality": qual, "output": preview,
+            "quality": qual, "status": status, "output": preview,
         }
         self._insert_row(model, self._results[model])
 
@@ -287,6 +305,11 @@ class BenchmarkPage(PageWidget):
         self.promote_btn.setEnabled(bool(ranked))
         self.csv_btn.setEnabled(bool(ranked))
         self.md_btn.setEnabled(bool(ranked))
+        self.pull_missing_btn.setEnabled(bool(self._missing_models()))
+
+        # Archive this run for the history view (skipped when loading a past run)
+        if not self._skip_archive:
+            self._archive()
 
         # Status line: top of the podium + total (the table carries the full order)
         parts = [
@@ -302,6 +325,231 @@ class BenchmarkPage(PageWidget):
                 "🏁 Done — best → worst: " + "  →  ".join(parts[:3])
                 + f"  →  … ({len(ranked)} models ranked)"
             )
+
+    def _missing_models(self) -> list[str]:
+        """Models the last run reported as not installed (status mentions pull/404)."""
+        missing = []
+        for model, r in self._results.items():
+            text = " ".join(str(r.get(k, "")) for k in ("status", "error")).lower()
+            if "not found" in text or "pull" in text or "404" in text:
+                missing.append(model)
+        return missing
+
+    def _run_models(self, models: list[str]) -> None:
+        """Bench a specific subset of models, keeping existing results for others."""
+        if not models:
+            return
+        prompt = self._prompt_input.text().strip() or self._bench_prompt
+        self._bench_prompt = prompt
+        self._table.setSortingEnabled(False)
+        self._running = set(models)
+        self._cancelled = False
+        self._run_all_btn.setEnabled(False)
+        self._stop_btn.setVisible(True)
+        self._output_view.setVisible(False)
+        self._status_label.setText(f"Running {len(models)} model(s)...")
+        for model in models:
+            threading.Thread(
+                target=self._bench_one,
+                args=(model, prompt),
+                daemon=True,
+            ).start()
+        self._table.setSortingEnabled(True)
+        self._table.sortByColumn(1, Qt.SortOrder.AscendingOrder)
+
+    def _pull_missing(self) -> None:
+        """Pull every model the last run flagged as missing, then re-bench them."""
+        names = self._missing_models()
+        if not names:
+            self._status_label.setText("No missing models to pull.")
+            return
+        self.pull_missing_btn.setEnabled(False)
+        self._pulled_models = names
+        self._status_label.setText(f"⬇ Pulling {len(names)} missing model(s)...")
+
+        def _worker() -> None:
+            for name in names:
+                try:
+                    r = requests.post(
+                        "http://localhost:11434/api/pull",
+                        json={"model": name},
+                        stream=True,
+                        timeout=600,
+                    )
+                    for line in r.iter_lines():
+                        if not line:
+                            continue
+                        try:
+                            ev = json.loads(line)
+                        except Exception:  # noqa: BLE001
+                            continue
+                        if ev.get("status"):
+                            self._set_status(f"⬇ pulling {name}: {ev['status']}")
+                        if ev.get("error"):
+                            self._set_status(f"⬇ pulling {name}: error {ev['error']}")
+                    self._set_status(f"done {name}")
+                except Exception as exc:  # noqa: BLE001
+                    self._set_status(f"⬇ pull {name} failed: {exc}")
+            QMetaObject.invokeMethod(
+                self, "_rerun_pulled", Qt.ConnectionType.QueuedConnection
+            )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    @pyqtSlot(str)
+    def _set_status(self, text: str) -> None:
+        """Thread-safe update of the bench status line."""
+        self._status_label.setText(text)
+
+    @pyqtSlot()
+    def _rerun_pulled(self) -> None:
+        """Bench the freshly pulled models (old rows for other models stay)."""
+        models = list(getattr(self, "_pulled_models", []))
+        self._pulled_models = []
+        self.pull_missing_btn.setEnabled(True)
+        self._run_models(models)
+
+    def _archive(self) -> None:
+        """Append the finished run to OUTDIR/bench_results.json (JSON list)."""
+        from datetime import datetime
+
+        ranked = self._ranked()
+        record = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "prompt": self._bench_prompt,
+            "winner": ranked[0][0] if ranked else None,
+            "results": [
+                {
+                    "model": model,
+                    "latency": r.get("latency", "—"),
+                    "tokens": r.get("tokens", "—"),
+                    "tok_s": r.get("tok_s", "—"),
+                    "quality": r.get("quality", "—"),
+                    "status": r.get("status", "✅ Done"),
+                }
+                for model, r in ranked
+            ],
+        }
+        path = OUTDIR / "bench_results.json"
+        try:
+            history: list = []
+            if path.exists():
+                try:
+                    history = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:  # noqa: BLE001
+                    history = []
+                if not isinstance(history, list):
+                    history = []
+            history.append(record)
+            OUTDIR.mkdir(exist_ok=True)
+            path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            self._status_label.setText(f"Could not save bench history: {exc}")
+
+    def _show_history(self) -> None:
+        """Open a dialog of past bench runs; Load restores a run's results."""
+        from datetime import datetime as _dt
+
+        path = OUTDIR / "bench_results.json"
+        history: list = []
+        try:
+            if path.exists():
+                history = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            history = []
+        if not isinstance(history, list) or not history:
+            self._status_label.setText("No bench history yet.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Bench history")
+        dlg.resize(560, 380)
+        dlg.setStyleSheet(
+            "QDialog { background: #1e1e2e; }"
+            "QListWidget { background: #181825; border: 1px solid #313244; "
+            "border-radius: 6px; color: #cdd6f4; font-size: 12px; }"
+            "QPushButton { background: #313244; border: 1px solid #45475a; "
+            "border-radius: 6px; padding: 6px 14px; color: #cdd6f4; }"
+            "QPushButton:hover { background: #45475a; }"
+        )
+        lay = QVBoxLayout(dlg)
+        lst = QListWidget()
+        for rec in history:
+            try:
+                ts_disp = _dt.fromisoformat(str(rec.get("ts", ""))).strftime(
+                    "%Y-%m-%d %H:%M"
+                )
+            except Exception:  # noqa: BLE001
+                ts_disp = str(rec.get("ts", "?"))[:16]
+            winner = rec.get("winner") or "—"
+            n = len(rec.get("results", []))
+            lst.addItem(f"{ts_disp}  🥇 {winner}  ({n} models)")
+        lay.addWidget(lst)
+        row = QHBoxLayout()
+        load_btn = QPushButton("Load")
+        close_btn = QPushButton("Close")
+        row.addWidget(load_btn)
+        row.addWidget(close_btn)
+        row.addStretch()
+        lay.addLayout(row)
+        close_btn.clicked.connect(dlg.reject)
+
+        def _load() -> None:
+            it = lst.currentItem()
+            if it is None:
+                return
+            idx = lst.row(it)
+            if 0 <= idx < len(history):
+                self._load_history_run(history[idx])
+            dlg.accept()
+
+        load_btn.clicked.connect(_load)
+        lst.itemDoubleClicked.connect(lambda _item: _load())
+        dlg.exec()
+
+    def _load_history_run(self, rec: dict) -> None:
+        """Restore a past run's results and re-render the bench table."""
+        results: dict[str, dict] = {}
+        for r in rec.get("results", []):
+            model = r.get("model")
+            if not model:
+                continue
+            results[model] = {
+                "latency": r.get("latency", "—"),
+                "tokens": r.get("tokens", "—"),
+                "tok_s": r.get("tok_s", "—"),
+                "quality": r.get("quality", "—"),
+                "status": r.get("status", "✅ Done"),
+                "output": r.get("output", ""),
+            }
+        if not results:
+            self._status_label.setText("No results in that run.")
+            return
+        self._results = results
+        self._skip_archive = True
+        try:
+            self._finish()
+        finally:
+            self._skip_archive = False
+
+    def _check_web_trigger(self) -> None:
+        """Cross-agent contract: start a bench when the web dashboard drops a
+        trigger file (OUTDIR/BENCH_TRIGGER.txt) younger than 120 s."""
+        import time
+
+        if self._running:
+            return
+        trigger = OUTDIR / "BENCH_TRIGGER.txt"
+        try:
+            if not trigger.exists():
+                return
+            if time.time() - trigger.stat().st_mtime > 120:
+                return
+            trigger.unlink()
+            self._status_label.setText("🌐 Bench triggered from web dashboard")
+            self._run_all()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _promote_selected(self) -> None:
         """Set the podium pick as the default model (virgo.toml + live chat switch)."""
