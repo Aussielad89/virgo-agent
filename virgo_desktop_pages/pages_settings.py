@@ -64,6 +64,8 @@ class SettingsPage(PageWidget):
             "LLM_TIMEOUT": "300",
             "VIRGO_LOG_LEVEL": "INFO",
             "WEBHOOK_URL": "http://localhost:8080/webhook",
+            "FALLBACK_MODELS": "",
+            "CONTEXT_WINDOW": "4096",
         }
 
         env_path = HERE / ".env"
@@ -91,11 +93,27 @@ class SettingsPage(PageWidget):
                 row.addWidget(combo, 2)
                 form.layout().addLayout(row)  # type: ignore
                 self._fields[key] = combo
+            elif key == "FALLBACK_MODELS":
+                edit = QLineEdit(val)
+                edit.setPlaceholderText("model1,model2,...")
+                row.addWidget(edit, 2)
+                form.layout().addLayout(row)  # type: ignore
+                self._fields[key] = edit
             else:
                 edit = QLineEdit(val)
                 row.addWidget(edit, 2)
                 form.layout().addLayout(row)  # type: ignore
                 self._fields[key] = edit
+
+        # ── Chat resilience ──────────────────────────────────────────
+        chat_section = self._section("Chat")
+        summarize_row = QHBoxLayout()
+        summarize_row.addWidget(QLabel("Auto-summarize context:"))
+        self.auto_summarize_cb = QCheckBox("Enabled")
+        self.auto_summarize_cb.setChecked(True)
+        summarize_row.addWidget(self.auto_summarize_cb)
+        summarize_row.addStretch()
+        chat_section.layout().addLayout(summarize_row)  # type: ignore
 
         # ── Appearance: theme mode + theme ──────────────────────────────
         from virgo_desktop import EDITABLE_THEME_KEYS
@@ -241,6 +259,7 @@ class SettingsPage(PageWidget):
         values: dict[str, str] = {}
         for key, widget in self._fields.items():
             values[key] = widget.currentText() if isinstance(widget, QComboBox) else widget.text()
+        values["AUTO_SUMMARIZE"] = "1" if getattr(self, "auto_summarize_cb").isChecked() else "0"
         # Basic validation for URL-like fields.
         for key in ("LLM_BASE_URL", "WEBHOOK_URL"):
             v = values.get(key, "")
@@ -313,6 +332,7 @@ class SettingsPage(PageWidget):
                 widget.setCurrentText(val)
             else:
                 widget.setText(val)
+        getattr(self, "auto_summarize_cb").setChecked(True)
         self.save_status.setText("Defaults restored — click Save to persist")
 
     def _apply_font(self) -> None:

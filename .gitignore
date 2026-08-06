@@ -106,3 +106,22 @@ top_llm_repos.csv
 urllib.txt
 virgo_app_screenshot.png
 analyze_virgo_ui.py
+
+# Runtime state directories
+.virgo_crash_reports/
+.virgo_divergence/
+.virgo_telemetry/
+.virgo_last_crash
+
+# Worktrees
+.worktrees/
+
+# Local model weights (too large for git)
+models/
+
+# VibeVoice source (installed separately)
+VibeVoice/
+
+# Screenshots / scratch images
+*.png
+_snap.ps1

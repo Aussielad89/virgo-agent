@@ -70,6 +70,9 @@ FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "")
 FALLBACK_MODEL_PLANNER = os.getenv("FALLBACK_PLANNER", "")
 FALLBACK_MODEL_GENERATOR = os.getenv("FALLBACK_GENERATOR", "")
 FALLBACK_MODEL_FIXER = os.getenv("FALLBACK_FIXER", "")
+FALLBACK_MODELS = [
+    m.strip() for m in os.getenv("FALLBACK_MODELS", "").split(",") if m.strip()
+]
 
 # Flags — toggled by CLI
 USE_CRUSH = False
@@ -203,6 +206,44 @@ def _make_fallback_client(role: str, fallback_model: str) -> LLMClient | CrushCl
         )
         return LLMClient(model=fallback_model, base_url=base_url)
     return LLMClient(model=fallback_model)
+
+
+def _call_with_fallback(
+    client,
+    messages: list[dict[str, str]],
+    role: str,
+    stream: bool = False,
+    **kwargs,
+) -> str:
+    """Call chat/chat_stream with fallback models on failure.
+
+    Retries up to 2 times (3 total attempts) with 2s backoff between retries.
+    """
+    import time as _time
+
+    candidates = [client.model or _model_for_role(role)] + FALLBACK_MODELS
+    last_exc: Exception | None = None
+    for i, model in enumerate(candidates):
+        try:
+            if i > 0:
+                _time.sleep(2)
+                print(f"\n  [!] {role} failed, retrying with fallback model: {model}")
+            if i == 0:
+                c = client
+            else:
+                c = _make_fallback_client(role, model)
+            fn_name = "chat_stream" if stream else "chat"
+            fn = getattr(c, fn_name)
+            if isinstance(c, CrushClient):
+                kwargs.pop("role", None)
+                kwargs.setdefault("vrole", role)
+            return fn(messages, **kwargs)
+        except (RuntimeError, Exception) as exc:
+            last_exc = exc
+            continue
+    raise RuntimeError(
+        f"All models failed for {role}: {last_exc}"
+    ) from last_exc
 
 
 # =========================================================================
@@ -511,26 +552,12 @@ def my_planner(goal: str, state: WorkspaceState) -> str:
 
     print(f"\n  {icon('brain')}  Planner ({model_display})")
     try:
-        if STREAM_OUTPUT:
-            plan = client.chat_stream(messages, role="planner")
-        else:
-            plan = client.chat(messages, role="planner")
+        plan = _call_with_fallback(
+            client, messages, role="planner", stream=STREAM_OUTPUT, temperature=0.3, max_tokens=4096
+        )
         print()
         return plan.strip()
     except (RuntimeError, Exception) as exc:
-        fallback_model = _fallback_model_for_role("planner")
-        if fallback_model:
-            print(f"\n  [!] Planner failed, using fallback model: {fallback_model}")
-            try:
-                fb_client = _make_fallback_client("planner", fallback_model)
-                if STREAM_OUTPUT:
-                    plan = fb_client.chat_stream(messages, role="planner")
-                else:
-                    plan = fb_client.chat(messages, role="planner")
-                print()
-                return plan.strip()
-            except (RuntimeError, Exception) as exc2:
-                print(f"  [!] Fallback also failed: {exc2}")
         print(f"  [!] Planner failed — returning minimal plan ({exc})")
         return f"## Plan (fallback — LLM unavailable)\n\n1. Create a Python script to accomplish: {goal}\n"
 
@@ -603,28 +630,13 @@ def my_generator(
         {"role": "user", "content": prompt},
     ]
     try:
-        if STREAM_OUTPUT:
-            code = client.chat_stream(messages, role="generator")
-        else:
-            code = client.chat(messages, role="generator")
+        code = _call_with_fallback(
+            client, messages, role="generator", stream=STREAM_OUTPUT, temperature=0.3, max_tokens=4096
+        )
         print()
     except (RuntimeError, Exception) as exc:
-        fallback_model = _fallback_model_for_role("generator")
-        if fallback_model:
-            print(f"\n  [!] Generator failed, using fallback model: {fallback_model}")
-            try:
-                fb_client = _make_fallback_client("generator", fallback_model)
-                if STREAM_OUTPUT:
-                    code = fb_client.chat_stream(messages, role="generator")
-                else:
-                    code = fb_client.chat(messages, role="generator")
-                print()
-            except (RuntimeError, Exception) as exc2:
-                print(f"  [!] Fallback also failed: {exc2}")
-                return []
-        else:
-            print(f"  [!] Generator failed ({exc}) — returning empty")
-            return []
+        print(f"  [!] Generator failed ({exc}) — returning empty")
+        return []
 
     # Parse the FILE: … ```python … ``` block
     files = _parse_file_blocks(code)
@@ -734,28 +746,13 @@ def my_fixer(
         {"role": "user", "content": prompt},
     ]
     try:
-        if STREAM_OUTPUT:
-            answer = client.chat_stream(messages, role="fixer")
-        else:
-            answer = client.chat(messages, role="fixer")
+        answer = _call_with_fallback(
+            client, messages, role="fixer", stream=STREAM_OUTPUT, temperature=0.3, max_tokens=4096
+        )
         print()
     except (RuntimeError, Exception) as exc:
-        fallback_model = _fallback_model_for_role("fixer")
-        if fallback_model:
-            print(f"\n  [!] Fixer failed, using fallback model: {fallback_model}")
-            try:
-                fb_client = _make_fallback_client("fixer", fallback_model)
-                if STREAM_OUTPUT:
-                    answer = fb_client.chat_stream(messages, role="fixer")
-                else:
-                    answer = fb_client.chat(messages, role="fixer")
-                print()
-            except (RuntimeError, Exception) as exc2:
-                print(f"  [!] Fallback also failed: {exc2}")
-                return None
-        else:
-            print(f"  [!] Fixer failed ({exc}) — skipping")
-            return None
+        print(f"  [!] Fixer failed ({exc}) — skipping")
+        return None
 
     if answer.strip().upper().startswith("NO_FIX"):
         return None

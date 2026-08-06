@@ -21,7 +21,7 @@ authors = [
 
 [project.optional-dependencies]
 web = ["fastapi", "uvicorn", "jinja2", "sse-starlette", "flask"]
-desktop = ["PyQt6>=6.6", "psutil>=5.9"]
+desktop = ["PyQt6>=6.6", "psutil>=5.9", "edge-tts", "SpeechRecognition", "pyaudio"]
 dev = ["pytest>=7", "pytest-cov>=4", "pytest-xdist>=3", "mypy>=1", "ruff>=0.5"]
 bot = ["python-telegram-bot>=21"]
 media = ["Pillow>=10", "PyMuPDF>=1.23", "mutagen>=1.47"]

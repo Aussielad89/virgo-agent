@@ -20,32 +20,35 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from _console import icon
+import virgo_crash
 
 # ── Theme system ────────────────────────────────────────────────────
 THEMES: dict[str, dict[str, str]] = {
     "mocha": {
-        "name": "Catppuccin Mocha",
-        "base": "#1e1e2e",
-        "bg": "#1e1e2e",
-        "surface": "#181825",
-        "crust": "#11111b",
-        "border": "#313244",
-        "border2": "#45475a",
-        "text": "#cdd6f4",
-        "subtext": "#a6adc8",
-        "disabled": "#6c7086",
-        "accent": "#89b4fa",
-        "accent2": "#a6e3a1",
-        "red": "#f38ba8",
-        "yellow": "#f9e2af",
-        "green": "#a6e3a1",
-        "sidebar_active": "#45475a",
+        "name": "Void",
+        "base": "#0a0a12",
+        "bg": "#0d0d1a",
+        "surface": "#141428",
+        "surface2": "#1a1a36",
+        "crust": "#08080f",
+        "border": "#252545",
+        "border2": "#35356a",
+        "text": "#e0e0ff",
+        "subtext": "#8888bb",
+        "disabled": "#4a4a6a",
+        "accent": "#7c6aff",
+        "accent2": "#00e5a0",
+        "red": "#ff5577",
+        "yellow": "#ffc53d",
+        "green": "#00e5a0",
+        "sidebar_active": "#1a1a3e",
     },
     "latte": {
         "name": "Catppuccin Latte",
         "base": "#ffffff",
         "bg": "#eff1f5",
         "surface": "#e6e9ef",
+        "surface2": "#dce0e8",
         "crust": "#dce0e8",
         "border": "#ccd0da",
         "border2": "#bcc0cc",
@@ -64,6 +67,7 @@ THEMES: dict[str, dict[str, str]] = {
         "base": "#eceff4",
         "bg": "#2e3440",
         "surface": "#3b4252",
+        "surface2": "#434c5e",
         "crust": "#434c5e",
         "border": "#4c566a",
         "border2": "#5e6a83",
@@ -82,6 +86,7 @@ THEMES: dict[str, dict[str, str]] = {
         "base": "#fbf1c7",
         "bg": "#282828",
         "surface": "#3c3836",
+        "surface2": "#504945",
         "crust": "#504945",
         "border": "#665c54",
         "border2": "#7c6f64",
@@ -153,60 +158,73 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     import textwrap
 
     raw = textwrap.dedent("""\
+    /* ── Base ─────────────────────────────────────────────────────── */
     QMainWindow, QWidget {
         background-color: @bg@;
         color: @text@;
         font-family: @ui_font_family@;
         font-size: @ui_font_size@px;
     }
+
+    /* ── Sidebar ──────────────────────────────────────────────────── */
     #sidebar {
-        background-color: @surface@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface@, stop:0.5 @crust@, stop:1 @surface@);
         border-right: 1px solid @border@;
         border-left: 3px solid qlineargradient(x1:0, y1:0, x2:0, y2:1,
-            stop:0 @accent@, stop:1 @accent2@);
+            stop:0 @accent@, stop:0.5 @accent2@, stop:1 @accent@);
     }
     #sidebarTitle {
         color: @accent@;
         padding: 0 4px;
+        font-size: 15px;
+        font-weight: bold;
+        letter-spacing: 1px;
     }
     #sidebarHeader {
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-            stop:0 @accent25@, stop:0.4 @surface@, stop:0.6 @surface@, stop:1 @accent218@);
+            stop:0 @accent25@, stop:0.3 @surface@, stop:0.7 @surface@, stop:1 @accent218@);
         border-bottom: 2px solid qlineargradient(x1:0, y1:0, x2:1, y2:1,
             stop:0 @accent@, stop:1 @accent2@);
         border-radius: 8px;
-        padding: 6px;
+        padding: 8px;
     }
     #sidebarAvatar {
         background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
             stop:0 @accent@, stop:1 @accent2@);
         color: @bg@;
-        border-radius: 10px;
-        min-width: 34px;
-        max-width: 34px;
-        min-height: 34px;
-        max-height: 34px;
+        border-radius: 12px;
+        min-width: 36px;
+        max-width: 36px;
+        min-height: 36px;
+        max-height: 36px;
+        font-weight: bold;
+        font-size: 14px;
     }
     #sidebar QPushButton {
         background: transparent;
         border: none;
-        border-radius: 6px;
-        padding: 8px 12px;
+        border-radius: 8px;
+        padding: 9px 14px;
         text-align: left;
         color: @subtext@;
         font-size: 13px;
     }
     #sidebar QPushButton:hover {
-        background: @border@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @accent15@, stop:1 @accent10@);
         color: @text@;
         border-left: 3px solid qlineargradient(x1:0, y1:0, x2:0, y2:1,
             stop:0 @accent@, stop:1 @accent2@);
-        padding-left: 9px;
+        padding-left: 11px;
     }
     #sidebar QPushButton:checked {
-        background: @sidebar_active@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @accent20@, stop:0.5 @sidebar_active@, stop:1 @accent10@);
         color: @accent@;
         font-weight: bold;
+        border-left: 3px solid @accent@;
+        padding-left: 11px;
     }
     #quitBtn {
         color: @red@ !important;
@@ -224,92 +242,118 @@ def _build_stylesheet(t: dict[str, str]) -> str:
     #multiBtn {
         color: @subtext@;
         border: 1px solid @border@;
-        border-radius: 6px;
-        background: @surface@;
+        border-radius: 8px;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface2@, stop:1 @surface@);
         font-weight: bold;
+        padding: 6px 14px;
     }
     #multiBtn:checked {
-        background: @green@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 @green@, stop:1 @accent2@);
         color: @base@;
         border-color: @green@;
     }
     #navList {
-        background: @surface@;
+        background: transparent;
         border: none;
         outline: 0;
     }
     QLineEdit#navFilter {
-        background: @border@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface2@, stop:1 @border@);
         border: 1px solid @border2@;
-        border-radius: 6px;
-        padding: 5px 10px;
+        border-radius: 8px;
+        padding: 6px 12px;
         color: @text@;
         font-size: 12px;
         selection-background-color: @accent@;
     }
     QLineEdit#navFilter:focus {
-        border-color: @accent@;
+        border: 1px solid @accent@;
+        background: @surface@;
     }
     #navList::item {
-        padding: 8px 12px;
-        border-radius: 6px;
+        padding: 8px 14px;
+        border-radius: 8px;
         color: @subtext@;
+        margin: 1px 4px;
     }
     #navList::item:hover {
-        background: @border@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @accent10@, stop:1 transparent);
         color: @text@;
     }
     #navList::item:selected {
-        background: @sidebar_active@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @accent20@, stop:0.5 @sidebar_active@, stop:1 @accent10@);
         color: @accent@;
         font-weight: bold;
-        border-right: 2px solid qlineargradient(x1:0, y1:0, x2:0, y2:1,
-            stop:0 @accent@, stop:1 transparent);
+        border-right: 3px solid qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @accent@, stop:1 @accent2@);
     }
+
+    /* ── Page area ────────────────────────────────────────────────── */
     #pageArea {
         background-color: @bg@;
     }
     #pageTitle {
         color: @text@;
-        font-size: 20px;
-        padding-bottom: 2px;
+        font-size: 22px;
+        font-weight: bold;
+        padding-bottom: 4px;
     }
     #metaLabel {
         color: @disabled@;
         font-size: 11px;
     }
+
+    /* ── Status bar ───────────────────────────────────────────────── */
     #statusBar {
-        background: @surface@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @crust@, stop:0.5 @surface@, stop:1 @crust@);
         color: @subtext@;
         border-top: 1px solid @border@;
-        padding: 3px 10px;
+        padding: 4px 12px;
         font-size: 12px;
     }
+
+    /* ── Ask bar ──────────────────────────────────────────────────── */
     #askBar {
-        background: @surface@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface@, stop:1 @crust@);
         border-top: 1px solid @border@;
+        padding: 6px;
     }
     QLineEdit#askInput {
-        background: @border@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface2@, stop:1 @border@);
         border: 1px solid @border2@;
-        border-radius: 6px;
-        padding: 6px 12px;
+        border-radius: 8px;
+        padding: 8px 14px;
         color: @text@;
         font-size: 13px;
         selection-background-color: @accent@;
     }
     QLineEdit#askInput:focus {
-        border-color: @accent@;
+        border: 1px solid @accent@;
+        background: @surface@;
     }
+
+    /* ── Buttons ──────────────────────────────────────────────────── */
     QPushButton {
-        background: @border@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface2@, stop:1 @border@);
         border: 1px solid @border2@;
-        border-radius: 6px;
-        padding: 6px 16px;
+        border-radius: 8px;
+        padding: 7px 18px;
         color: @text@;
+        font-weight: 500;
     }
     QPushButton:hover {
-        background: @border2@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @border2@, stop:1 @sidebar_active@);
+        border-color: @accent40@;
     }
     QPushButton:disabled {
         background: @border@;
@@ -320,270 +364,433 @@ def _build_stylesheet(t: dict[str, str]) -> str:
         border: 1px solid @accent@;
     }
     QPushButton#sendBtn {
-        background: @accent@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 @accent@, stop:1 @accent2@);
         color: @bg@;
         font-weight: bold;
         border: none;
-        padding: 6px 18px;
+        padding: 8px 22px;
+        border-radius: 8px;
+        font-size: 13px;
     }
     QPushButton#sendBtn:hover {
-        background: @accentbb@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 @accentcc@, stop:1 @accent2cc@);
     }
     QPushButton#sendBtn:disabled {
         background: @border@;
         color: @disabled@;
     }
     QPushButton:pressed {
-        background: @sidebar_active@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @sidebar_active@, stop:1 @border@);
     }
+
+    /* ── Text editors ─────────────────────────────────────────────── */
     QTextEdit, QPlainTextEdit {
-        background: @surface@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface@, stop:1 @surface2@);
         border: 1px solid @border@;
-        border-radius: 6px;
+        border-radius: 8px;
         color: @text@;
-        padding: 8px;
-        font-family: 'Cascadia Code', 'Fira Code', monospace;
+        padding: 10px;
+        font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
         font-size: 12px;
+        selection-background-color: @accent40@;
     }
+    QTextEdit:focus, QPlainTextEdit:focus {
+        border: 1px solid @accent@;
+    }
+
+    /* ── List widgets ─────────────────────────────────────────────── */
     QListWidget {
         background: @surface@;
         border: 1px solid @border@;
-        border-radius: 6px;
+        border-radius: 8px;
         color: @text@;
     }
+    QListWidget::item {
+        padding: 4px 8px;
+        border-radius: 6px;
+        margin: 1px 2px;
+    }
     QListWidget::item:hover {
-        background: @border@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @accent10@, stop:1 transparent);
     }
     QListWidget::item:selected {
-        background: @sidebar_active@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @accent20@, stop:1 @accent10@);
         color: @accent@;
     }
+
+    /* ── Line edits ───────────────────────────────────────────────── */
     QLineEdit {
         background: @surface@;
         border: 1px solid @border@;
-        border-radius: 6px;
-        padding: 6px 10px;
+        border-radius: 8px;
+        padding: 7px 12px;
         color: @text@;
+        selection-background-color: @accent40@;
     }
+    QLineEdit:focus {
+        border: 1px solid @accent@;
+    }
+
+    /* ── Progress bars ────────────────────────────────────────────── */
     QProgressBar {
-        background: @border@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @border@, stop:1 @surface@);
         border: none;
-        border-radius: 4px;
-        height: 6px;
+        border-radius: 5px;
+        height: 8px;
         text-align: center;
     }
     QProgressBar::chunk {
         background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-            stop:0 @accent@, stop:1 @accent2@);
-        border-radius: 4px;
+            stop:0 @accent@, stop:0.5 @accent2@, stop:1 @accent@);
+        border-radius: 5px;
     }
+
+    /* ── Group boxes (cards) ──────────────────────────────────────── */
     QGroupBox {
-        background-color: @surface@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface2@, stop:1 @surface@);
         border: 1px solid @border@;
-        border-radius: 10px;
-        margin-top: 18px;
-        padding: 18px 14px 14px;
+        border-left: 3px solid qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @accent@, stop:1 @accent2@);
+        border-radius: 12px;
+        margin-top: 20px;
+        padding: 20px 16px 16px;
         font-weight: bold;
         color: @accent@;
     }
     QGroupBox::title {
         subcontrol-origin: margin;
-        left: 12px;
-        padding: 0 6px;
+        left: 14px;
+        padding: 0 8px;
+        color: @accent@;
     }
+
+    /* ── Combo boxes ──────────────────────────────────────────────── */
     QComboBox {
-        background: @border@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface2@, stop:1 @border@);
         border: 1px solid @border2@;
-        border-radius: 6px;
-        padding: 6px 10px;
+        border-radius: 8px;
+        padding: 7px 12px;
         color: @text@;
         min-width: 100px;
     }
     QComboBox:hover {
-        border-color: @sidebar_active@;
+        border-color: @accent40@;
+    }
+    QComboBox:focus {
+        border: 1px solid @accent@;
     }
     QComboBox::drop-down {
         border: none;
-        width: 24px;
+        width: 26px;
     }
     QComboBox::down-arrow {
         image: none;
         border-left: 5px solid transparent;
         border-right: 5px solid transparent;
         border-top: 6px solid @subtext@;
-        margin-right: 6px;
+        margin-right: 8px;
     }
     QComboBox QAbstractItemView {
         background: @surface@;
         border: 1px solid @border2@;
-        border-radius: 4px;
+        border-radius: 8px;
         color: @text@;
-        selection-background-color: @border2@;
+        selection-background-color: @accent20@;
+        selection-color: @accent@;
         outline: none;
+        padding: 4px;
     }
-    QTabWidget::pane { border: none; background: transparent; }
+
+    /* ── Tabs ─────────────────────────────────────────────────────── */
+    QTabWidget::pane {
+        border: none;
+        background: transparent;
+    }
     QTabBar::tab {
-        background: @surface@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface2@, stop:1 @surface@);
         border: 1px solid @border@;
-        border-bottom: none;
-        border-top-left-radius: 6px;
-        border-top-right-radius: 6px;
-        padding: 6px 16px;
+        border-bottom: 2px solid @border@;
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
+        padding: 8px 18px;
         margin-right: 2px;
         color: @disabled@;
+        font-weight: 500;
     }
     QTabBar::tab:selected {
-        background: @border@;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @border@, stop:1 @bg@);
         color: @accent@;
         font-weight: bold;
+        border-bottom: 2px solid @accent@;
     }
-    QTabBar::tab:hover:!selected { color: @subtext@; }
+    QTabBar::tab:hover:!selected {
+        color: @subtext@;
+        background: @surface2@;
+    }
+
+    /* ── Scroll bars ──────────────────────────────────────────────── */
     QScrollBar:vertical {
-        background: @bg@; width: 10px; margin: 0; border: none;
+        background: transparent;
+        width: 8px;
+        margin: 2px;
+        border: none;
     }
     QScrollBar::handle:vertical {
-        background: @border2@; border-radius: 5px; min-height: 30px;
+        background: @border2@;
+        border-radius: 4px;
+        min-height: 30px;
     }
-    QScrollBar::handle:vertical:hover { background: @sidebar_active@; }
+    QScrollBar::handle:vertical:hover {
+        background: @accent40@;
+    }
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-        height: 0; border: none;
+        height: 0;
+        border: none;
     }
     QScrollBar:horizontal {
-        background: @bg@; height: 10px; border: none;
+        background: transparent;
+        height: 8px;
+        margin: 2px;
+        border: none;
     }
     QScrollBar::handle:horizontal {
-        background: @border2@; border-radius: 5px; min-width: 30px;
+        background: @border2@;
+        border-radius: 4px;
+        min-width: 30px;
+    }
+    QScrollBar::handle:horizontal:hover {
+        background: @accent40@;
     }
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-        width: 0; border: none;
+        width: 0;
+        border: none;
     }
+
+    /* ── Splitters ────────────────────────────────────────────────── */
     QSplitter::handle {
         background: @border@;
     }
     QSplitter::handle:horizontal { width: 2px; }
     QSplitter::handle:vertical { height: 2px; }
+    QSplitter::handle:hover {
+        background: @accent40@;
+    }
+
+    /* ── Sliders ──────────────────────────────────────────────────── */
     QSlider::groove:horizontal {
-        background: @border@; height: 6px; border-radius: 3px;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @border@, stop:1 @surface@);
+        height: 6px;
+        border-radius: 3px;
     }
     QSlider::handle:horizontal {
-        background: @accent@; width: 16px; height: 16px;
-        margin: -5px 0; border-radius: 8px;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 @accent@, stop:1 @accent2@);
+        width: 18px;
+        height: 18px;
+        margin: -6px 0;
+        border-radius: 9px;
+        border: 2px solid @bg@;
     }
-    QSlider::handle:horizontal:hover { background: @accentbb@; }
-    QCheckBox { color: @text@; spacing: 6px; }
+    QSlider::handle:horizontal:hover {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 @accentcc@, stop:1 @accent2cc@);
+    }
+
+    /* ── Checkboxes ───────────────────────────────────────────────── */
+    QCheckBox { color: @text@; spacing: 8px; }
     QCheckBox::indicator {
-        width: 16px; height: 16px;
-        border: 1px solid @border2@; border-radius: 4px;
+        width: 18px;
+        height: 18px;
+        border: 2px solid @border2@;
+        border-radius: 5px;
         background: @surface@;
     }
+    QCheckBox::indicator:hover {
+        border-color: @accent40@;
+    }
     QCheckBox::indicator:checked {
-        background: @accent@; border-color: @accent@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 @accent@, stop:1 @accent2@);
+        border-color: @accent@;
     }
+
+    /* ── Tooltips ─────────────────────────────────────────────────── */
     QToolTip {
-        background: @border@; border: 1px solid @border2@;
-        border-radius: 4px; color: @text@;
-        padding: 4px 8px; font-size: 12px;
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface2@, stop:1 @surface@);
+        border: 1px solid @border2@;
+        border-radius: 6px;
+        color: @text@;
+        padding: 6px 10px;
+        font-size: 12px;
     }
+
+    /* ── Tables ───────────────────────────────────────────────────── */
     QTableWidget {
         background: @surface@;
         border: 1px solid @border@;
-        border-radius: 6px;
+        border-radius: 8px;
         color: @text@;
         gridline-color: @border@;
-        selection-background-color: @border2@;
-        selection-color: @text@;
-        alternate-background-color: @accent25@;
+        selection-background-color: @accent20@;
+        selection-color: @accent@;
+        alternate-background-color: @accent08@;
     }
-    QTableWidget::item { padding: 4px 8px; }
-    QTableWidget::item:hover { background: @border@; }
-    QTableCornerButton::section { background: @surface@; border: none; }
-    QHeaderView::section {
+    QTableWidget::item {
+        padding: 6px 10px;
+        border-bottom: 1px solid @border@;
+    }
+    QTableWidget::item:hover {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @accent08@, stop:1 transparent);
+    }
+    QTableCornerButton::section {
         background: @surface@;
-        color: @subtext@;
         border: none;
         border-bottom: 2px solid @border@;
         border-right: 1px solid @border@;
-        padding: 6px 8px;
+    }
+    QHeaderView::section {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface2@, stop:1 @surface@);
+        color: @subtext@;
+        border: none;
+        border-bottom: 2px solid @accent20@;
+        border-right: 1px solid @border@;
+        padding: 8px 10px;
         font-weight: bold;
+        font-size: 12px;
     }
-    QHeaderView::section:hover { background: @border@; color: @text@; }
-    QMenu {
-        background: @surface@;
-        border: 1px solid @border2@;
-        border-radius: 8px;
-        padding: 4px;
-    }
-    QMenu::item {
-        padding: 6px 22px 6px 12px;
-        border-radius: 5px;
+    QHeaderView::section:hover {
+        background: @border@;
         color: @text@;
     }
-    QMenu::item:selected { background: @border2@; color: @accent@; }
+
+    /* ── Context menus ────────────────────────────────────────────── */
+    QMenu {
+        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+            stop:0 @surface2@, stop:1 @surface@);
+        border: 1px solid @border2@;
+        border-radius: 10px;
+        padding: 6px;
+    }
+    QMenu::item {
+        padding: 8px 24px 8px 14px;
+        border-radius: 6px;
+        color: @text@;
+    }
+    QMenu::item:selected {
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @accent20@, stop:1 @accent10@);
+        color: @accent@;
+    }
     QMenu::item:disabled { color: @disabled@; }
-    QMenu::separator { height: 1px; background: @border@; margin: 4px 8px; }
+    QMenu::separator {
+        height: 1px;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 transparent, stop:0.2 @border@, stop:0.8 @border@, stop:1 transparent);
+        margin: 4px 10px;
+    }
+
+    /* ── Dialogs ──────────────────────────────────────────────────── */
     QMessageBox, QDialog {
         background-color: @bg@;
         color: @text@;
     }
     QMessageBox QLabel { color: @text@; }
+
+    /* ── Status bar (Qt widget) ───────────────────────────────────── */
     QStatusBar {
-        background: @surface@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+            stop:0 @crust@, stop:0.5 @surface@, stop:1 @crust@);
         color: @subtext@;
         border-top: 1px solid @border@;
     }
     QStatusBar::item { border: none; }
+
+    /* ── Scroll areas ─────────────────────────────────────────────── */
     QScrollArea { background: transparent; border: none; }
     QScrollArea > QWidget > QWidget { background: transparent; }
+
+    /* ── Spin boxes ───────────────────────────────────────────────── */
     QSpinBox {
         background: @surface@;
         border: 1px solid @border@;
-        border-radius: 6px;
-        padding: 4px 8px;
+        border-radius: 8px;
+        padding: 5px 10px;
         color: @text@;
+    }
+    QSpinBox:focus {
+        border: 1px solid @accent@;
     }
     QSpinBox::up-button, QSpinBox::down-button {
         background: @border@;
         border: none;
         width: 18px;
+        border-radius: 4px;
     }
-    QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: @border2@; }
-    QRadioButton { color: @text@; spacing: 6px; }
+    QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+        background: @accent20@;
+    }
+
+    /* ── Radio buttons ────────────────────────────────────────────── */
+    QRadioButton { color: @text@; spacing: 8px; }
     QRadioButton::indicator {
-        width: 15px; height: 15px;
-        border: 1px solid @border2@;
-        border-radius: 8px;
+        width: 16px;
+        height: 16px;
+        border: 2px solid @border2@;
+        border-radius: 9px;
         background: @surface@;
     }
+    QRadioButton::indicator:hover {
+        border-color: @accent40@;
+    }
     QRadioButton::indicator:checked {
-        background: @accent@;
-        border: 3px solid @surface@;
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 @accent@, stop:1 @accent2@);
+        border: 3px solid @bg@;
     }
     """)
     for key, val in t.items():
         raw = raw.replace(f"@{key}@", val)
-    # Pre-compute alpha-enhanced variants for the stylesheet.
-    # Qt uses #AARRGGBB format, not #RRGGBBAA.
-    for suffix, alpha_pct in [("25", 0.15), ("18", 0.09), ("bb", 0.73)]:
-        accent = t.get("accent", "#89b4fa")
+    # ── Pre-compute alpha-enhanced variants ──────────────────────────
+    # Qt uses #AARRGGBB format (alpha first), not #RRGGBBAA.
+    accent = t.get("accent", "#89b4fa")
+    accent2 = t.get("accent2", "#a6e3a1")
+    red = t.get("red", "#f38ba8")
+    rrggbb_a = accent.lstrip("#")
+    rrggbb_a2 = accent2.lstrip("#")
+    rrggbb_r = red.lstrip("#")
+    # Accent variants: 08 (3%), 10 (6%), 15 (8%), 18 (9%), 20 (12%),
+    # 25 (15%), 40 (25%), bb (73%), cc (80%)
+    for suffix, alpha_pct in [
+        ("08", 0.03), ("10", 0.06), ("15", 0.08), ("18", 0.09),
+        ("20", 0.12), ("25", 0.15), ("40", 0.25), ("bb", 0.73), ("cc", 0.80),
+    ]:
         alpha = max(1, min(255, int(alpha_pct * 255)))
-        aa = f"{alpha:02x}"
-        rrggbb = accent.lstrip("#")
-        raw = raw.replace(f"@accent{suffix}@", f"#{aa}{rrggbb}")
-    for suffix, alpha_pct in [("18", 0.09), ("22", 0.13)]:
-        accent2 = t.get("accent2", "#a6e3a1")
+        raw = raw.replace(f"@accent{suffix}@", f"#{alpha:02x}{rrggbb_a}")
+    # Accent2 variants: 10 (6%), 18 (9%), 22 (13%), cc (80%)
+    for suffix, alpha_pct in [("10", 0.06), ("18", 0.09), ("22", 0.13), ("cc", 0.80)]:
         alpha = max(1, min(255, int(alpha_pct * 255)))
-        aa = f"{alpha:02x}"
-        rrggbb = accent2.lstrip("#")
-        raw = raw.replace(f"@accent2{suffix}@", f"#{aa}{rrggbb}")
+        raw = raw.replace(f"@accent2{suffix}@", f"#{alpha:02x}{rrggbb_a2}")
+    # Red variant: 22 (13%)
     for suffix, alpha_pct in [("22", 0.13)]:
-        red = t.get("red", "#f38ba8")
         alpha = max(1, min(255, int(alpha_pct * 255)))
-        aa = f"{alpha:02x}"
-        rrggbb = red.lstrip("#")
-        raw = raw.replace(f"@red{suffix}@", f"#{aa}{rrggbb}")
-    # Drop any placeholder whose key was missing from the theme dict so a
-    # user-saved/incomplete theme can never emit a literal '@x@' that makes
-    # Qt reject the entire stylesheet ("Could not parse stylesheet").
+        raw = raw.replace(f"@red{suffix}@", f"#{alpha:02x}{rrggbb_r}")
+    # Drop any leftover placeholders so incomplete user themes never emit
+    # a literal '@x@' that makes Qt reject the entire stylesheet.
     raw = re.sub(r"@\w+@", "", raw)
     return raw
 
@@ -705,7 +912,19 @@ from virgo_desktop_pages import (
     SessionPage,
     SwarmPage,
     SettingsPage,
-    AboutPage,
+    ReconGraphPage,
+    C2CommanderPage,
+    AdversarialArenaPage,
+    SonificationPage,
+    DreamsPage,
+    FlavorPage,
+    GhostPage,
+    ArchaeologyPage,
+    EmpathyPage,
+    AuditPage,
+    MemesPage,
+    StigmergyPage,
+    DivergencePage,
 )
 # ── New feature pages (standalone modules, top-3 brainstorm build) ──
 try:
@@ -724,6 +943,39 @@ try:
     from virgo_font_picker import FontPickerPage
 except Exception:  # noqa: BLE001
     FontPickerPage = None
+
+# New feature pages (pheromone, soundscape, empathy, ghost replay, DNA fingerprint, dream viz, swarm, plugin shell)
+try:
+    from virgo_desktop_pages import (
+        PheromoneTrailPage,
+        SoundscapePage,
+        EmpathyUIPage,
+        GhostReplayPage,
+        DNAFingerprintPage,
+        DreamVizPage,
+        SwarmDashboardPage,
+        PluginShellPage,
+    )
+except Exception as exc:  # noqa: BLE001
+    print(f"virgo_desktop: new pages unavailable ({exc})")
+    PheromoneTrailPage = SoundscapePage = EmpathyUIPage = None
+    GhostReplayPage = DNAFingerprintPage = DreamVizPage = None
+    SwarmDashboardPage = PluginShellPage = None
+
+# Feature pages (diffusal, debate, selfheal)
+try:
+    from virgo_desktop_pages import DiffusalPage, DebatePage, SelfHealPage
+except Exception as exc:  # noqa: BLE001
+    print(f"virgo_desktop: feature pages unavailable ({exc})")
+    DiffusalPage = DebatePage = SelfHealPage = None
+
+# VibeVoice TTS page
+try:
+    from virgo_desktop_pages import VibeVoicePage
+except Exception as exc:  # noqa: BLE001
+    print(f"virgo_desktop: VibeVoice page unavailable ({exc})")
+    VibeVoicePage = None
+
 
 # ── Build-on-top feature pages ──
 try:
@@ -847,6 +1099,23 @@ DESKTOP_ICONS = {
     "automation": "\U0001f5b1\ufe0f",  # 🖱️
     "sync": "\U0001f504",  # 🔄
     "fonts": "\U0001f520",  # 🔠
+    "recon": "\U0001f50d",  # 🔍
+    "c2": "\U0001f6e1",  # 🛡
+    "arena": "\u2694",  # ⚔
+    "sonification": "\U0001f3b5",  # 🎵
+    "dreams": "\U0001f4ad",  # 💭
+    "flavor": "\U0001f36e",  # 🍮
+    "ghost": "\U0001f47b",  # 👻
+    "archaeology": "\U0001f3d6",  # 🏖
+    "empathy": "\u2764",  # ❤
+    "audit": "\U0001f516",  # 🔗
+    "memes": "\U0001f600",  # 😀
+    "stigmergy": "\U0001f41d",  # 🐝
+    "divergence": "\U0001f504",  # 🔄
+    "diffusal": "\U0001f500",  # 🔀
+    "debate": "\U0001f91d",  # 🤝
+    "selfheal": "\U0001fa7a",  # 🩺
+    "vibevoice": "\U0001f3a4",  # 🎤
 }
 
 # Sidebar layout: (page_id, label, emoji, group). Groups render as
@@ -858,36 +1127,32 @@ SIDEBAR_ITEMS = [
     ("dashboard", "Dashboard", DESKTOP_ICONS["dashboard"], "Core"),
     ("eventbus", "Event Bus", DESKTOP_ICONS["eventbus"], "Core"),
     # ── Agents ──
-    ("mascot_chat", "Mascot Chat", DESKTOP_ICONS["mascot_chat"], "Agents"),
-    ("activity_feed", "Activity Feed", DESKTOP_ICONS["activity_feed"], "Agents"),
-    ("leaderboard", "Leaderboard", DESKTOP_ICONS["leaderboard"], "Agents"),
     ("sessions", "Sessions", DESKTOP_ICONS["sessions"], "Agents"),
     ("swarm", "Swarm", DESKTOP_ICONS["swarm"], "Agents"),
     ("bench", "Bench", DESKTOP_ICONS["bench"], "Agents"),
     ("timeline", "Run Timeline", DESKTOP_ICONS["timeline"], "Agents"),
-    ("artifacts", "Artifacts", DESKTOP_ICONS["artifacts"], "Agents"),
     ("memory", "Memory", DESKTOP_ICONS["memory"], "Agents"),
     ("budget", "Budget", DESKTOP_ICONS["budget"], "Agents"),
-    ("rag", "Knowledge Base", DESKTOP_ICONS["rag"], "Agents"),
     # ── System ──
     ("files", "Files", DESKTOP_ICONS["files"], "System"),
     ("network", "Network", DESKTOP_ICONS["network"], "System"),
     ("diagnostics", "Diagnostics", DESKTOP_ICONS["diagnostics"], "System"),
     ("alerts", "Alerts", DESKTOP_ICONS["alerts"], "System"),
-    ("notifications", "Notifications", DESKTOP_ICONS["notifications"], "System"),
     ("logs", "Logs", DESKTOP_ICONS["logs"], "System"),
-    ("plugins", "Plugins", DESKTOP_ICONS["plugins"], "System"),
-    ("procs", "Procs", DESKTOP_ICONS["procs"], "System"),
-    # ── Extras ──
-    ("scaffold", "Scaffolds", DESKTOP_ICONS["scaffold"], "Extras"),
-    ("models", "Models", DESKTOP_ICONS["models"], "Extras"),
-    ("automation", "Automation", DESKTOP_ICONS["automation"], "Extras"),
-    ("sync", "Sync", DESKTOP_ICONS["sync"], "Extras"),
-    ("fonts", "Fonts", DESKTOP_ICONS["fonts"], "Extras"),
-    ("webview", "Web Dashboard", DESKTOP_ICONS["webview"], "Extras"),
-    ("settings", "Settings", DESKTOP_ICONS["settings"], "Extras"),
-    ("about", "About", DESKTOP_ICONS["about"], "Extras"),
+    ("settings", "Settings", DESKTOP_ICONS["settings"], "System"),
+    ("about", "About", DESKTOP_ICONS["about"], "System"),
 ]
+# Pages accessible only via Ctrl+Shift+P command palette (not in sidebar).
+_PALETTE_ONLY = {
+    "scaffold", "models", "automation", "sync", "fonts", "webview",
+    "recon", "c2", "arena", "sonification", "dreams", "flavor",
+    "ghost", "archaeology", "empathy", "audit", "memes", "stigmergy",
+    "divergence", "pheromone", "soundscape", "empathy_ui", "ghost_replay",
+    "dna_fingerprint", "dream_viz", "swarm_dashboard", "plugin_shell",
+    "mascot_chat", "activity_feed", "leaderboard", "notifications",
+    "artifacts", "rag", "procs", "plugins",
+    "diffusal", "debate", "selfheal", "vibevoice",
+}
 
 
 class SidebarButton(QPushButton):
@@ -1119,6 +1384,52 @@ class VirgoDesktopWindow(QMainWindow):
             self._register(RagPage(), "rag")
         if WebViewPage is not None:
             self._register(WebViewPage(), "webview")
+        # ── New pages (recon, C2, adversarial arena) ──
+        self._register(ReconGraphPage(), "recon")
+        self._register(C2CommanderPage(), "c2")
+        self._register(AdversarialArenaPage(), "arena")
+
+        # ── Experimental pages (brainstorm build) ──
+        self._register(SonificationPage(), "sonification")
+        self._register(DreamsPage(), "dreams")
+        self._register(FlavorPage(), "flavor")
+        self._register(GhostPage(), "ghost")
+        self._register(ArchaeologyPage(), "archaeology")
+        self._register(EmpathyPage(), "empathy")
+        self._register(AuditPage(), "audit")
+        self._register(MemesPage(), "memes")
+        self._register(StigmergyPage(), "stigmergy")
+        self._register(DivergencePage(), "divergence")
+
+        # New feature pages (pheromone, soundscape, empathy, ghost replay, DNA fingerprint, dream viz, swarm, plugin shell)
+        if PheromoneTrailPage is not None:
+            self._register(PheromoneTrailPage(), "pheromone")
+        if SoundscapePage is not None:
+            self._register(SoundscapePage(), "soundscape")
+        if EmpathyUIPage is not None:
+            self._register(EmpathyUIPage(), "empathy_ui")
+        if GhostReplayPage is not None:
+            self._register(GhostReplayPage(), "ghost_replay")
+        if DNAFingerprintPage is not None:
+            self._register(DNAFingerprintPage(), "dna_fingerprint")
+        if DreamVizPage is not None:
+            self._register(DreamVizPage(), "dream_viz")
+        if SwarmDashboardPage is not None:
+            self._register(SwarmDashboardPage(), "swarm_dashboard")
+        if PluginShellPage is not None:
+            self._register(PluginShellPage(), "plugin_shell")
+
+        # Feature pages (diffusal, debate, selfheal)
+        if DiffusalPage is not None:
+            self._register(DiffusalPage(), "diffusal")
+        if DebatePage is not None:
+            self._register(DebatePage(), "debate")
+        if SelfHealPage is not None:
+            self._register(SelfHealPage(), "selfheal")
+
+        # VibeVoice TTS
+        if VibeVoicePage is not None:
+            self._register(VibeVoicePage(), "vibevoice")
 
         self.splitter.addWidget(self.stack)
 
@@ -1142,12 +1453,12 @@ class VirgoDesktopWindow(QMainWindow):
 
         # Focus indicator
         self._focus_indicator = QLabel("")
-        self._focus_indicator.setStyleSheet("color: #a6e3a1; font-size: 11px; padding: 0 6px;")
+        self._focus_indicator.setStyleSheet("color: #00e5a0; font-size: 11px; padding: 0 6px;")
         self.status_bar.addPermanentWidget(self._focus_indicator)
 
         # Theme indicator
         self._theme_indicator = QLabel("")
-        self._theme_indicator.setStyleSheet("color: #6c7086; font-size: 11px; padding: 0 6px;")
+        self._theme_indicator.setStyleSheet("color: #8888bb; font-size: 11px; padding: 0 6px;")
         self.status_bar.addPermanentWidget(self._theme_indicator)
 
         # Chaos toggle
@@ -1155,7 +1466,7 @@ class VirgoDesktopWindow(QMainWindow):
         self._chaos_btn.setFixedWidth(32)
         self._chaos_btn.setToolTip("Toggle Chaos Mode")
         self._chaos_btn.clicked.connect(self._chaos_toggle_fast)
-        self._chaos_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #313244; border-radius: 4px; }")
+        self._chaos_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #252545; border-radius: 4px; }")
         self.status_bar.addPermanentWidget(self._chaos_btn)
 
         # Sound toggle
@@ -1163,18 +1474,18 @@ class VirgoDesktopWindow(QMainWindow):
         self._sound_btn.setFixedWidth(32)
         self._sound_btn.setToolTip("Toggle Sound Effects")
         self._sound_btn.clicked.connect(self._sound_toggle_fast)
-        self._sound_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #313244; border-radius: 4px; }")
+        self._sound_btn.setStyleSheet("QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #252545; border-radius: 4px; }")
         self.status_bar.addPermanentWidget(self._sound_btn)
 
         # ── Live status widgets (item: status bar) ───────────────
         # Ollama health dot (async via QNetworkAccessManager — never blocks UI)
         self._ollama_dot = QLabel("●")
         self._ollama_dot.setToolTip("Ollama: checking…")
-        self._ollama_dot.setStyleSheet("color: #6c7086; font-size: 13px; padding: 0 4px;")
+        self._ollama_dot.setStyleSheet("color: #4a4a6a; font-size: 13px; padding: 0 4px;")
         self.status_bar.addPermanentWidget(self._ollama_dot)
         self._ollama_label = QLabel("ollama")
         self._ollama_label.setToolTip("Ollama runtime health")
-        self._ollama_label.setStyleSheet("color: #6c7086; font-size: 11px; padding: 0 2px;")
+        self._ollama_label.setStyleSheet("color: #8888bb; font-size: 11px; padding: 0 2px;")
         self.status_bar.addPermanentWidget(self._ollama_label)
         self._ollama_ok: bool | None = None
         try:
@@ -1189,19 +1500,19 @@ class VirgoDesktopWindow(QMainWindow):
         # Budget burn
         self._budget_label = QLabel("💰 –")
         self._budget_label.setToolTip("Today's estimated spend / limit")
-        self._budget_label.setStyleSheet("color: #6c7086; font-size: 11px; padding: 0 6px;")
+        self._budget_label.setStyleSheet("color: #8888bb; font-size: 11px; padding: 0 6px;")
         self.status_bar.addPermanentWidget(self._budget_label)
 
         # Pipeline state
         self._pipeline_label = QLabel("🚀 –")
         self._pipeline_label.setToolTip("Pipeline state")
-        self._pipeline_label.setStyleSheet("color: #6c7086; font-size: 11px; padding: 0 6px;")
+        self._pipeline_label.setStyleSheet("color: #8888bb; font-size: 11px; padding: 0 6px;")
         self.status_bar.addPermanentWidget(self._pipeline_label)
 
         # Event bus state
         self._bus_label = QLabel("📡 –")
         self._bus_label.setToolTip("Event bus status")
-        self._bus_label.setStyleSheet("color: #6c7086; font-size: 11px; padding: 0 6px;")
+        self._bus_label.setStyleSheet("color: #8888bb; font-size: 11px; padding: 0 6px;")
         self.status_bar.addPermanentWidget(self._bus_label)
 
         # Status bar refresh timer
@@ -1260,6 +1571,9 @@ class VirgoDesktopWindow(QMainWindow):
         # ── Animated boot screen ──
         self._show_boot_screen()
 
+        # ── Crash recovery check ──
+        self._check_crash_recovery()
+
     # ────────────────────────────────────────────────────────────────
 
     def _register(self, page: QWidget, name: str) -> None:
@@ -1274,10 +1588,10 @@ class VirgoDesktopWindow(QMainWindow):
         self._nav_headers: dict[str, QListWidgetItem] = {}
         saved = self._config.get("sidebar_collapsed_groups")
         if saved is None:
-            # Core stays open; the long secondary groups fold shut by default.
-            self._group_collapsed = {"Core": False, "Agents": True, "System": True, "Extras": True}
+            # With only 17 items, all groups start expanded for easy discovery.
+            self._group_collapsed = {"Core": False, "Agents": False, "System": False}
         else:
-            self._group_collapsed = {g: (g in saved) for g in ("Core", "Agents", "System", "Extras")}
+            self._group_collapsed = {g: (g in saved) for g in ("Core", "Agents", "System")}
         meta = {pid: (label, emoji, group) for pid, label, emoji, group in SIDEBAR_ITEMS}
         last_group = None
         for pid in self.nav_order:
@@ -1293,7 +1607,7 @@ class VirgoDesktopWindow(QMainWindow):
                 f.setBold(True)
                 f.setPointSize(8)
                 h.setFont(f)
-                h.setForeground(QBrush(QColor("#6c7086")))
+                h.setForeground(QBrush(QColor("#4a4a6a")))
                 self.nav_list.addItem(h)
                 self._nav_headers[group] = h
                 last_group = group
@@ -1386,6 +1700,11 @@ class VirgoDesktopWindow(QMainWindow):
             self.nav_list.setCurrentItem(item)
         self.stack.setCurrentWidget(self.pages[page_id])
         self.current_page = page_id
+        try:
+            from virgo_telemetry import track
+            track("page_view", page_id=page_id)
+        except Exception:
+            pass
         self._config["last_page"] = page_id
         self._save_config()
         page = self.pages[page_id]
@@ -1402,6 +1721,11 @@ class VirgoDesktopWindow(QMainWindow):
         if not msg:
             return
         self.ask_input.clear()
+        try:
+            from virgo_telemetry import track
+            track("chat_send")
+        except Exception:
+            pass
         try:
             self._navigate("chat")
             page = self.pages.get("chat")
@@ -1622,24 +1946,24 @@ class VirgoDesktopWindow(QMainWindow):
             # Style by kind
             kind_styles = {
                 "achievement": {
-                    "bg": "#2a3a2a", "border": "#a6e3a1",
-                    "icon": "🏆", "title_color": "#a6e3a1",
+                    "bg": "#0a2a1a", "border": "#00e5a0",
+                    "icon": "🏆", "title_color": "#00e5a0",
                 },
                 "success": {
-                    "bg": "#1e3a2e", "border": "#89b4fa",
-                    "icon": "✅", "title_color": "#89b4fa",
+                    "bg": "#0a1a3a", "border": "#7c6aff",
+                    "icon": "✅", "title_color": "#7c6aff",
                 },
                 "error": {
-                    "bg": "#3a1a1a", "border": "#f38ba8",
-                    "icon": "❌", "title_color": "#f38ba8",
+                    "bg": "#2a0a1a", "border": "#ff5577",
+                    "icon": "❌", "title_color": "#ff5577",
                 },
                 "warning": {
-                    "bg": "#3a3a1a", "border": "#f9e2af",
-                    "icon": "⚠️", "title_color": "#f9e2af",
+                    "bg": "#2a2a0a", "border": "#ffc53d",
+                    "icon": "⚠️", "title_color": "#ffc53d",
                 },
                 "info": {
-                    "bg": "#1e1e2e", "border": "#45475a",
-                    "icon": "ℹ️", "title_color": "#cdd6f4",
+                    "bg": "#141428", "border": "#35356a",
+                    "icon": "ℹ️", "title_color": "#e0e0ff",
                 },
             }
             style = kind_styles.get(kind, kind_styles["info"])
@@ -1659,7 +1983,7 @@ class VirgoDesktopWindow(QMainWindow):
             t_layout.addLayout(title_row)
 
             t_msg = QLabel(message)
-            t_msg.setStyleSheet("color: #a6adc8; font-size: 12px;")
+            t_msg.setStyleSheet("color: #8888bb; font-size: 12px;")
             t_msg.setWordWrap(True)
             t_layout.addWidget(t_msg)
 
@@ -1922,6 +2246,15 @@ class VirgoDesktopWindow(QMainWindow):
         for pid, label, emoji, _g in SIDEBAR_ITEMS:
             categories["Navigation"].append(
                 (f"{emoji}  Go to {label}", "page", lambda p=pid: self._navigate(p))
+            )
+        # Also include palette-only pages (hidden from sidebar, accessible here)
+        _all_registered = set(self.pages.keys())
+        for pid in sorted(_PALETTE_ONLY):
+            if pid not in _all_registered:
+                continue
+            emoji = DESKTOP_ICONS.get(pid, "📄")
+            categories["Navigation"].append(
+                (f"{emoji}  {pid.replace('_', ' ').title()}", "page", lambda p=pid: self._navigate(p))
             )
 
         nav_actions = categories["Navigation"]
@@ -2224,7 +2557,7 @@ class VirgoDesktopWindow(QMainWindow):
             import virgo_chaos as ch
             self._chaos_btn.setText("🎲" if ch.is_chaos_enabled() else "🎲")
             self._chaos_btn.setStyleSheet(
-                "QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #313244; border-radius: 4px; }"
+                "QPushButton { background: transparent; border: none; font-size: 14px; } QPushButton:hover { background: #252545; border-radius: 4px; }"
             )
         except Exception:
             pass
@@ -2238,7 +2571,7 @@ class VirgoDesktopWindow(QMainWindow):
             cost = sum(float(r.get("cost", 0.0)) for r in bt._records)
             lim = float(getattr(bt, "limit", 0.0) or 0.0)
             pct = int(cost / lim * 100) if lim > 0 else 0
-            color = "#a6e3a1" if pct < 70 else ("#f9e2af" if pct < 90 else "#f38ba8")
+            color = "#00e5a0" if pct < 70 else ("#ffc53d" if pct < 90 else "#ff5577")
             self._budget_label.setText(f"💰 ${cost:.2f} ({pct}%)")
             self._budget_label.setToolTip(f"Estimated spend ${cost:.2f} / limit ${lim:.2f}")
             self._budget_label.setStyleSheet(f"color: {color}; font-size: 11px; padding: 0 6px;")
@@ -2252,7 +2585,7 @@ class VirgoDesktopWindow(QMainWindow):
             if state_path.exists():
                 d = json.loads(state_path.read_text())
                 state = str(d.get("state", d.get("status", "idle"))).lower()
-            color = "#f9e2af" if state in ("running", "active", "busy") else "#6c7086"
+            color = "#ffc53d" if state in ("running", "active", "busy") else "#4a4a6a"
             self._pipeline_label.setText(f"🚀 {state}")
             self._pipeline_label.setToolTip("Pipeline state (from .virgo_pipeline_ui.json)")
             self._pipeline_label.setStyleSheet(f"color: {color}; font-size: 11px; padding: 0 6px;")
@@ -2266,7 +2599,7 @@ class VirgoDesktopWindow(QMainWindow):
             s = get_bus().status()
             running = bool(s.get("running", s.get("active", False)))
             subs = s.get("listeners", s.get("sources", 0))
-            color = "#a6e3a1" if running else "#6c7086"
+            color = "#00e5a0" if running else "#4a4a6a"
             self._bus_label.setText(f"📡 {'on' if running else 'off'}" + (f" · {subs}" if subs else ""))
             self._bus_label.setToolTip("Event bus status")
             self._bus_label.setStyleSheet(f"color: {color}; font-size: 11px; padding: 0 6px;")
@@ -2293,11 +2626,11 @@ class VirgoDesktopWindow(QMainWindow):
             err = reply.error()
             ok = err == reply.NetworkError.NoError
             self._ollama_ok = ok
-            color = "#a6e3a1" if ok else "#f38ba8"
+            color = "#00e5a0" if ok else "#ff5577"
             self._ollama_dot.setStyleSheet(f"color: {color}; font-size: 13px; padding: 0 4px;")
             self._ollama_dot.setToolTip("Ollama: online" if ok else "Ollama: unreachable")
             self._ollama_label.setStyleSheet(
-                f"color: {'#a6e3a1' if ok else '#f38ba8'}; font-size: 11px; padding: 0 2px;"
+                f"color: {'#00e5a0' if ok else '#ff5577'}; font-size: 11px; padding: 0 2px;"
             )
         except Exception:
             pass
@@ -2324,15 +2657,15 @@ class VirgoDesktopWindow(QMainWindow):
             colors = p.get("theme_colors", {})
             primary = colors.get("primary", "cyan")
             style_map = {
-                "green": "#a6e3a1", "cyan": "#89b4fa", "magenta": "#f5c2e7",
-                "purple": "#cba6f7", "blue": "#89b4fa", "pink": "#f5c2e7",
-                "gold": "#f9e2af", "orange": "#fab387", "yellow": "#f9e2af",
-                "bright_magenta": "#f5c2e7", "bright_cyan": "#89dceb",
-                "lime": "#a6e3a1", "white": "#cdd6f4",
+                "green": "#00e5a0", "cyan": "#7c6aff", "magenta": "#ff77cc",
+                "purple": "#b48aff", "blue": "#7c6aff", "pink": "#ff77cc",
+                "gold": "#ffc53d", "orange": "#ff9944", "yellow": "#ffc53d",
+                "bright_magenta": "#ff77cc", "bright_cyan": "#66ddff",
+                "lime": "#00e5a0", "white": "#e0e0ff",
             }
-            accent = style_map.get(primary, "#89b4fa")
+            accent = style_map.get(primary, "#7c6aff")
             self._persona_combo.setStyleSheet(
-                f"QComboBox {{ background: #313244; border: 1px solid {accent}; "
+                f"QComboBox {{ background: #1a1a36; border: 1px solid {accent}; "
                 f"border-radius: 4px; padding: 2px 6px; color: {accent}; "
                 f"font-size: 11px; }}"
             )
@@ -2397,12 +2730,12 @@ class VirgoDesktopWindow(QMainWindow):
             from virgo_celebrate import firework, banner, cheer_text
             text = cheer_text(style)
             art = firework(style)
-            msg = f"<h2 style='color: #f9e2af;'>{text}</h2><pre style='color: #a6e3a1; font-size: 12px;'>{art}</pre>"
+            msg = f"<h2 style='color: #ffc53d;'>{text}</h2><pre style='color: #00e5a0; font-size: 12px;'>{art}</pre>"
 
             dlg = QDialog(self)
             dlg.setWindowTitle("🎉")
             dlg.resize(400, 300)
-            dlg.setStyleSheet("background: #1e1e2e;")
+            dlg.setStyleSheet("background: #0d0d1a;")
             lo = QVBoxLayout(dlg)
             lbl = QLabel(msg)
             lbl.setWordWrap(True)
@@ -2410,7 +2743,7 @@ class VirgoDesktopWindow(QMainWindow):
             lo.addWidget(lbl)
             btn = QPushButton("Close")
             btn.clicked.connect(dlg.accept)
-            btn.setStyleSheet("QPushButton { background: #313244; border: 1px solid #45475a; border-radius: 6px; padding: 8px 24px; color: #cdd6f4; } QPushButton:hover { border-color: #89b4fa; }")
+            btn.setStyleSheet("QPushButton { background: #1a1a36; border: 1px solid #35356a; border-radius: 6px; padding: 8px 24px; color: #e0e0ff; } QPushButton:hover { border-color: #7c6aff; }")
             lo.addWidget(btn, 0, Qt.AlignmentFlag.AlignCenter)
             dlg.exec()
         except Exception:
@@ -2427,16 +2760,16 @@ class VirgoDesktopWindow(QMainWindow):
             dlg.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
             dlg.setStyleSheet("""
                 QDialog { background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #313244, stop:1 #45475a);
-                    border: 1px solid #f9e2af; border-radius: 8px; }
+                    stop:0 #1a1a36, stop:1 #252545);
+                    border: 1px solid #ffc53d; border-radius: 8px; }
             """)
             lo = QHBoxLayout(dlg)
             lo.setContentsMargins(12, 8, 12, 8)
             icon_lbl = QLabel("🏆")
             icon_lbl.setStyleSheet("font-size: 24px;")
-            text_lbl = QLabel(f"<b style='color: #f9e2af;'>{title}</b><br>"
-                              f"<span style='color: #a6adc8;'>{desc}</span>"
-                              f"<br><span style='color: #a6e3a1;'>+{xp} XP</span>")
+            text_lbl = QLabel(f"<b style='color: #ffc53d;'>{title}</b><br>"
+                              f"<span style='color: #8888bb;'>{desc}</span>"
+                              f"<br><span style='color: #00e5a0;'>+{xp} XP</span>")
             text_lbl.setWordWrap(True)
             lo.addWidget(icon_lbl)
             lo.addWidget(text_lbl, 1)
@@ -2551,11 +2884,21 @@ class VirgoDesktopWindow(QMainWindow):
             p = Path(__file__).parent / ".virgo_desktop_geom.json"
             if p.exists():
                 d = json.loads(p.read_text())
-                self.resize(d.get("w", WIDTH), d.get("h", HEIGHT))
-                if d.get("x") is not None:
-                    self.move(d["x"], d["y"])
+                w = max(640, int(d.get("w", WIDTH)))
+                h = max(480, int(d.get("h", HEIGHT)))
+                x = int(d.get("x", 0))
+                y = int(d.get("y", 0))
+                screen = QApplication.primaryScreen()
+                if screen is not None:
+                    geo = screen.availableGeometry()
+                    x = max(geo.left(), min(x, geo.right() - w))
+                    y = max(geo.top(), min(y, geo.bottom() - h))
+                    w = min(w, geo.width())
+                    h = min(h, geo.height())
+                self.resize(w, h)
+                self.move(x, y)
         except Exception:
-            pass
+            self.resize(WIDTH, HEIGHT)
 
     def _save_geom(self) -> None:
         try:
@@ -2698,6 +3041,53 @@ class VirgoDesktopWindow(QMainWindow):
             pass
 
 
+    def _check_crash_recovery(self) -> None:
+        marker = Path(__file__).parent / ".virgo_last_crash"
+        if not marker.exists():
+            return
+        try:
+            report_path = marker.read_text(encoding="utf-8").strip()
+        except Exception:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Crash Recovery")
+        box.setText("Previous session ended unexpectedly.")
+        box.setInformativeText(
+            f"Crash report: {report_path}\n\n"
+            "Restore last known good UI state (theme, page, sidebar)?"
+        )
+        restore = box.addButton("Restore", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Continue", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(restore)
+        box.exec()
+        if box.clickedButton() is restore:
+            try:
+                config_path = Path(__file__).parent / ".virgo_desktop_config.json"
+                if config_path.exists():
+                    data = json.loads(config_path.read_text())
+                    if isinstance(data, dict):
+                        if "theme_name" in data and data["theme_name"] in self.themes:
+                            self._theme_name = data["theme_name"]
+                            self._active_theme = data["theme_name"]
+                        if "theme_mode" in data:
+                            self._theme_mode = data["theme_mode"]
+                        if "last_page" in data and data["last_page"] in self.pages:
+                            self._navigate(data["last_page"])
+                        if "sidebar_order" in data:
+                            self.nav_order = [
+                                p for p in data["sidebar_order"] if p in self.pages
+                            ]
+                            self._init_sidebar_items()
+                        self._apply_style()
+                        self._save_config()
+            except Exception:
+                pass
+        try:
+            marker.unlink()
+        except Exception:
+            pass
+
+
     # ── Animated Boot Screen (#10) ──────────────────────────────────────
 
     def _show_boot_screen(self) -> None:
@@ -2708,14 +3098,14 @@ class VirgoDesktopWindow(QMainWindow):
             splash.setAlignment(Qt.AlignmentFlag.AlignCenter)
             splash.setText(
                 "<div style='text-align: center;'>"
-                "<span style='font-size: 48px; color: #89b4fa;'>✦</span><br><br>"
-                "<span style='font-size: 32px; font-weight: bold; color: #cdd6f4;'>VIRGO</span><br>"
-                f"<span style='font-size: 14px; color: #6c7086;'>v{APP_VERSION}</span><br><br>"
-                "<span style='font-size: 13px; color: #45475a;'>loading...</span>"
+                "<span style='font-size: 48px; color: #7c6aff;'>✦</span><br><br>"
+                "<span style='font-size: 32px; font-weight: bold; color: #e0e0ff;'>VIRGO</span><br>"
+                f"<span style='font-size: 14px; color: #8888bb;'>v{APP_VERSION}</span><br><br>"
+                "<span style='font-size: 13px; color: #35356a;'>loading...</span>"
                 "</div>"
             )
             splash.setStyleSheet(
-                "QLabel { background: #11111b; border: none; }"
+                "QLabel { background: #08080f; border: none; }"
             )
             splash.setGeometry(0, 0, self.width(), self.height())
             splash.raise_()
@@ -2823,8 +3213,8 @@ class VirgoDesktopWindow(QMainWindow):
             self._perf_overlay = QFrame(self)
             self._perf_overlay.setObjectName("perfOverlay")
             self._perf_overlay.setStyleSheet(
-                "QFrame#perfOverlay { background: rgba(17, 17, 27, 200); "
-                "border: 1px solid #313244; border-radius: 8px; }"
+                "QFrame#perfOverlay { background: rgba(8, 8, 15, 220); "
+                "border: 1px solid #252545; border-radius: 8px; }"
             )
             lo = QVBoxLayout(self._perf_overlay)
             lo.setContentsMargins(12, 8, 12, 8)
@@ -2838,7 +3228,7 @@ class VirgoDesktopWindow(QMainWindow):
                 row = QHBoxLayout()
                 row.addWidget(QLabel(f"{label}:"))
                 val = QLabel("—")
-                val.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+                val.setStyleSheet("color: #00e5a0; font-weight: bold;")
                 row.addWidget(val, 1)
                 lo.addLayout(row)
                 self._perf_labels[key] = val
@@ -3011,8 +3401,35 @@ def main() -> None:
     # PyQt6 aborts the whole app (BEX64 0xc0000409) when a slot raises.
     # Print the traceback and keep running so one bad page can't kill Virgo.
     def _safe_excepthook(etype, val, tb) -> None:
+        last_page = None
         try:
-            traceback.print_exception(etype, val, tb)
+            app = QApplication.instance()
+            if app is not None:
+                win = app.activeWindow()
+                if isinstance(win, VirgoDesktopWindow):
+                    last_page = win.current_page
+        except Exception:
+            pass
+        report_path = virgo_crash.record_crash(
+            etype, val, tb,
+            last_active_page=last_page,
+            log_file=os.environ.get("VIRGO_LOG_FILE"),
+        )
+        try:
+            box = QMessageBox()
+            box.setWindowTitle("Oops")
+            box.setIcon(QMessageBox.Icon.Critical)
+            box.setText(
+                f"An unexpected error occurred.\n\n"
+                f"Crash report saved to:\n{report_path}"
+            )
+            box.exec()
+        except Exception:
+            pass
+        sys.__excepthook__(etype, val, tb)
+        try:
+            from virgo_telemetry import track
+            track("crash")
         except Exception:
             pass
 

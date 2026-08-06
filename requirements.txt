@@ -14,6 +14,9 @@ sse-starlette>=2.0
 
 # Optional desktop GUI (pyproject extra: desktop) — heavy, install separately
 # PyQt6>=6.6
+# edge-tts>=6.1
+# SpeechRecognition>=3.10
+# pyaudio>=0.2.11
 
 # Development / test tooling (pyproject extra: dev)
 pytest>=8.0

@@ -93,7 +93,7 @@ def test_load_prompt_file_handles_bad_json(tmp_path):
 
 def test_chat_session_round_trip(tmp_path, monkeypatch):
     mod = _pages()
-    monkeypatch.setattr(mod, "_CHAT_HISTORY_DIR", tmp_path)
+    monkeypatch.setattr(mod.pages_core, "_CHAT_HISTORY_DIR", tmp_path)
     assert mod._load_recent_chat() is None
     path = mod._chat_session_path()
     assert path.parent == tmp_path

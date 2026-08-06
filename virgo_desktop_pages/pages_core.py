@@ -459,6 +459,11 @@ class PipelinePage(PageWidget):
         return bool(self._running or self._process)
 
     def _run_pipeline(self) -> None:
+        try:
+            from virgo_telemetry import track
+            track("pipeline_run", page_id="pipeline", success=False)
+        except Exception:
+            pass
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self._progress.setVisible(True)
@@ -566,6 +571,12 @@ class PipelinePage(PageWidget):
             pass
 
     def _cleanup_run(self, msg: str) -> None:
+        try:
+            from virgo_telemetry import track
+            success = msg in ("done",) or msg.startswith("Exit code 0")
+            track("pipeline_run", page_id="pipeline", success=success)
+        except Exception:
+            pass
         self._timer.stop()
         self._anim_timer.stop()
         self._elapsed_timer.stop()
@@ -739,6 +750,10 @@ def _md_to_html(text: str) -> str:
 
     # Escape HTML entities first, then apply markdown rules.
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # Auto-link plain URLs that aren't already markdown links.
+    url_re = re.compile(r'(?<!href=")(?<!src=")\b(https?://[^\s<]+)')
+    text = url_re.sub(r'<a href="\1">\1</a>', text)
 
     # Code blocks (```...```) — protect from other rules
     code_blocks: list[tuple[str, str]] = []
@@ -1018,19 +1033,24 @@ class ChatPage(PageWidget):
 
         # ── Action toolbar ──
         toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
+
+        # Chat actions
         self.export_btn = QPushButton("Export")
         self.export_btn.clicked.connect(self._export)
         self.copy_btn = QPushButton("Copy reply")
         self.copy_btn.clicked.connect(self._copy_reply)
         self.regen_btn = QPushButton("Regenerate")
         self.regen_btn.clicked.connect(self._regenerate)
-        toolbar.addWidget(self.export_btn)
-        toolbar.addWidget(self.copy_btn)
-        toolbar.addWidget(self.regen_btn)
         self.branch_btn = QPushButton("Branch")
         self.branch_btn.setToolTip("Fork the conversation from the last message")
         self.branch_btn.clicked.connect(self._branch_from)
-        toolbar.addWidget(self.branch_btn)
+        for w in (self.export_btn, self.copy_btn, self.regen_btn, self.branch_btn):
+            toolbar.addWidget(w)
+
+        toolbar.addWidget(self._toolbar_sep())
+
+        # Voice
         self.speak_btn = QPushButton("Speak")
         self.speak_btn.setToolTip("Read last reply aloud")
         self.speak_btn.clicked.connect(self._speak_reply)
@@ -1040,32 +1060,41 @@ class ChatPage(PageWidget):
         self.voice_mode = QPushButton("Voice mode")
         self.voice_mode.setCheckable(True)
         self.voice_mode.setToolTip("Toggle: recognized speech auto-sends")
-        toolbar.addWidget(self.speak_btn)
-        toolbar.addWidget(self.mic_btn)
-        toolbar.addWidget(self.voice_mode)
+        for w in (self.speak_btn, self.mic_btn, self.voice_mode):
+            toolbar.addWidget(w)
+
+        toolbar.addWidget(self._toolbar_sep())
+
+        # Memory / history
         self.prompt_btn = QPushButton("Prompts")
         self.prompt_btn.setToolTip("Save / load prompt templates")
         self.prompt_btn.clicked.connect(self._show_prompt_lib)
-        toolbar.addWidget(self.prompt_btn)
         self.history_btn = QPushButton("History")
         self.history_btn.setToolTip("Browse / load / delete past chat sessions")
         self.history_btn.clicked.connect(self._browse_history)
-        toolbar.addWidget(self.history_btn)
         self.copy_md_btn = QPushButton("Copy MD")
         self.copy_md_btn.setToolTip("Copy full chat as Markdown to clipboard")
         self.copy_md_btn.clicked.connect(self._copy_markdown)
-        toolbar.addWidget(self.copy_md_btn)
+        for w in (self.prompt_btn, self.history_btn, self.copy_md_btn):
+            toolbar.addWidget(w)
+
+        toolbar.addWidget(self._toolbar_sep())
+
+        # Advanced
         self.split_btn = QPushButton("Split view")
         self.split_btn.setToolTip("Toggle side-by-side comparison view")
         self.split_btn.setCheckable(True)
         self.split_btn.clicked.connect(self._toggle_split)
-        toolbar.addWidget(self.split_btn)
         self.ab_btn = QPushButton("A/B")
         self.ab_btn.setToolTip("Compare two models on the same prompt, scored")
         self.ab_btn.clicked.connect(self._ab_compare)
-        toolbar.addWidget(self.ab_btn)
+        for w in (self.split_btn, self.ab_btn):
+            toolbar.addWidget(w)
+
         toolbar.addStretch()
         self.content.addLayout(toolbar)
+
+        self._check_voice_deps()
 
         # Image gallery strip (collects images referenced in chat)
         self.gallery = QListWidget()
@@ -1186,7 +1215,13 @@ class ChatPage(PageWidget):
                 role = msg.get("role", "")
                 content = msg.get("content", "")
                 if role == "user":
-                    self.chat_log.append(f"<b>You:</b> {content}")
+                    self.chat_log.append(
+                        f"<div style='background:#313244; border:1px solid #45475a; border-radius:10px; "
+                        f"margin:6px 0 6px auto; padding:10px 14px; max-width:85%; text-align:right;'>"
+                        f"<b style='color:#a6e3a1; font-size:12px;'>You</b>"
+                        f"<div style='color:#cdd6f4; margin-top:4px; line-height:1.5;'>{self._escape(content)}</div>"
+                        f"</div>"
+                    )
                 elif role == "assistant":
                     self._append_assistant(content)
                 elif role == "system":
@@ -1287,8 +1322,19 @@ class ChatPage(PageWidget):
         if not msg:
             return
         self.msg_input.clear()
-        self.chat_log.append(f"<b>You:</b> {msg}")
+        self.chat_log.append(
+            f"<div style='background:#313244; border:1px solid #45475a; border-radius:10px; "
+            f"margin:6px 0 6px auto; padding:10px 14px; max-width:85%; text-align:right;'>"
+            f"<b style='color:#a6e3a1; font-size:12px;'>You</b>"
+            f"<div style='color:#cdd6f4; margin-top:4px; line-height:1.5;'>{self._escape(msg)}</div>"
+            f"</div>"
+        )
         self._busy = True
+        try:
+            from virgo_telemetry import track
+            track("chat_send", page_id="chat")
+        except Exception:
+            pass
 
         # Slash commands handled locally (no model call).
         low = msg.lower()
@@ -1308,14 +1354,29 @@ class ChatPage(PageWidget):
             self._busy = False
             return
         if low.startswith("/read "):
+            try:
+                from virgo_telemetry import track
+                track("tool_run", tool_id="read", success=False)
+            except Exception:
+                pass
             self._run_tool("read", {"path": msg[len("/read ") :].strip()})
             self._busy = False
             return
         if low.startswith("/web "):
+            try:
+                from virgo_telemetry import track
+                track("tool_run", tool_id="web", success=False)
+            except Exception:
+                pass
             self._run_tool("web", {"url": msg[len("/web ") :].strip()})
             self._busy = False
             return
         if low.startswith("/py "):
+            try:
+                from virgo_telemetry import track
+                track("tool_run", tool_id="py", success=False)
+            except Exception:
+                pass
             self._run_tool("py", {"code": msg[len("/py ") :].strip()})
             self._busy = False
             return
@@ -1620,7 +1681,7 @@ class ChatPage(PageWidget):
         return [label for _score, label in scored[:k]]
 
     def _stream_reply(self, msg: str) -> None:
-
+        self._maybe_summarize()
         messages = [{"role": "system", "content": self._build_system(msg)}] + self._history
         # Forward streamed tokens into the chat box live (and keep the full text).
         collector = _GuiStream(self)
@@ -1628,9 +1689,7 @@ class ChatPage(PageWidget):
         sys.stdout = collector
         stopped = False
         try:
-            reply = self._client.chat_stream(
-                messages, temperature=self._temperature, max_tokens=2048, role="agent"
-            )
+            reply = self._chat_with_fallback(messages, role="agent")
         except _StopStream:
             stopped = True
             reply = ""
@@ -1734,6 +1793,70 @@ class ChatPage(PageWidget):
     def _on_persona(self, name: str) -> None:
         self._persona = self._personas.get(name, self._personas["Default"])
         self.chat_log.append(f"<i>[Persona: {name}]</i>")
+
+    @staticmethod
+    def _count_tokens(text: str) -> int:
+        return len(text) // 4
+
+    def _maybe_summarize(self) -> None:
+        if os.environ.get("AUTO_SUMMARIZE", "1") not in ("1", "true", "yes"):
+            return
+        context_window = int(os.environ.get("CONTEXT_WINDOW", "4096"))
+        threshold = int(context_window * 0.75)
+        total = sum(self._count_tokens(m.get("content", "")) for m in self._history)
+        if total <= threshold:
+            return
+        split = max(1, len(self._history) // 2)
+        old = self._history[:split]
+        keep = self._history[split:]
+        parts = []
+        for m in old:
+            role = m.get("role", "?")
+            content = m.get("content", "")[:150]
+            parts.append(f"{role}: {content}")
+        summary = "; ".join(parts)
+        summary_msg = {"role": "system", "content": f"[Earlier conversation summary: {summary}]"}
+        self._history[:] = [summary_msg] + keep
+        self.chat_log.append("<i>[Context window full — older messages summarized]</i>")
+
+    def _chat_with_fallback(self, messages, role="agent"):
+        import time as _time
+
+        models = [self._current_model] + list(__import__("main").FALLBACK_MODELS)
+        models = [m for m in models if m]
+        if not models:
+            c = self._client
+            kwargs = {"temperature": self._temperature, "max_tokens": 2048}
+            if hasattr(c, "chat_stream"):
+                return c.chat_stream(messages, **kwargs)
+            return c.chat(messages, **kwargs)
+        last_exc = None
+        for i, model in enumerate(models):
+            try:
+                if i > 0:
+                    _time.sleep(2)
+                    self._show_fallback_banner(model)
+                if i == 0:
+                    c = self._client
+                else:
+                    import main
+                    c = main.get_client(model=model)
+                kwargs = {"temperature": self._temperature, "max_tokens": 2048}
+                if hasattr(c, "chat_stream"):
+                    return c.chat_stream(messages, **kwargs)
+                return c.chat(messages, **kwargs)
+            except Exception as exc:
+                last_exc = exc
+                if i == len(models) - 1:
+                    raise
+                continue
+        raise last_exc or RuntimeError("All fallback models failed")
+
+    def _show_fallback_banner(self, model: str) -> None:
+        self.chat_log.append(
+            f"<div style='background:#f9e2af; color:#1e1e2e; border-radius:6px; "
+            f"padding:6px 10px; margin:6px 0;'><b>⚠️ Fallback model: {model}</b></div>"
+        )
 
     def _switch_model(self, model: str) -> None:
         """Reconnect the chat client to a different local model."""
@@ -1934,8 +2057,18 @@ class ChatPage(PageWidget):
                     out = f"(tool error: {exc})"
                 self._append_assistant(f"[tool {tname}] {out[:800]}")
                 self._history.append({"role": "system", "content": f"[tool {tname}] {out}"})
+                try:
+                    from virgo_telemetry import track
+                    track("tool_run", tool_id=tname, success=True)
+                except Exception:
+                    pass
             else:
                 self._append_assistant(f"[tool {tname}] not allowed")
+                try:
+                    from virgo_telemetry import track
+                    track("tool_run", tool_id=tname, success=False)
+                except Exception:
+                    pass
 
         self.stop_btn.setVisible(False)
         self._busy = False
@@ -2010,6 +2143,14 @@ class ChatPage(PageWidget):
         bar.setStyleSheet("border: 1px solid #f38ba8;")
         return False
 
+    @staticmethod
+    def _toolbar_sep() -> QFrame:
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setStyleSheet("background: #45475a; min-width: 1px; max-width: 1px; margin: 2px 4px;")
+        return sep
+
     def _branch_from(self) -> None:
         """Fork the conversation: keep history up to the last user message."""
         # Find the last user message index in history
@@ -2030,7 +2171,14 @@ class ChatPage(PageWidget):
         self.msg_input.setFocus()
 
     def _append_assistant(self, text: str) -> None:
-        self.chat_log.append(f"<b>Virgo:</b> {_md_to_html(text)}")
+        html = _md_to_html(text)
+        self.chat_log.append(
+            f"<div style='background:#181825; border:1px solid #313244; border-radius:10px; "
+            f"margin:6px 0 6px 0; padding:10px 14px;'>"
+            f"<b style='color:#89b4fa; font-size:12px;'>Virgo</b>"
+            f"<div style='color:#cdd6f4; margin-top:4px; line-height:1.5;'>{html}</div>"
+            f"</div>"
+        )
 
     def _copy_reply(self) -> None:
         """Copy Virgo's last reply to the clipboard."""
@@ -2641,7 +2789,13 @@ class ChatPage(PageWidget):
             role = msg.get("role", "")
             content = msg.get("content", "")
             if role == "user":
-                self.chat_log.append(f"<b>You:</b> {content}")
+                self.chat_log.append(
+                    f"<div style='background:#313244; border:1px solid #45475a; border-radius:10px; "
+                    f"margin:6px 0 6px auto; padding:10px 14px; max-width:85%; text-align:right;'>"
+                    f"<b style='color:#a6e3a1; font-size:12px;'>You</b>"
+                    f"<div style='color:#cdd6f4; margin-top:4px; line-height:1.5;'>{self._escape(content)}</div>"
+                    f"</div>"
+                )
             elif role == "assistant":
                 self._append_assistant(content)
             elif role == "system":
@@ -2717,6 +2871,26 @@ class ChatPage(PageWidget):
         )
 
     @pyqtSlot(str, str)
+    def _check_voice_deps(self) -> None:
+        """Disable voice/mic buttons if required packages are missing."""
+        tts_ok = True
+        stt_ok = True
+        try:
+            import edge_tts  # noqa: F401
+        except ImportError:
+            tts_ok = False
+        try:
+            import speech_recognition  # noqa: F401
+            import pyaudio  # noqa: F401
+        except ImportError:
+            stt_ok = False
+        if not tts_ok:
+            self.speak_btn.setEnabled(False)
+            self.speak_btn.setToolTip("Install edge-tts to enable speech: pip install edge-tts")
+        if not stt_ok:
+            self.mic_btn.setEnabled(False)
+            self.mic_btn.setToolTip("Install SpeechRecognition + pyaudio to enable mic: pip install SpeechRecognition pyaudio")
+
     def _mic_done(self, text: str, err: str) -> None:
         self.mic_btn.setEnabled(True)
         if text:
@@ -2737,7 +2911,13 @@ class ChatPage(PageWidget):
 
     def _handle_image_drop(self, path: str) -> None:
         """Insert a dropped image into the chat log and history."""
-        self.chat_log.append(f"<b>You:</b> <img src='file:///{path}' width='400'><br>")
+        self.chat_log.append(
+            f"<div style='background:#313244; border:1px solid #45475a; border-radius:10px; "
+            f"margin:6px 0 6px auto; padding:10px 14px; max-width:85%; text-align:right;'>"
+            f"<b style='color:#a6e3a1; font-size:12px;'>You</b>"
+            f"<div style='color:#cdd6f4; margin-top:4px; line-height:1.5;'><img src='file:///{path}' width='400'></div>"
+            f"</div>"
+        )
         self._history.append({"role": "user", "content": f"[image: {path}]"})
         self._save_chat()
         self._last_user = f"[image: {path}]"
@@ -2798,7 +2978,13 @@ class ChatPage(PageWidget):
             role = m.get("role", "?")
             content = m.get("content", "")
             if role == "user":
-                self.chat_log.append(f"<b>You:</b> {content[:200]}")
+                self.chat_log.append(
+                    f"<div style='background:#313244; border:1px solid #45475a; border-radius:10px; "
+                    f"margin:6px 0 6px auto; padding:10px 14px; max-width:85%; text-align:right;'>"
+                    f"<b style='color:#a6e3a1; font-size:12px;'>You</b>"
+                    f"<div style='color:#cdd6f4; margin-top:4px; line-height:1.5;'>{self._escape(content[:200])}</div>"
+                    f"</div>"
+                )
             elif role == "assistant":
                 self.chat_log.append(f"<b>Virgo:</b> {_md_to_html(content[:500])}")
             else:

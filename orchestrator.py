@@ -29,6 +29,9 @@ if TYPE_CHECKING:
     from environment import AgentEnvironment
     from tools import ToolRegistry
 
+# ── New feature engines (imported lazily to avoid circular deps) ──
+# virgo_diffusal, virgo_debate, virgo_selfheal are imported inside methods
+
 
 # ===========================================================================
 # Step printer — uses _console.icon() for safe emoji/ASCII output
@@ -250,6 +253,9 @@ class Orchestrator:
         run_critic: bool = False,
         auto_depend: bool = False,
         auto_approve: bool = False,
+        enable_diffusal: bool = True,
+        enable_selfheal: bool = False,
+        selfheal_threshold: int = 3,
     ) -> WorkspaceState:
         """Run the full discovery → plan → generate → test-fix pipeline.
 
@@ -277,6 +283,13 @@ class Orchestrator:
         auto_approve:
             Skip the interactive plan-approval prompt (default False).
             Set to True for automated / non-interactive runs.
+        enable_diffusal:
+            Emit live diff events during the WTF loop (default True).
+        enable_selfheal:
+            When the fixer fails repeatedly, search the web for solutions
+            and feed research back to the fixer (default False).
+        selfheal_threshold:
+            Number of consecutive failures before self-heal kicks in (3).
         """
         self.state = WorkspaceState(
             goal=goal,
@@ -284,6 +297,29 @@ class Orchestrator:
             max_iterations=max_iterations,
         )
         state = self.state
+
+        # ── Initialise feature engines ─────────────────────────────
+        self.diffusal = None
+        self.selfheal = None
+        if enable_diffusal:
+            try:
+                from virgo_diffusal import DiffusalEngine
+                self.diffusal = DiffusalEngine()
+                state.context["diffusal"] = self.diffusal
+                _step("info", "Diffusal engine: live diffs enabled")
+            except Exception as exc:
+                log.warning("orchestrator: diffusal unavailable (%s)", exc)
+
+        if enable_selfheal:
+            try:
+                from virgo_selfheal import SelfHealEngine
+                self.selfheal = SelfHealEngine(
+                    failure_threshold=selfheal_threshold,
+                )
+                state.context["selfheal"] = self.selfheal
+                _step("info", f"Self-heal engine: threshold={selfheal_threshold}")
+            except Exception as exc:
+                log.warning("orchestrator: selfheal unavailable (%s)", exc)
 
         # ── Load learning engine and inject memory context ───────────
         try:
@@ -454,9 +490,65 @@ class Orchestrator:
 
         return state
 
-    # ======================================================================
+    # =====================================================================
+    # Agent-to-Agent Debate
+    # =====================================================================
+
+    def debate(
+        self,
+        goal: str,
+        context: str = "",
+        *,
+        use_llm: bool = True,
+        auto_judge: bool = False,
+    ) -> Any:
+        """Run an Agent-to-Agent debate on the best implementation approach.
+
+        Two LLM personas (Performer and Critic) argue different approaches
+        over 2 rounds. The user (or an LLM judge) picks the winner.
+
+        Parameters
+        ----------
+        goal:
+            The implementation task being debated.
+        context:
+            Additional context (existing code, error logs, etc.).
+        use_llm:
+            Use the configured LLM for debate arguments.
+        auto_judge:
+            If True, let the LLM decide the winner (no user prompt).
+
+        Returns
+        -------
+        DebateResult with .winner, .winner_approach, .rounds, etc.
+        """
+        from virgo_debate import DebateEngine
+
+        llm = None
+        if use_llm:
+            try:
+                import main
+                llm = main.get_client_for("planner")
+            except Exception:
+                pass
+
+        engine = DebateEngine(llm_client=llm, auto_judge=auto_judge)
+        result = engine.debate(goal, context)
+
+        # Print summary
+        print(f"\n  {'═' * 56}")
+        print(f"  \033[1;35mDEBATE COMPLETE\033[0m — Winner: \033[1;36m{result.winner.upper()}\033[0m")
+        print(f"  {'─' * 56}")
+        for r in result.rounds:
+            print(DebateEngine.format_round(r))
+        print(f"  \033[1;32mWinner approach: {result.winner_approach}\033[0m")
+        print(f"  {'═' * 56}")
+
+        return result
+
+    # =====================================================================
     # Multi-agent swarm
-    # ======================================================================
+    # =====================================================================
 
     def swarm(
         self,
@@ -774,6 +866,19 @@ class Orchestrator:
 
                     # Give the fixer a chance to patch
                     if fixer:
+                        # ── Record failure for self-heal tracking ──
+                        if self.selfheal:
+                            fail_count = self.selfheal.record_failure(gf.path)
+                            if self.selfheal.should_heal(gf.path):
+                                _step("fix", f"  self-heal triggered ({fail_count} failures)")
+                                heal_result = self.selfheal.heal(
+                                    gf.path, log.stderr, state.iteration, gf.content,
+                                )
+                                if heal_result.recovered:
+                                    _step("fix", f"  self-healed: {heal_result.summary}")
+                                else:
+                                    _step("fix", f"  self-heal research exhausted")
+
                         try:
                             patches = fixer(log, state, self.registry, self.env)
                         except Exception as exc:
@@ -782,6 +887,24 @@ class Orchestrator:
                             patches = None
                         if patches:
                             for fpath, old, new in patches:
+                                # ── Emit diff via diffusal engine ──
+                                if self.diffusal:
+                                    old_content = ""
+                                    for g in state.generated_files:
+                                        if g.path == fpath:
+                                            old_content = g.content
+                                            break
+                                    if not old_content:
+                                        try:
+                                            old_content = (self.base_path / fpath).read_text(encoding="utf-8")
+                                        except Exception:
+                                            old_content = old
+                                    self.diffusal.emit(
+                                        fpath, old_content, new,
+                                        state.iteration, log.stderr,
+                                    )
+                                    print(self.diffusal.format_last())
+
                                 try:
                                     self.registry.execute(
                                         "code_patcher",
@@ -806,6 +929,9 @@ class Orchestrator:
                                 for g in state.generated_files:
                                     if g.path == fpath:
                                         g.content = new
+                        elif self.selfheal:
+                            # Fixer returned None — record success reset if self-heal helped
+                            self.selfheal.record_success(gf.path)
                     else:
                         _step("fix", "  no fixer — skipping patch")
 

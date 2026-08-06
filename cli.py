@@ -90,6 +90,15 @@ def cmd_run(args: argparse.Namespace) -> None:
         name = args.name
         excludes = None
 
+    # New feature flags
+    enable_diffusal = not getattr(args, "no_diffusal", False)
+    enable_selfheal = getattr(args, "selfheal", False)
+    selfheal_threshold = getattr(args, "selfheal_threshold", 3)
+    run_debate = getattr(args, "debate", False)
+    debate_auto = getattr(args, "debate_auto", False)
+    if debate_auto:
+        run_debate = True
+
     from environment import AgentEnvironment
     from orchestrator import Orchestrator
     from tools import ToolRegistry
@@ -181,6 +190,44 @@ def cmd_run(args: argparse.Namespace) -> None:
         except ImportError as exc:
             print(f"[virgo] Could not load LLM policies: {exc}")
 
+    # ── Optional: Agent-to-Agent Debate before pipeline ────────────
+    if run_debate:
+        try:
+            from virgo_debate import DebateEngine
+
+            llm_client = None
+            if use_llm:
+                try:
+                    import main as _main
+                    llm_client = _main.get_client_for("planner")
+                except Exception:
+                    pass
+
+            debate_engine = DebateEngine(
+                llm_client=llm_client, auto_judge=debate_auto,
+            )
+            print(f"\n  {'═' * 58}")
+            print(f"  \033[1;35mAGENT DEBATE\033[0m — Performer vs Critic")
+            print(f"  {'═' * 58}\n")
+
+            debate_result = debate_engine.debate(goal)
+
+            print(f"\n  \033[1;32mWinner: {debate_result.winner.upper()}\033[0m")
+            print(f"  Approach: {debate_result.winner_approach}")
+            print(f"  Duration: {debate_result.duration:.1f}s\n")
+
+            # Offer to use the winning approach as the goal
+            if debate_result.winner_approach:
+                try:
+                    choice = input("  >>> Use winning approach as goal? (y/n): ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    choice = "y"
+                if choice in ("y", "yes", ""):
+                    goal = debate_result.winner_approach
+                    print(f"  [debate] Goal updated to: {goal}")
+        except Exception as exc:
+            print(f"  [debate] Debate skipped: {exc}")
+
     state = orch.run(
         goal=goal,
         planner=planner,
@@ -190,6 +237,9 @@ def cmd_run(args: argparse.Namespace) -> None:
         run_critic=run_critic,
         auto_depend=auto_depend,
         auto_approve=args.yes if hasattr(args, "yes") else False,
+        enable_diffusal=enable_diffusal,
+        enable_selfheal=enable_selfheal,
+        selfheal_threshold=selfheal_threshold,
     )
 
     # Save state
@@ -319,6 +369,43 @@ def cmd_demo(args: argparse.Namespace) -> None:
     run_main(goal=getattr(args, "goal", None))
 
 
+def cmd_speak(args: argparse.Namespace) -> None:
+    """Generate speech from text using VibeVoice TTS."""
+    from virgo_vibevoice import VibeVoiceTTS, TTSConfig, list_speakers
+
+    # List speakers mode
+    if getattr(args, "list_speakers", False):
+        for s in list_speakers():
+            print(f"  {s}")
+        return
+
+    # Get text
+    text = args.text
+    if args.file:
+        with open(args.file, "r", encoding="utf-8") as f:
+            text = f.read()
+    if not text:
+        print("[virgo speak] Provide --text or --file")
+        return
+
+    config = TTSConfig(model_size=args.model)
+    tts = VibeVoiceTTS(config)
+
+    print(f"[virgo speak] Loading {args.model} model...")
+    tts.load()
+
+    print(f"[virgo speak] Generating speech with speaker={args.speaker}...")
+    output = tts.speak(
+        text,
+        speaker=args.speaker,
+        speakers=args.speakers,
+    )
+
+    path = tts.save(output, args.output)
+    print(f"[virgo speak] Generated: {output.duration:.1f}s audio in {output.generation_time:.1f}s")
+    print(f"[virgo speak] Saved: {path}")
+
+
 def cmd_version(_args: argparse.Namespace) -> None:
     """Show version information."""
     print(f"virgo-agent v{VERSION}")
@@ -353,38 +440,59 @@ def cmd_update(_args: argparse.Namespace) -> None:
     print("[virgo] Update complete.")
 
 
-def cmd_doctor(_args: argparse.Namespace) -> None:
-    """Run environment health checks."""
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Run environment health checks. Outputs JSON and human-readable summaries."""
     import json as _json
     import shutil
     import urllib.request as _ur
 
     here = Path(__file__).resolve().parent
+    checks = {}
 
-    ok_count = 0
-    total = 0
-
-    def check(name: str, fn: callable) -> None:
-        nonlocal ok_count, total
-        total += 1
+    def check(name: str, fn: callable, critical: bool = True) -> dict:
+        result = {"name": name, "ok": False, "critical": critical}
         try:
-            ok = fn()
+            result["ok"] = bool(fn())
         except Exception:
-            ok = False
-        if ok:
-            ok_count += 1
-        status = f"[{'OK' if ok else 'MISS'}]"
-        print(f"  {status}  {name}")
+            result["ok"] = False
+        return result
 
     # ── File & project checks ──
-    check("Repository (.git)", lambda: (here / ".git").is_dir())
-    check("Python 3.11+", lambda: sys.version_info >= (3, 11))
-    check("Dashboard config", lambda: (here / "dashboard.json").exists())
-    check("Mock logs", lambda: (here / "mock_logs.txt").exists())
-    check("virgo.bat wrapper", lambda: (here / "virgo.bat").exists())
+    checks["repo"] = check("Repository (.git)", lambda: (here / ".git").is_dir())
+    checks["python"] = check("Python 3.11+", lambda: sys.version_info >= (3, 11))
+    checks["dashboard"] = check("Dashboard config", lambda: (here / "dashboard.json").exists())
+    checks["mock_logs"] = check("Mock logs", lambda: (here / "mock_logs.txt").exists())
+    checks["virgo_bat"] = check("virgo.bat wrapper", lambda: (here / "virgo.bat").exists())
+    checks["env"] = check(".env present", lambda: (here / ".env").exists(), critical=False)
+
+    # ── Dependencies ──
+    def _check_pyqt6() -> bool:
+        try:
+            import PyQt6
+            return True
+        except ImportError:
+            return False
+    checks["pyqt6"] = check("PyQt6 available", _check_pyqt6, critical=False)
+
+    def _check_edge_tts() -> bool:
+        try:
+            import edge_tts
+            return True
+        except ImportError:
+            return False
+    checks["edge_tts"] = check("edge-tts (TTS)", _check_edge_tts, critical=False)
+
+    def _check_speech_recognition() -> bool:
+        try:
+            import speech_recognition
+            import pyaudio
+            return True
+        except ImportError:
+            return False
+    checks["speech_recognition"] = check("SpeechRecognition + pyaudio (mic)", _check_speech_recognition, critical=False)
 
     # ── LLM / Ollama ──
-    def check_llm() -> bool:
+    def _check_llm() -> bool:
         url = os.getenv("LLM_BASE_URL", "http://localhost:20128/v1")
         req = _ur.Request(f"{url.rstrip('/')}/models", method="GET")
         try:
@@ -393,28 +501,25 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
                 return "models" in data or "data" in data
         except Exception:
             return False
-
-    check("LLM reachable (Ollama)", check_llm)
+    checks["ollama"] = check("LLM reachable (Ollama)", _check_llm, critical=False)
 
     # ── Git status ──
-    def check_git_clean() -> bool:
+    def _check_git_clean() -> bool:
         r = subprocess.run(
             ["git", "status", "--porcelain"], cwd=here, capture_output=True, text=True, timeout=10
         )
         return r.returncode == 0 and r.stdout.strip() == ""
-
-    check("Git working tree clean", check_git_clean)
+    checks["git_clean"] = check("Git working tree clean", _check_git_clean, critical=False)
 
     # ── Disk space ──
-    def check_disk() -> bool:
+    def _check_disk() -> bool:
         usage = shutil.disk_usage(here)
         free_gb = usage.free / (1024**3)
         return free_gb > 1.0
-
-    check("Disk space (>1 GB free)", check_disk)
+    checks["disk"] = check("Disk space (>1 GB free)", _check_disk)
 
     # ── Dependencies ──
-    def check_deps() -> bool:
+    def _check_deps() -> bool:
         required = {"pytest", "requests", "fastapi", "uvicorn", "jinja2", "pyyaml"}
         r = subprocess.run(
             [sys.executable, "-m", "pip", "list", "--format=freeze"],
@@ -424,11 +529,47 @@ def cmd_doctor(_args: argparse.Namespace) -> None:
         )
         installed = {line.split("==")[0].lower() for line in r.stdout.splitlines() if "==" in line}
         missing = required - installed
-        return len(missing) <= 2  # allow a few optional deps missing
+        return len(missing) <= 2
+    checks["deps"] = check("Core dependencies installed", _check_deps, critical=False)
 
-    check("Core dependencies installed", check_deps)
+    # ── Telemetry ──
+    def _check_telemetry() -> bool:
+        try:
+            from virgo_telemetry import _is_enabled
+            return _is_enabled()
+        except Exception:
+            return True
+    checks["telemetry"] = check("Telemetry enabled", _check_telemetry, critical=False)
 
-    print(f"\n  {ok_count}/{total} checks passed  |  virgo-agent v{VERSION}")
+    # ── Summary ──
+    ok_count = sum(1 for c in checks.values() if c["ok"])
+    total = len(checks)
+    critical_failed = [c["name"] for c in checks.values() if not c["ok"] and c["critical"]]
+    summary = {
+        "passed": ok_count,
+        "total": total,
+        "checks": checks,
+        "critical_failed": critical_failed,
+        "version": VERSION,
+    }
+
+    # Human-readable output
+    print(f"\n  virgo-agent v{VERSION} — health check\n")
+    for c in checks.values():
+        status = f"[{'OK' if c['ok'] else 'MISS'}]"
+        crit = " (critical)" if c.get("critical") and not c["ok"] else ""
+        print(f"  {status}  {c['name']}{crit}")
+    print(f"\n  {ok_count}/{total} checks passed")
+    if critical_failed:
+        print(f"  CRITICAL: {', '.join(critical_failed)}")
+    print()
+
+    # JSON output when requested
+    if getattr(args, "json", False):
+        print(_json.dumps(summary, indent=2, default=str))
+
+    if critical_failed:
+        sys.exit(1)
 
 
 def cmd_config(args: argparse.Namespace) -> None:
@@ -1519,6 +1660,56 @@ import re as _re
 _TOOL_CALL_RE = _re.compile(r"\[\[virgo\.(\w+)\s+(.*?)\]\]", _re.DOTALL)
 
 
+def _count_tokens(text: str) -> int:
+    return len(text) // 4
+
+
+def _maybe_summarize(history, context_window: int = 4096) -> list[dict[str, str]]:
+    if not history:
+        return history
+    threshold = int(context_window * 0.75)
+    total = sum(_count_tokens(m.get("content", "")) for m in history)
+    if total <= threshold:
+        return history
+    split = max(1, len(history) // 2)
+    old = history[:split]
+    keep = history[split:]
+    parts = []
+    for m in old:
+        role = m.get("role", "?")
+        content = m.get("content", "")[:150]
+        parts.append(f"{role}: {content}")
+    summary = "; ".join(parts)
+    summary_msg = {"role": "system", "content": f"[Earlier conversation summary: {summary}]"}
+    return [summary_msg] + keep
+
+
+def _chat_with_fallback(client, messages, fallback_models, role="agent"):
+    import time as _time
+
+    models = [getattr(client, "model", "") or ""] + list(fallback_models)
+    models = [m for m in models if m]
+    if not models:
+        return client.chat_stream(messages, temperature=0.7, max_tokens=2048, role=role)
+    last_exc = None
+    for i, model in enumerate(models):
+        try:
+            if i > 0:
+                _time.sleep(2)
+                print(f"\n  [!] Retrying with fallback model: {model}")
+            if i == 0:
+                c = client
+            else:
+                c = main.get_client(model=model)
+            return c.chat_stream(messages, temperature=0.7, max_tokens=2048, role=role)
+        except Exception as exc:
+            last_exc = exc
+            if i == len(models) - 1:
+                raise
+            continue
+    raise last_exc or RuntimeError("All fallback models failed")
+
+
 def _parse_tool_calls(text: str) -> list[tuple[str, dict[str, str]]]:
     """Parse ``[[virgo.<tool> key=\"val\" ...]]`` calls from model output."""
     calls: list[tuple[str, dict[str, str]]] = []
@@ -1705,11 +1896,12 @@ def cmd_chat(args: argparse.Namespace) -> None:
 
         if client:
             history.append({"role": "user", "content": user_input})
+            history = _maybe_summarize(history)
             messages = [{"role": "system", "content": _build_system(user_input)}] + history
             try:
                 print("  => ", end="", flush=True)
-                result = client.chat_stream(
-                    messages, temperature=0.7, max_tokens=2048, role="agent"
+                result = _chat_with_fallback(
+                    client, messages, main.FALLBACK_MODELS, role="agent"
                 )
                 print()  # newline after the streamed reply
                 if result and result.strip():
@@ -2324,6 +2516,210 @@ def cmd_focus(args: argparse.Namespace) -> None:
         print("[virgo] Unknown focus subcommand. Use: on, off, status, genre")
 
 
+# ── New: virgo dreams ────────────────────────────────────────────────────
+
+
+def cmd_dreams(args: argparse.Namespace) -> None:
+    """Dream journal: generate dreams, morning briefing, or list entries."""
+    from virgo_dreams import dream_now, get_morning_briefing, _load_index
+    import json as _json
+
+    if args.dreams_command == "dream":
+        entry = dream_now()
+        print(_json.dumps(entry, indent=2, default=str))
+    elif args.dreams_command == "brief":
+        print(_json.dumps(get_morning_briefing(), indent=2, default=str))
+    elif args.dreams_command == "list":
+        idx = _load_index()
+        print(_json.dumps(idx.get("dreams", [])[:10], indent=2, default=str))
+
+
+# ── New: virgo flavor ────────────────────────────────────────────────────
+
+
+def cmd_flavor(args: argparse.Namespace) -> None:
+    """Codebase flavor profiling."""
+    from virgo_flavor import scan_repo, get_flavor
+    import json as _json
+
+    result = scan_repo(args.root) if args.refresh else get_flavor()
+    if args.json:
+        print(_json.dumps(result, indent=2, default=str))
+    else:
+        print(f"Dominant flavor: {result['dominant_flavor']}")
+        print(f"Hint: {result.get('hint', '')}")
+        for flavor, weight in list(result.get("vector", {}).items())[:6]:
+            print(f"  {flavor}: {weight}")
+
+
+# ── New: virgo ghost ────────────────────────────────────────────────────
+
+
+def cmd_ghost(args: argparse.Namespace) -> None:
+    """Ghost mode: speculative edits in overlay."""
+    from virgo_ghost import ghost_write, manifest, discard, diff, list_ghosts, purge_ghosts
+    import json as _json
+
+    if args.ghost_command == "write":
+        content = args.content if args.content is not None else sys.stdin.read()
+        ghost_write(args.path, content)
+        print(f"wrote ghost {args.path}")
+    elif args.ghost_command == "manifest":
+        print("manifested" if manifest(args.path) else "failed")
+    elif args.ghost_command == "discard":
+        print("discarded" if discard(args.path) else "not found")
+    elif args.ghost_command == "diff":
+        print(_json.dumps(diff(args.path), indent=2))
+    elif args.ghost_command == "list":
+        print(_json.dumps(list_ghosts(), indent=2))
+    elif args.ghost_command == "purge":
+        print(f"purged {purge_ghosts()} ghost files")
+
+
+# ── New: virgo archaeology ──────────────────────────────────────────────
+
+
+def cmd_archaeology(args: argparse.Namespace) -> None:
+    """Codebase archaeology through git history."""
+    from virgo_archaeology import blame, bisect_intro, timeline
+    import json as _json
+
+    if args.bisect:
+        res = bisect_intro(args.file, args.bisect)
+        out = res or {"error": "not found"}
+    elif args.timeline:
+        out = timeline(args.file)
+    else:
+        out = blame(args.file, args.line)
+    if args.json:
+        print(_json.dumps(out, indent=2, default=str))
+    else:
+        if isinstance(out, list):
+            for c in out:
+                print(f"{c.get('hash','?')[:8]}  {c.get('author','?')}  {c.get('date','?')}  {c.get('message','')}")
+        elif isinstance(out, dict):
+            print(_json.dumps(out, indent=2, default=str))
+
+
+# ── New: virgo empathy ──────────────────────────────────────────────────
+
+
+def cmd_empathy(args: argparse.Namespace) -> None:
+    """Agent empathy layer."""
+    from virgo_empathy import analyze_repo_mood, get_empathy, calibrate_prompt
+    import json as _json
+
+    if args.refresh:
+        res = analyze_repo_mood()
+        print(_json.dumps(res, indent=2, default=str))
+    elif args.prompt:
+        print(calibrate_prompt(args.prompt))
+    else:
+        print(_json.dumps(get_empathy(), indent=2, default=str))
+
+
+# ── New: virgo audit ────────────────────────────────────────────────────
+
+
+def cmd_audit(args: argparse.Namespace) -> None:
+    """Immutable audit chain."""
+    from virgo_audit import append_record, verify_chain, tail, export_chain
+    import json as _json
+
+    if args.audit_command == "write":
+        try:
+            record = _json.loads(args.record)
+        except Exception:
+            record = {"raw": args.record}
+        entry = append_record(record)
+        print(_json.dumps(entry, indent=2, default=str))
+    elif args.audit_command == "verify":
+        print(_json.dumps(verify_chain(), indent=2))
+    elif args.audit_command == "tail":
+        print(_json.dumps(tail(args.n), indent=2, default=str))
+    elif args.audit_command == "export":
+        export_chain(args.path)
+        print(f"exported to {args.path}")
+
+
+# ── New: virgo memes ────────────────────────────────────────────────────
+
+
+def cmd_memes(args: argparse.Namespace) -> None:
+    """Pipeline outcome meme generator."""
+    from virgo_memes import generate_meme
+    import json as _json
+
+    meme = generate_meme(args.outcome)
+    if args.json:
+        print(_json.dumps(meme, indent=2, default=str))
+    else:
+        print(meme["art"])
+
+
+# ── New: virgo stigmergy ────────────────────────────────────────────────
+
+
+def cmd_stigmergy(args: argparse.Namespace) -> None:
+    """Stigmergic codebase heatmap."""
+    from virgo_stigmergy import deposit, heatmap, danger_zones, _load
+    import json as _json
+
+    if args.stigmergy_command == "deposit":
+        deposit(args.path, args.amount, args.kind)
+    elif args.stigmergy_command == "heatmap":
+        print(_json.dumps(heatmap(), indent=2, default=str))
+    elif args.stigmergy_command == "danger":
+        print(_json.dumps(danger_zones(), indent=2))
+    elif args.stigmergy_command == "list":
+        print(_json.dumps(_load(), indent=2, default=str))
+
+
+# ── New: virgo divergence ───────────────────────────────────────────────
+
+
+def cmd_divergence(args: argparse.Namespace) -> None:
+    """Pipeline divergence / time-travel branching."""
+    from virgo_divergence import create_root, fork_branch, record_branch_result, lineage_tree, list_roots
+    import json as _json
+
+    if args.divergence_command == "create-root":
+        print(_json.dumps(create_root(args.session_id, args.label), indent=2, default=str))
+    elif args.divergence_command == "fork":
+        print(_json.dumps(fork_branch(args.root_id, args.iteration, args.prompt, args.model), indent=2, default=str))
+    elif args.divergence_command == "record":
+        try:
+            result = _json.loads(args.result)
+        except Exception:
+            result = {"raw": args.result}
+        record_branch_result(args.branch_id, result)
+        print("recorded")
+    elif args.divergence_command == "lineage":
+        print(_json.dumps(lineage_tree(args.root_id), indent=2, default=str))
+    elif args.divergence_command == "list":
+        print(_json.dumps(list_roots(), indent=2, default=str))
+
+
+# ── New: virgo sonification ─────────────────────────────────────────────
+
+
+def cmd_sonification(args: argparse.Namespace) -> None:
+    """Pipeline phase sonification."""
+    from virgo_pipeline_sonification import play_phase, start_watcher
+    import time
+
+    if args.watch:
+        print("Watching pipeline state… Ctrl+C to stop")
+        try:
+            start_watcher()
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            pass
+    else:
+        play_phase(args.phase, repeat=args.repeat)
+
+
 # ===========================================================================
 # Argument parser
 # ===========================================================================
@@ -2396,6 +2792,32 @@ def main() -> None:
         "--git-branch",
         default=None,
         help="Create and switch to a branch before running (implies --git)",
+    )
+    p_run.add_argument(
+        "--no-diffusal",
+        action="store_true",
+        help="Disable live code diffs during WTF loop",
+    )
+    p_run.add_argument(
+        "--selfheal",
+        action="store_true",
+        help="Enable self-healing: web research after repeated failures",
+    )
+    p_run.add_argument(
+        "--selfheal-threshold",
+        type=int,
+        default=3,
+        help="Consecutive failures before self-heal triggers (default: 3)",
+    )
+    p_run.add_argument(
+        "--debate",
+        action="store_true",
+        help="Run Agent-to-Agent debate before pipeline (Performer vs Critic)",
+    )
+    p_run.add_argument(
+        "--debate-auto",
+        action="store_true",
+        help="Auto-judge the debate (no user prompt, implies --debate)",
     )
     p_run.set_defaults(func=cmd_run)
 
@@ -2490,6 +2912,23 @@ def main() -> None:
         "--goal", "-g", default=None, help="Optional goal override for the demo pipeline"
     )
     p_demo.set_defaults(func=cmd_demo)
+
+    # speak (VibeVoice TTS)
+    p_speak = sub.add_parser("speak", help="Generate speech from text (VibeVoice TTS)")
+    p_speak.add_argument("--text", "-t", help="Text to synthesize")
+    p_speak.add_argument("--file", "-f", help="Text file to synthesize")
+    p_speak.add_argument(
+        "--speaker", "-s", default="Alice",
+        help="Speaker name (Alice, Frank, Maya, Carter, etc.)",
+    )
+    p_speak.add_argument("--speakers", nargs="+", help="Multiple speakers for multi-speaker scripts")
+    p_speak.add_argument("--output", "-o", help="Output WAV path")
+    p_speak.add_argument(
+        "--model", "-m", default="1.5B", choices=["0.5B", "1.5B", "7B"],
+        help="Model size (default: 1.5B)",
+    )
+    p_speak.add_argument("--list-speakers", action="store_true", help="List available speakers")
+    p_speak.set_defaults(func=cmd_speak)
 
     # diff
     # self-install
@@ -2604,6 +3043,7 @@ def main() -> None:
 
     # doctor
     p_doc2 = sub.add_parser("doctor", help="Run environment health checks")
+    p_doc2.add_argument("--json", action="store_true", help="Output raw JSON")
     p_doc2.set_defaults(func=cmd_doctor)
 
     # completion
@@ -2989,6 +3429,126 @@ def main() -> None:
     p_focus_status.set_defaults(focus_func=cmd_focus)
     p_focus_genre = focus_sub.add_parser("genre", help="List available genres")
     p_focus_genre.set_defaults(focus_func=cmd_focus)
+
+    # dreams
+    p_dreams = sub.add_parser("dreams", help="Dream journal")
+    dreams_sub = p_dreams.add_subparsers(dest="dreams_command", required=True)
+    p_dreams_dream = dreams_sub.add_parser("dream", help="Generate a new dream entry")
+    p_dreams_dream.set_defaults(func=cmd_dreams)
+    p_dreams_brief = dreams_sub.add_parser("brief", help="Morning briefing")
+    p_dreams_brief.set_defaults(func=cmd_dreams)
+    p_dreams_list = dreams_sub.add_parser("list", help="List recent dreams")
+    p_dreams_list.set_defaults(func=cmd_dreams)
+
+    # flavor
+    p_flavor = sub.add_parser("flavor", help="Codebase flavor profiling")
+    p_flavor.add_argument("--refresh", action="store_true", help="Rescan the repo")
+    p_flavor.add_argument("--root", default=".", help="Repo root (default: .)")
+    p_flavor.add_argument("--json", action="store_true", help="Output as JSON")
+    p_flavor.set_defaults(func=cmd_flavor)
+
+    # ghost
+    p_ghost = sub.add_parser("ghost", help="Ghost mode: speculative edits in overlay")
+    ghost_sub = p_ghost.add_subparsers(dest="ghost_command", required=True)
+    p_ghost_write = ghost_sub.add_parser("write", help="Write a ghost file")
+    p_ghost_write.add_argument("path", help="Relative path in the ghost overlay")
+    p_ghost_write.add_argument("--content", "-c", default=None, help="File content (omit to read from stdin)")
+    p_ghost_write.set_defaults(func=cmd_ghost)
+    p_ghost_manifest = ghost_sub.add_parser("manifest", help="Manifest a ghost file into the real tree")
+    p_ghost_manifest.add_argument("path", help="Relative path")
+    p_ghost_manifest.set_defaults(func=cmd_ghost)
+    p_ghost_discard = ghost_sub.add_parser("discard", help="Discard a ghost file")
+    p_ghost_discard.add_argument("path", help="Relative path")
+    p_ghost_discard.set_defaults(func=cmd_ghost)
+    p_ghost_diff = ghost_sub.add_parser("diff", help="Diff ghost vs real")
+    p_ghost_diff.add_argument("path", help="Relative path")
+    p_ghost_diff.set_defaults(func=cmd_ghost)
+    p_ghost_list = ghost_sub.add_parser("list", help="List ghost files")
+    p_ghost_list.set_defaults(func=cmd_ghost)
+    p_ghost_purge = ghost_sub.add_parser("purge", help="Purge all ghost files")
+    p_ghost_purge.set_defaults(func=cmd_ghost)
+
+    # archaeology
+    p_arch = sub.add_parser("archaeology", help="Codebase archaeology through git history")
+    p_arch.add_argument("file", help="File to investigate")
+    p_arch.add_argument("--line", type=int, default=None, help="Specific line number")
+    p_arch.add_argument("--bisect", default=None, help="Pattern to bisect")
+    p_arch.add_argument("--timeline", action="store_true", help="Show timeline")
+    p_arch.add_argument("--json", action="store_true", help="Output as JSON")
+    p_arch.set_defaults(func=cmd_archaeology)
+
+    # empathy
+    p_emp = sub.add_parser("empathy", help="Agent empathy layer")
+    p_emp.add_argument("--refresh", action="store_true", help="Re-analyze repo mood")
+    p_emp.add_argument("--prompt", default=None, help="Calibrate a prompt string")
+    p_emp.set_defaults(func=cmd_empathy)
+
+    # audit
+    p_audit = sub.add_parser("audit", help="Immutable audit chain")
+    audit_sub = p_audit.add_subparsers(dest="audit_command", required=True)
+    p_audit_write = audit_sub.add_parser("write", help="Write an audit record")
+    p_audit_write.add_argument("--record", required=True, help="JSON record string")
+    p_audit_write.set_defaults(func=cmd_audit)
+    p_audit_verify = audit_sub.add_parser("verify", help="Verify the audit chain")
+    p_audit_verify.set_defaults(func=cmd_audit)
+    p_audit_tail = audit_sub.add_parser("tail", help="Show recent records")
+    p_audit_tail.add_argument("--n", type=int, default=5, help="Number of records")
+    p_audit_tail.set_defaults(func=cmd_audit)
+    p_audit_export = audit_sub.add_parser("export", help="Export chain to file")
+    p_audit_export.add_argument("path", help="Output file path")
+    p_audit_export.set_defaults(func=cmd_audit)
+
+    # memes
+    p_memes = sub.add_parser("memes", help="Pipeline outcome meme generator")
+    p_memes.add_argument("outcome", nargs="?", default="idle", help="Outcome keyword (success/fail/idle)")
+    p_memes.add_argument("--json", action="store_true", help="Output as JSON")
+    p_memes.set_defaults(func=cmd_memes)
+
+    # stigmergy
+    p_stig = sub.add_parser("stigmergy", help="Stigmergic codebase heatmap")
+    stig_sub = p_stig.add_subparsers(dest="stigmergy_command", required=True)
+    p_stig_dep = stig_sub.add_parser("deposit", help="Deposit a pheromone trail")
+    p_stig_dep.add_argument("path", help="File path")
+    p_stig_dep.add_argument("--amount", type=float, default=1.0, help="Trail amount")
+    p_stig_dep.add_argument("--kind", default="edit", help="Trail kind (edit/fail)")
+    p_stig_dep.set_defaults(func=cmd_stigmergy)
+    p_stig_heat = stig_sub.add_parser("heatmap", help="Show heatmap")
+    p_stig_heat.add_argument("--json", action="store_true", help="Output as JSON")
+    p_stig_heat.set_defaults(func=cmd_stigmergy)
+    p_stig_danger = stig_sub.add_parser("danger", help="Show danger zones")
+    p_stig_danger.set_defaults(func=cmd_stigmergy)
+    p_stig_list = stig_sub.add_parser("list", help="List all trails")
+    p_stig_list.set_defaults(func=cmd_stigmergy)
+
+    # divergence
+    p_div = sub.add_parser("divergence", help="Pipeline divergence / time-travel branching")
+    div_sub = p_div.add_subparsers(dest="divergence_command", required=True)
+    p_div_root = div_sub.add_parser("create-root", help="Create a divergence root")
+    p_div_root.add_argument("session_id", help="Session ID to branch from")
+    p_div_root.add_argument("--label", default="", help="Optional label")
+    p_div_root.set_defaults(func=cmd_divergence)
+    p_div_fork = div_sub.add_parser("fork", help="Fork a branch from a root")
+    p_div_fork.add_argument("root_id", help="Root ID")
+    p_div_fork.add_argument("--iteration", type=int, default=0, help="Iteration to fork from")
+    p_div_fork.add_argument("--prompt", default="", help="Prompt override")
+    p_div_fork.add_argument("--model", default="", help="Model override")
+    p_div_fork.set_defaults(func=cmd_divergence)
+    p_div_rec = div_sub.add_parser("record", help="Record a branch result")
+    p_div_rec.add_argument("branch_id", help="Branch ID")
+    p_div_rec.add_argument("--result", required=True, help="Result JSON string")
+    p_div_rec.set_defaults(func=cmd_divergence)
+    p_div_lin = div_sub.add_parser("lineage", help="Show lineage tree")
+    p_div_lin.add_argument("root_id", help="Root ID")
+    p_div_lin.set_defaults(func=cmd_divergence)
+    p_div_ls = div_sub.add_parser("list", help="List all roots")
+    p_div_ls.set_defaults(func=cmd_divergence)
+
+    # sonification
+    p_son = sub.add_parser("sonification", help="Pipeline phase sonification")
+    p_son.add_argument("phase", nargs="?", default="idle", choices=["discover", "plan", "generate", "test", "fix", "done", "error", "idle"], help="Pipeline phase")
+    p_son.add_argument("--repeat", type=int, default=1, help="Repeat count")
+    p_son.add_argument("--watch", action="store_true", help="Watch pipeline state file")
+    p_son.set_defaults(func=cmd_sonification)
 
     args = parser.parse_args()
     if args.version:

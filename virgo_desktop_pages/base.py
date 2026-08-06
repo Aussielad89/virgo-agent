@@ -50,6 +50,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QScrollArea,
     QFileDialog,
+    QFrame,
     QGraphicsEllipseItem,
     QGraphicsRectItem,
     QGraphicsScene,
