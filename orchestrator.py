@@ -256,6 +256,7 @@ class Orchestrator:
         enable_diffusal: bool = True,
         enable_selfheal: bool = False,
         selfheal_threshold: int = 3,
+        session: str = "",
     ) -> WorkspaceState:
         """Run the full discovery → plan → generate → test-fix pipeline.
 
@@ -448,7 +449,7 @@ class Orchestrator:
 
         # ---- Phase 5: Write-Test-Fix loop --------------------------------
         state.phase = "testing"
-        self._wtf_loop(fixer, max_iterations)
+        self._wtf_loop(fixer, max_iterations, session=session)
 
         state.phase = "complete"
 
@@ -545,6 +546,100 @@ class Orchestrator:
         print(f"  {'═' * 56}")
 
         return result
+
+    # =====================================================================
+    # Pipeline Resume (from checkpoint)
+    # =====================================================================
+
+    def resume(
+        self,
+        session: str,
+        *,
+        planner: Planner | None = None,
+        code_gen: CodeGenerator | None = None,
+        fixer: Fixer | None = None,
+        max_iterations: int = 5,
+        run_critic: bool = False,
+        auto_depend: bool = False,
+        enable_diffusal: bool = True,
+        enable_selfheal: bool = False,
+        selfheal_threshold: int = 3,
+    ) -> WorkspaceState:
+        """Resume a pipeline from a checkpoint.
+
+        Loads the latest checkpoint for the given session and continues
+        the WTF loop from the saved iteration.
+
+        Parameters
+        ----------
+        session:
+            Session name to resume (must have checkpoints in .virgo_checkpoints/).
+        planner, code_gen, fixer:
+            Policy functions. If provided, will be used for any remaining
+            planning/generation/fixing. If None, uses original policies.
+        max_iterations:
+            Total iteration cap (including already-run iterations).
+        """
+        from virgo_checkpoint import load_checkpoint
+
+        cp = load_checkpoint(session)
+        if cp is None:
+            raise ValueError(f"No checkpoint found for session '{session}'")
+
+        log.info("orchestrator: resuming session '%s' from iteration %d", session, cp.iteration)
+
+        # Run discovery + planning again (or load from checkpoint)
+        # For simplicity, we re-run from discovery but with checkpoint state
+        state = self.run(
+            goal=cp.goal,
+            planner=planner,
+            code_gen=code_gen,
+            fixer=fixer,
+            max_iterations=max_iterations,
+            run_critic=run_critic,
+            auto_depend=auto_depend,
+            enable_diffusal=enable_diffusal,
+            enable_selfheal=enable_selfheal,
+            selfheal_threshold=selfheal_threshold,
+            session=session,
+        )
+
+        # Restore generated files from checkpoint
+        if cp.generated_files:
+            from virgo_checkpoint import CheckpointManager
+            mgr = CheckpointManager()
+            mgr.restore_files(cp, self.base_path)
+
+            # Also restore into state
+            state.generated_files = []
+            for gf_data in cp.generated_files:
+                state.generated_files.append(type(state.generated_files[0])(
+                    path=gf_data["path"],
+                    content=gf_data["content"],
+                    passed=gf_data["passed"],
+                    iteration=gf_data["iteration"],
+                ))
+
+        # Restore test logs
+        state.test_logs = []
+        for tl_data in cp.test_logs:
+            state.test_logs.append(type(state.test_logs[0])(
+                file_path=tl_data["file_path"],
+                passed=tl_data["passed"],
+                returncode=tl_data["returncode"],
+                stdout=tl_data["stdout"],
+                stderr=tl_data["stderr"],
+            ))
+
+        # Set iteration to continue from where we left off
+        state.iteration = cp.iteration
+        state.phase = cp.phase
+        state.loop_passed = cp.loop_passed
+
+        log.info("orchestrator: restored %d files, %d test logs, continuing from iteration %d",
+                 len(state.generated_files), len(state.test_logs), state.iteration)
+
+        return state
 
     # =====================================================================
     # Multi-agent swarm
@@ -820,6 +915,7 @@ class Orchestrator:
         self,
         fixer: Fixer | None,
         max_iterations: int,
+        session: str = "",
     ) -> None:
         state = self.state
         if state is None:
@@ -940,6 +1036,15 @@ class Orchestrator:
                 _passed = sum(1 for gf in state.generated_files if gf.passed)
                 _failed = sum(1 for gf in state.generated_files if gf.passed is False)
                 _pb.update(state.iteration, _passed, _failed)
+
+            # ── Save checkpoint after each iteration ────────────────
+            if session:
+                try:
+                    from virgo_checkpoint import save_checkpoint
+                    elapsed_so_far = time.time() - _wtf_start
+                    save_checkpoint(state, session, elapsed_so_far)
+                except Exception as exc:
+                    log.warning("checkpoint: save failed: %s", exc)
 
             if all_passed:
                 state.loop_passed = True

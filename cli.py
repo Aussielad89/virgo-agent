@@ -842,6 +842,220 @@ def cmd_feedback(args: argparse.Namespace) -> None:
         print()
 
 
+def cmd_checkpoint_list(args: argparse.Namespace) -> None:
+    """List all checkpointed sessions."""
+    from virgo_checkpoint import list_checkpoints
+
+    sessions = list_checkpoints()
+    if not sessions:
+        print("[virgo checkpoint] No checkpoints found.")
+        return
+
+    print(f"\n  [virgo checkpoint] {len(sessions)} session(s)\n")
+    for i, s in enumerate(sessions, 1):
+        status = "✅" if s["loop_passed"] else "🔄"
+        print(f"  {i}. {s['session']}")
+        print(f"     Goal:       {s['goal']}")
+        print(f"     Phase:      {s['phase']}  Iter: {s['iteration']}/{s['max_iterations']}")
+        print(f"     Files:      {s['n_files']}  Checkpoints: {s['n_iterations']}")
+        print(f"     Status:     {status}  Elapsed: {s['elapsed']}")
+        print(f"     Saved:      {s['saved']}")
+        print()
+
+
+def cmd_checkpoint_show(args: argparse.Namespace) -> None:
+    """Show checkpoint details for a session."""
+    from virgo_checkpoint import load_checkpoint
+
+    cp = load_checkpoint(args.session)
+    if cp is None:
+        print(f"[virgo checkpoint] No checkpoint found for session '{args.session}'")
+        return
+
+    print(cp.summary())
+
+
+def cmd_checkpoint_delete(args: argparse.Namespace) -> None:
+    """Delete a session's checkpoints."""
+    from virgo_checkpoint import CheckpointManager
+
+    mgr = CheckpointManager()
+    if mgr.delete(args.session):
+        print(f"[virgo checkpoint] Deleted session '{args.session}'")
+    else:
+        print(f"[virgo checkpoint] Session '{args.session}' not found")
+
+
+def cmd_resume(args: argparse.Namespace) -> None:
+    """Resume a pipeline from checkpoint."""
+    from orchestrator import Orchestrator
+    from environment import AgentEnvironment
+    from tools import ToolRegistry
+
+    # Setup environment and registry
+    env = AgentEnvironment()
+    env.setup()
+    registry = ToolRegistry()
+
+    orch = Orchestrator(env, registry)
+
+    try:
+        state = orch.resume(
+            args.session,
+            max_iterations=args.iterations,
+            run_critic=args.critic,
+            auto_depend=args.auto_depend,
+        )
+        if state.loop_passed:
+            print(f"\n[virgo resume] Pipeline completed successfully!")
+        else:
+            print(f"\n[virgo resume] Pipeline stopped at iteration {state.iteration}/{args.iterations}")
+    finally:
+        env.teardown()
+
+
+def cmd_plugin_list(args: argparse.Namespace) -> None:
+    """List installed plugins."""
+    from _console import icon
+    from plugins import list_plugins
+
+    plugins = list_plugins()
+    if not plugins:
+        print(f"\n  {icon('info')}  No plugins installed. Place .py files in ~/.virgo/plugins/ or ./plugins/")
+        print("  Use: virgo plugin install <source>")
+        return
+
+    print(f"\n  {icon('tool')}  Installed Plugins ({len(plugins)}):\n")
+    print(f"    {'Name':20s}  {'Version':10s}  {'Loaded':8s}  {'Description'}")
+    print(f"    {'-' * 20}  {'-' * 10}  {'-' * 8}  {'-' * 40}")
+    for p in plugins:
+        meta = p["meta"]
+        loaded = icon("ok") if p["loaded"] else "—"
+        print(f"    {meta['name']:20s}  {meta['version']:10s}  {loaded:8s}  {meta['description'][:40]}")
+    print()
+
+
+def cmd_plugin_install(args: argparse.Namespace) -> None:
+    """Install a plugin from local path or GitHub."""
+    from plugins import install_plugin, install_plugin_from_github
+
+    if args.from_github:
+        # Treat source as owner/repo
+        path = install_plugin_from_github(args.source, name=args.name)
+    else:
+        path = install_plugin(args.source, name=args.name)
+
+    if path:
+        print(f"\n  [virgo plugin] Installed: {path}")
+    else:
+        print(f"\n  [virgo plugin] Installation failed")
+
+
+def cmd_plugin_reload(args: argparse.Namespace) -> None:
+    """Reload a plugin by name."""
+    from _console import icon
+    from plugins import reload_plugin
+    from tools import ToolRegistry
+
+    registry = ToolRegistry()
+    if reload_plugin(args.name, registry):
+        print(f"\n  {icon('ok')}  Reloaded plugin: {args.name}")
+    else:
+        print(f"\n  {icon('error')}  Failed to reload: {args.name}")
+
+
+def cmd_plugin_info(args: argparse.Namespace) -> None:
+    """Show plugin details."""
+    from _console import icon
+    from plugins import plugin_info
+
+    info = plugin_info(args.name)
+    if not info:
+        print(f"  {icon('error')}  Plugin not found: {args.name}")
+        return
+
+    meta = info["meta"]
+    loaded = icon("ok") if info["loaded"] else "—"
+    print(f"\n  {icon('info')}  Plugin Info\n")
+    print(f"    Name:        {meta['name']}")
+    print(f"    Version:     {meta['version']}")
+    print(f"    Description: {meta['description']}")
+    print(f"    Author:      {meta['author']}")
+    print(f"    Path:        {info['path']}")
+    print(f"    Loaded:      {loaded}")
+    print()
+
+
+def cmd_plugin_create(args: argparse.Namespace) -> None:
+    """Create a new plugin template."""
+    from _console import icon
+    from plugins import create_plugin
+
+    name = args.name
+    if not name.endswith(".py"):
+        name += ".py"
+
+    template = '''"""
+{{name}} — Virgo Plugin
+
+Description: {{description}}
+Author: {{author}}
+Version: {{version}}
+"""
+
+from __future__ import annotations
+
+# Optional: plugin metadata
+__plugin_meta__ = {
+    "name": "{{name}}",
+    "version": "{{version}}",
+    "description": "{{description}}",
+    "author": "{{author}}",
+}
+
+# Option 1: Export a register() function
+def register(registry):
+    """Register tools with the Virgo ToolRegistry."""
+    from tools import Tool
+
+    def my_tool(input_str: str) -> str:
+        \"\"\"Example tool that echoes input.\"\"\"
+        return f"Echo: {input_str}"
+
+    registry.register(Tool(name="my tool", fn=my_tool, description="Echoes input back"))
+
+    print("  ✓ {{name}} plugin registered")
+
+
+# Option 2: Export Tool instances directly (uncomment and modify)
+# from tools import Tool
+#
+# def another_tool(data: dict) -> dict:
+#     \"\"\"Another example tool.\"\"\"
+#     return {"processed": True, "data": data}
+#
+# tool_another = Tool(name="another tool", fn=another_tool, description="Processes data")
+'''
+
+    dest_dir = args.dir
+    if dest_dir:
+        from pathlib import Path
+        dest_dir = Path(dest_dir)
+    else:
+        from plugins import PLUGIN_DIRS
+        dest_dir = PLUGIN_DIRS[0]
+
+    # Format template
+    template = template.replace("{{name}}", args.name.replace(".py", ""))
+    template = template.replace("{{description}}", args.desc or "")
+    template = template.replace("{{author}}", args.author or "")
+    template = template.replace("{{version}}", args.plugin_version or "0.1.0")
+
+    path = create_plugin(name, template, dest_dir)
+    print(f"\n  {icon('ok')}  Created plugin template: {path}")
+    print("  Edit it, then: virgo plugin install " + str(path))
+
+
 def cmd_templates(args: argparse.Namespace) -> None:
     """List and generate from built-in templates."""
     from templates import generate, list_templates
@@ -2906,10 +3120,60 @@ def main() -> None:
     p_fb = sub.add_parser("feedback", help="Show feedback memory")
     p_fb.set_defaults(func=cmd_feedback)
 
+    # checkpoint
+    p_cp = sub.add_parser("checkpoint", help="Manage pipeline checkpoints")
+    cp_sub = p_cp.add_subparsers(dest="cp_action", required=True)
+
+    p_cp_list = cp_sub.add_parser("list", help="List all checkpointed sessions")
+    p_cp_list.set_defaults(func=cmd_checkpoint_list)
+
+    p_cp_show = cp_sub.add_parser("show", help="Show checkpoint details")
+    p_cp_show.add_argument("session", help="Session name")
+    p_cp_show.set_defaults(func=cmd_checkpoint_show)
+
+    p_cp_delete = cp_sub.add_parser("delete", help="Delete a session's checkpoints")
+    p_cp_delete.add_argument("session", help="Session name")
+    p_cp_delete.set_defaults(func=cmd_checkpoint_delete)
+
+    # resume
+    p_resume = sub.add_parser("resume", help="Resume a pipeline from checkpoint")
+    p_resume.add_argument("session", help="Session name to resume")
+    p_resume.add_argument("--iterations", "-i", type=int, default=5, help="Max WTF iterations")
+    p_resume.add_argument("--llm", action="store_true", help="Use LLM-backed policies")
+    p_resume.add_argument("--critic", action="store_true", help="Run code critic")
+    p_resume.add_argument("--auto-depend", action="store_true", help="Auto-install dependencies")
+    p_resume.set_defaults(func=cmd_resume)
+
+    # plugin
+    p_plugin = sub.add_parser("plugin", help="Manage plugins")
+    pl_sub = p_plugin.add_subparsers(dest="plugin_action", required=True)
+
+    p_pl_list = pl_sub.add_parser("list", help="List installed plugins")
+    p_pl_list.set_defaults(func=cmd_plugin_list)
+
+    p_pl_install = pl_sub.add_parser("install", help="Install a plugin")
+    p_pl_install.add_argument("source", help="Local path or GitHub URL (raw file or owner/repo)")
+    p_pl_install.add_argument("--name", help="Target filename")
+    p_pl_install.add_argument("--from-github", action="store_true", help="Treat source as owner/repo")
+    p_pl_install.set_defaults(func=cmd_plugin_install)
+
+    p_pl_reload = pl_sub.add_parser("reload", help="Reload a plugin")
+    p_pl_reload.add_argument("name", help="Plugin name (without .py)")
+    p_pl_reload.set_defaults(func=cmd_plugin_reload)
+
+    p_pl_info = pl_sub.add_parser("info", help="Show plugin details")
+    p_pl_info.add_argument("name", help="Plugin name (without .py)")
+    p_pl_info.set_defaults(func=cmd_plugin_info)
+
+    p_pl_create = pl_sub.add_parser("create", help="Create a new plugin template")
+    p_pl_create.add_argument("name", help="Plugin name (without .py)")
+    p_pl_create.add_argument("--dir", help="Target directory (default: ./plugins)")
+    p_pl_create.set_defaults(func=cmd_plugin_create)
+
     # demo
     p_demo = sub.add_parser("demo", help="Run the demo pipeline (deterministic policies)")
     p_demo.add_argument(
-        "--goal", "-g", default=None, help="Optional goal override for the demo pipeline"
+    "--goal", "-g", default=None, help="Optional goal override for the demo pipeline"
     )
     p_demo.set_defaults(func=cmd_demo)
 
