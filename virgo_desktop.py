@@ -2900,6 +2900,35 @@ class VirgoDesktopWindow(QMainWindow):
         except Exception:
             self.resize(WIDTH, HEIGHT)
 
+    def _check_voice_deps(self) -> None:
+        """Check if voice dependencies are available."""
+        import importlib
+        for dep in ("edge-tts", "SpeechRecognition", "pyaudio"):
+            try:
+                importlib.import_module(dep)
+            except ImportError:
+                self.voice_label.setText(f"Voice: ❌ {dep} not installed")
+                self.voice_label.setStyleSheet("color: #f38ba8; font-size: 11px;")
+                return
+        self.voice_label.setText("Voice: ✅ All dependencies available")
+        self.voice_label.setStyleSheet("color: #a6e3a1; font-size: 11px;")
+
+    def _check_license(self) -> None:
+        """Check license status."""
+        try:
+            from assetbatch_pro.assetbatch_license import LicenseManager
+        except ImportError:
+            self.license_label.setText("License: ❌ assetbatch_pro not installed")
+            self.license_label.setStyleSheet("color: #f38ba8; font-size: 11px;")
+            return
+        license_manager = LicenseManager()
+        if license_manager.is_licensed():
+            self.license_label.setText("License: ✅ Valid")
+            self.license_label.setStyleSheet("color: #a6e3a1; font-size: 11px;")
+        else:
+            self.license_label.setText("License: ❌ Not verified (Trial Mode)")
+            self.license_label.setStyleSheet("color: #f38ba8; font-size: 11px;")
+
     def _save_geom(self) -> None:
         try:
             import json
