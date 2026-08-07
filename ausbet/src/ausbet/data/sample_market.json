@@ -1,0 +1,37 @@
+{
+  "source": "manual collection, sample data",
+  "markets": [
+    {
+      "sport": "AFL",
+      "event": "Geelong v Collingwood",
+      "market": "h2h",
+      "start_time": "2026-08-15T07:25:00Z",
+      "outcomes": [
+        {"name": "Geelong", "bookmaker": "Sportsbet", "odds": 1.85},
+        {"name": "Collingwood", "bookmaker": "Sportsbet", "odds": 2.00},
+        {"name": "Geelong", "bookmaker": "Ladbrokes", "odds": 1.90},
+        {"name": "Collingwood", "bookmaker": "Ladbrokes", "odds": 1.95},
+        {"name": "Geelong", "bookmaker": "TAB", "odds": 1.88},
+        {"name": "Collingwood", "bookmaker": "TAB", "odds": 1.98},
+        {"name": "Geelong", "bookmaker": "Neds", "odds": 1.80},
+        {"name": "Collingwood", "bookmaker": "Neds", "odds": 1.95}
+      ]
+    },
+    {
+      "sport": "NRL",
+      "event": "Melbourne v Brisbane",
+      "market": "h2h",
+      "start_time": "2026-08-15T09:35:00Z",
+      "outcomes": [
+        {"name": "Melbourne", "bookmaker": "Sportsbet", "odds": 2.10},
+        {"name": "Brisbane", "bookmaker": "Sportsbet", "odds": 1.80},
+        {"name": "Melbourne", "bookmaker": "Ladbrokes", "odds": 1.95},
+        {"name": "Brisbane", "bookmaker": "Ladbrokes", "odds": 2.05},
+        {"name": "Melbourne", "bookmaker": "TAB", "odds": 2.02},
+        {"name": "Brisbane", "bookmaker": "TAB", "odds": 1.88},
+        {"name": "Melbourne", "bookmaker": "Neds", "odds": 2.00},
+        {"name": "Brisbane", "bookmaker": "Neds", "odds": 1.90}
+      ]
+    }
+  ]
+}

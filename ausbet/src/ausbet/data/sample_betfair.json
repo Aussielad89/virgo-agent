@@ -1,0 +1,23 @@
+{
+  "catalogue": [
+    {
+      "marketId": "1.234567890",
+      "marketName": "Match Odds",
+      "marketStartTime": "2026-08-15T07:25:00.000Z",
+      "event": {"id": "31415926", "name": "Geelong v Collingwood"},
+      "runners": [
+        {"selectionId": 5049218, "runnerName": "Geelong"},
+        {"selectionId": 5049219, "runnerName": "Collingwood"}
+      ]
+    }
+  ],
+  "book": [
+    {
+      "marketId": "1.234567890",
+      "runners": [
+        {"selectionId": 5049218, "ex": {"availableToBack": [{"price": 1.88, "size": 2500}], "availableToLay": [{"price": 1.89, "size": 1200}]}},
+        {"selectionId": 5049219, "ex": {"availableToBack": [{"price": 1.99, "size": 1800}], "availableToLay": [{"price": 2.02, "size": 900}]}}
+      ]
+    }
+  ]
+}

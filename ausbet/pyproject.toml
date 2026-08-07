@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ausbet"
+version = "0.1.0"
+description = "Australian betting toolkit: bet tracker, odds comparison, value & arbitrage calculators"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Aussielad89" }]
+keywords = ["betting", "sports", "odds", "arbitrage", "kelly", "australia"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Games/Entertainment",
+]
+
+[project.scripts]
+ausbet = "ausbet.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["ausbet"]
+
+[tool.setuptools.package-data]
+ausbet = ["data/*.json"]
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py"]
+pythonpath = ["src"]
+addopts = "-p no:cacheprovider"
