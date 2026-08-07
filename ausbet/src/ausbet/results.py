@@ -132,9 +132,13 @@ def games_from_scores_api(raw: list[dict]) -> list[GameResult]:
     games: list[GameResult] = []
     for g in raw:
         if "home_team" in g and "scores" in g:  # the-odds-api shape
+            # Unplayed fixtures in the daysFrom window come back with
+            # "scores": null — nothing to settle, skip them entirely.
+            if g.get("scores") is None or not g.get("completed"):
+                continue
             scores = {
                 s.get("name", "").lower(): int(s.get("score") or 0)
-                for s in g.get("scores", [])
+                for s in g.get("scores") or []
             }
             home = g.get("home_team", "")
             away = g.get("away_team", "")

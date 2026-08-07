@@ -130,6 +130,20 @@ def test_games_from_scores_api_oddsapi_shape():
     assert games[0].completed
 
 
+def test_games_from_scores_api_skips_unplayed_fixtures():
+    """The /scores endpoint returns scores: null for unplayed fixtures."""
+    raw = [
+        {"sport_title": "Aussie Rules", "home_team": "Geelong", "away_team": "Collingwood",
+         "completed": True,
+         "scores": [{"name": "Geelong", "score": "102"}, {"name": "Collingwood", "score": "88"}]},
+        {"sport_title": "Rugby League", "home_team": "Melbourne", "away_team": "Brisbane",
+         "completed": False, "scores": None},  # future fixture
+    ]
+    games = games_from_scores_api(raw)
+    assert len(games) == 1
+    assert games[0].home == "Geelong"
+
+
 def test_games_from_scores_api_file_shape():
     raw = [{"home": "Melbourne", "away": "Brisbane", "home_score": 24, "away_score": 10, "sport": "NRL"}]
     games = games_from_scores_api(raw)

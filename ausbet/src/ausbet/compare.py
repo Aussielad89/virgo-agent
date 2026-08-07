@@ -192,7 +192,14 @@ class TheOddsAPISource:
         url = f"{API_BASE}/sports/?apiKey={self.api_key}"
         return self._get(url)
 
-    def fetch(self) -> list[MarketOdds]:
+    def fetch(self, sport_keys: list[str] | None = None) -> list[MarketOdds]:
+        """Fetch odds for the given the-odds-api sport keys.
+
+        Defaults to AU football codes (AFL + NRL — the sports whose titles
+        mention aussie rules / afl / rugby league / nrl) so a scan costs 2
+        requests instead of 8 and never wastes quota on irrelevant leagues.
+        Pass ``sport_keys`` to override (see ``available_sports()``).
+        """
         if not self.api_key:
             raise RuntimeError(
                 "ODDS_API_KEY not set — get a free key at https://the-odds-api.com "
@@ -200,21 +207,32 @@ class TheOddsAPISource:
             )
         if self.cache_path and self.cache_path.exists():
             data = json.loads(self.cache_path.read_text(encoding="utf-8"))
-            return self._parse(data)
-        sports = [s for s in self.available_sports() if self.regions in s.get("regions", [])]
-        if not sports:
+            return self._parse_cached(data)
+        available = self.available_sports()
+        if not available:
             raise RuntimeError(f"no sports available for region {self.regions!r}")
+        if sport_keys is None:
+            # The /sports response has no per-sport regions field — region is
+            # applied via the regions= query param on the calls below.
+            sport_keys = [s["key"] for s in available if _is_au_football(s.get("title", ""))]
+        wanted = {s["key"] for s in available}
+        missing = [k for k in sport_keys if k not in wanted]
+        if missing:
+            raise RuntimeError(
+                f"sport keys not available for region {self.regions!r}: {missing}"
+            )
         markets: list[MarketOdds] = []
-        for sport in sports[:8]:  # stay inside free-tier limits
+        for key in sport_keys:
             url = (
-                f"{API_BASE}/sports/{sport['key']}/odds/?apiKey={self.api_key}"
+                f"{API_BASE}/sports/{key}/odds/?apiKey={self.api_key}"
                 f"&regions={self.regions}&markets={self.markets}&oddsFormat=decimal"
             )
             try:
                 data = self._get(url)
             except urllib.error.URLError as exc:
-                raise RuntimeError(f"odds fetch failed for {sport['key']}: {exc}") from exc
-            markets.extend(self._parse(data, default_sport=sport["title"]))
+                raise RuntimeError(f"odds fetch failed for {key}: {exc}") from exc
+            title = next((s["title"] for s in available if s["key"] == key), key)
+            markets.extend(self._parse(data, default_sport=title))
         if self.cache_path:
             self.cache_path.write_text(
                 json.dumps([self._serialize(m) for m in markets], indent=2), encoding="utf-8"
@@ -241,10 +259,9 @@ class TheOddsAPISource:
         if not available:
             raise RuntimeError(f"no sports available for region {self.regions!r}")
         if sport_keys is None:
-            sport_keys = [
-                s["key"] for s in available
-                if self.regions in s.get("regions", []) and _is_au_football(s.get("title", ""))
-            ]
+            # The /sports response has no per-sport regions field — region is
+            # applied via the regions= query param on the calls below.
+            sport_keys = [s["key"] for s in available if _is_au_football(s.get("title", ""))]
         games: list[dict] = []
         for s in available:
             if s.get("key") not in sport_keys:
@@ -258,6 +275,25 @@ class TheOddsAPISource:
                 g["sport_title"] = s.get("title", g.get("sport_title", ""))
                 games.append(g)
         return games
+
+    @staticmethod
+    def _parse_cached(data: list[dict]) -> list[MarketOdds]:
+        """Parse the serialized cache format written by ``_serialize``."""
+        markets: list[MarketOdds] = []
+        for m in data:
+            markets.append(
+                MarketOdds(
+                    sport=m.get("sport", ""),
+                    event=m.get("event", ""),
+                    market=m.get("market", ""),
+                    start_time=m.get("start_time"),
+                    outcomes=[
+                        Outcome(name=o["name"], bookmaker=o["bookmaker"], odds=o["odds"])
+                        for o in m.get("outcomes", [])
+                    ],
+                )
+            )
+        return markets
 
     @staticmethod
     def _serialize(m: MarketOdds) -> dict:
@@ -372,17 +408,22 @@ def head_to_head(
         return None
 
     rows: list[H2HRow] = []
+    # Merge outcomes across market instances — the live the-odds-api feed
+    # returns one MarketOdds per bookmaker, while offline sample data packs
+    # every bookmaker into one market; both shapes must work.
+    merged: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
     for m in markets:
         if m.market != "h2h":
             continue
         if sport_filter and sport_filter.lower() not in m.sport.lower():
             continue
-        by_outcome: dict[str, dict[str, float]] = {}
+        bucket = merged.setdefault((m.sport, m.event), {})
         for o in m.outcomes:
             b = find(o.bookmaker)
             if b is None:
                 continue
-            by_outcome.setdefault(o.name, {})[b] = o.odds
+            bucket.setdefault(o.name, {})[b] = o.odds
+    for (sport, event), by_outcome in merged.items():
         for outcome, prices in by_outcome.items():
             if len(prices) < 2:
                 continue
@@ -392,8 +433,8 @@ def head_to_head(
             gap = (better_odds - worse) / worse * 100.0 if worse else 0.0
             rows.append(
                 H2HRow(
-                    sport=m.sport,
-                    event=m.event,
+                    sport=sport,
+                    event=event,
                     outcome=outcome,
                     prices=dict(sorted(prices.items())),
                     better=better,

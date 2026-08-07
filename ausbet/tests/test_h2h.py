@@ -81,6 +81,27 @@ def test_sorted_by_gap_desc_within_event():
     assert [r.outcome for r in rows] == ["A", "B"]
 
 
+def test_merges_one_market_per_bookmaker_shape():
+    """Live the-odds-api shape: a separate MarketOdds per bookmaker."""
+    afl_neds = MarketOdds(
+        sport="AFL", event="Cats v Pies", market="h2h",
+        outcomes=[Outcome(name="Geelong", bookmaker="Neds", odds=1.80),
+                  Outcome(name="Collingwood", bookmaker="Neds", odds=2.05)],
+    )
+    afl_sb = MarketOdds(
+        sport="AFL", event="Cats v Pies", market="h2h",
+        outcomes=[Outcome(name="Geelong", bookmaker="Sportsbet", odds=1.85),
+                  Outcome(name="Collingwood", bookmaker="Sportsbet", odds=2.00)],
+    )
+    rows = head_to_head([afl_neds, afl_sb])
+    by_outcome = {r.outcome: r for r in rows}
+    assert set(by_outcome["Geelong"].prices) == {"neds", "sportsbet"}
+    assert by_outcome["Geelong"].better == "sportsbet"
+    assert by_outcome["Geelong"].gap_pct == pytest.approx(2.78, abs=0.01)
+    assert by_outcome["Collingwood"].better == "neds"
+    assert by_outcome["Collingwood"].gap_pct == pytest.approx(2.50, abs=0.01)  # (2.05-2.00)/2.00
+
+
 def test_sample_data_has_both_user_bookies():
     from pathlib import Path
 

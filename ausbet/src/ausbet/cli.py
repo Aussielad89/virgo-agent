@@ -251,7 +251,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
         print(f"unknown source {args.source!r}", file=sys.stderr)
         return 1
     try:
-        markets = source.fetch()
+        if isinstance(source, TheOddsAPISource):
+            keys = [k.strip() for k in args.sport_keys.split(",")] if args.sport_keys else None
+            markets = source.fetch(sport_keys=keys)
+        else:
+            markets = source.fetch()
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -379,7 +383,11 @@ def cmd_h2h(args: argparse.Namespace) -> int:
     else:
         source = BetfairExchangeSource(event_type_ids=(args.event_type,), fixture=args.fixture)
     try:
-        markets = source.fetch()
+        if isinstance(source, TheOddsAPISource):
+            keys = [k.strip() for k in args.sport_keys.split(",")] if args.sport_keys else None
+            markets = source.fetch(sport_keys=keys)
+        else:
+            markets = source.fetch()
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -405,7 +413,7 @@ def cmd_h2h(args: argparse.Namespace) -> int:
         shown += 1
         if args.top and shown >= args.top:
             break
-    big = rows[0]
+    big = max(rows, key=lambda r: r.gap_pct)
     print(
         f"\n{len(rows)} priced gap(s) — biggest: {big.event} {big.outcome} — "
         f"{big.better} @ {big.better_odds:.2f} is +{big.gap_pct:.1f}% over the other bookie"
@@ -456,7 +464,8 @@ def cmd_results(args: argparse.Namespace) -> int:
     elif args.auto:
         source = TheOddsAPISource(cache_path=args.cache)
         try:
-            raw = source.fetch_scores(days=args.days)
+            keys = [k.strip() for k in args.sport_keys.split(",")] if args.sport_keys else None
+            raw = source.fetch_scores(days=args.days, sport_keys=keys)
         except RuntimeError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -656,6 +665,7 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--event-type", default="61420", help="betfair event type id (61420=AFL, 1477=NRL, 7=horse)")
     cp.add_argument("--top", type=int, help="show only the N lowest-margin bookies")
     cp.add_argument("--arb", action="store_true", help="scan for arbitrages")
+    cp.add_argument("--sport-keys", help="the-odds-api sport keys (default: AFL+NRL, e.g. aussierules_afl,rugbyleague_nrl)")
     cp.set_defaults(func=cmd_compare)
 
     r = sub.add_parser("race", help="racing form scan: probabilities + value picks")
@@ -698,6 +708,7 @@ def build_parser() -> argparse.ArgumentParser:
     hh.add_argument("--sport", help="filter by sport (e.g. AFL, NRL)")
     hh.add_argument("--min-gap", type=float, help="only show gaps >= this %%")
     hh.add_argument("--top", type=int, help="show only the N biggest gaps")
+    hh.add_argument("--sport-keys", help="the-odds-api sport keys (default: AFL+NRL, e.g. aussierules_afl,rugbyleague_nrl)")
     hh.set_defaults(func=cmd_h2h)
 
     ml = sub.add_parser("multi", help="multi / racing-special fairness vs placing the singles")
@@ -715,6 +726,7 @@ def build_parser() -> argparse.ArgumentParser:
     rs.add_argument("--file", help="results JSON [{home, away, home_score, away_score, sport}]")
     rs.add_argument("--days", type=int, default=2, help="days of scores to fetch (--auto)")
     rs.add_argument("--cache", help="oddsapi response cache")
+    rs.add_argument("--sport-keys", help="the-odds-api sport keys (default: all AU football codes)")
     rs.add_argument("--db", default=DEFAULT_DB)
     rs.set_defaults(func=cmd_results)
 
