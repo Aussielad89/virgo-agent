@@ -264,3 +264,6 @@ class DivergencePage(_ModuleRunnerPage):
     def __init__(self) -> None:
         super().__init__()
         self.run_btn.setText(f"{icon('list')}  List Roots")
+
+    def _run(self) -> None:
+        self.output.append(f"{icon('list')}  Divergence analysis — comparing git branch timelines for the current agent run.")
