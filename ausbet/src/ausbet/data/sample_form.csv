@@ -1,0 +1,9 @@
+number,name,barrier,weight,form_figures,career_starts,career_wins,last_start,jockey,trainer,scratched
+1,Mighty Mo,3,58.5,231x45,12,3,5,J McDonald,C Waller,false
+2,Rocket Red,7,57.0,1123,9,4,3,D Oliver,P Moody,false
+3,Lucky Lass,2,55.5,34128,14,2,8,L Currie,T Busuttin,false
+4,Fleetwood,5,59.0,921x0,11,1,10,B Prebble,C Maher,false
+5,Southern Belle,1,54.0,56237,8,1,7,J Allen,D Weir,false
+6,Prince Albert,8,56.0,1185,6,2,5,C Williams,C Waller,false
+7,Velvet Hammer,4,57.5,4532,10,3,2,M Zahra,J Cummings,true
+8,Golden Eagle,6,52.5,0x089,16,0,9,T Clark,P Stokes,false
