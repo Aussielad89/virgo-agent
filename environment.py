@@ -59,7 +59,8 @@ class AgentEnvironment:
     def python(self) -> Path:
         """Path to the isolated Python executable."""
         if self._python is None:
-            self._python = self.env_dir / _bin_subdir() / "python.exe"
+            exe = "python.exe" if sys.platform == "win32" else "python"
+            self._python = self.env_dir / _bin_subdir() / exe
         return self._python
 
     @property
