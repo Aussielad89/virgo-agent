@@ -36,11 +36,12 @@ def docker_available() -> bool:
     if shutil.which("docker") is None:
         return False
     try:
-        subprocess.run(
+        proc = subprocess.run(
             ["docker", "version", "--format", "{{.Server.Version}}"],
             capture_output=True, text=True, timeout=10,
         )
-        return True
+        # A present CLI is not enough -- the daemon must actually respond.
+        return proc.returncode == 0
     except Exception:
         return False
 
