@@ -458,7 +458,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         return result
 
     # ── File & project checks ──
-    checks["repo"] = check("Repository (.git)", lambda: (here / ".git").is_dir())
+    checks["repo"] = check("Repository (.git)", lambda: (here / ".git").exists())
     checks["python"] = check("Python 3.11+", lambda: sys.version_info >= (3, 11))
     checks["dashboard"] = check("Dashboard config", lambda: (here / "dashboard.json").exists())
     checks["mock_logs"] = check("Mock logs", lambda: (here / "mock_logs.txt").exists())
@@ -3153,8 +3153,11 @@ def main() -> None:
 
     p_pl_install = pl_sub.add_parser("install", help="Install a plugin")
     p_pl_install.add_argument("source", help="Local path or GitHub URL (raw file or owner/repo)")
-    p_pl_install.add_argument("--name", help="Target filename")
+    p_pl_install.add_argument("--name", "-n", help="Target filename")
     p_pl_install.add_argument("--from-github", action="store_true", help="Treat source as owner/repo")
+    p_pl_install.add_argument(
+        "--path", "-p", default="", help="Path within GitHub repo to plugin file"
+    )
     p_pl_install.set_defaults(func=cmd_plugin_install)
 
     p_pl_reload = pl_sub.add_parser("reload", help="Reload a plugin")
@@ -3166,8 +3169,17 @@ def main() -> None:
     p_pl_info.set_defaults(func=cmd_plugin_info)
 
     p_pl_create = pl_sub.add_parser("create", help="Create a new plugin template")
-    p_pl_create.add_argument("name", help="Plugin name (without .py)")
+    p_pl_create.add_argument("name", nargs="?", default="my_plugin", help="Plugin name (without .py)")
     p_pl_create.add_argument("--dir", help="Target directory (default: ./plugins)")
+    p_pl_create.add_argument("--desc", "-d", default="", help="Plugin description")
+    p_pl_create.add_argument("--author", "-a", default="", help="Plugin author")
+    p_pl_create.add_argument("--plugin-version", "-v", default="0.1.0", help="Plugin version (default: 0.1.0)")
+    p_pl_create.add_argument(
+        "--output", "-o", default=None, help="Output directory (default: plugins/<name>)"
+    )
+    p_pl_create.add_argument(
+        "--interactive", "-i", action="store_true", help="Interactive mode with prompts"
+    )
     p_pl_create.set_defaults(func=cmd_plugin_create)
 
     # demo
@@ -3247,29 +3259,6 @@ def main() -> None:
         "--list", action="store_true", help="Show detailed metadata about all plugins"
     )
     p_plug.set_defaults(func=cmd_plugins)
-
-    # plugin (create / install)
-    p_plugin = sub.add_parser("plugin", help="Create or install plugins")
-    pplugin_sub = p_plugin.add_subparsers(dest="plugin_command", required=True)
-
-    p_create = pplugin_sub.add_parser("create", help="Scaffold a new plugin project")
-    p_create.add_argument("name", nargs="?", default="my_plugin", help="Plugin name")
-    p_create.add_argument("--desc", "-d", default="", help="Plugin description")
-    p_create.add_argument("--author", "-a", default="", help="Plugin author")
-    p_create.add_argument("--plugin-version", "-v", default="0.1.0", help="Plugin version (default: 0.1.0)")
-    p_create.add_argument(
-        "--output", "-o", default=None, help="Output directory (default: plugins/<name>)"
-    )
-    p_create.add_argument(
-        "--interactive", "-i", action="store_true", help="Interactive mode with prompts"
-    )
-    p_create.set_defaults(func=cmd_plugin_create)
-
-    p_install = pplugin_sub.add_parser("install", help="Install a plugin from path or GitHub")
-    p_install.add_argument("source", help="Local .py file path, URL, or GitHub owner/repo")
-    p_install.add_argument("--name", "-n", default=None, help="Target filename (default: source filename)")
-    p_install.add_argument("--path", "-p", default="", help="Path within GitHub repo to plugin file")
-    p_install.set_defaults(func=cmd_plugin_install)
 
     # scaffold
     p_scaffold = sub.add_parser("scaffold", help="Generate project from a scaffold")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from virgo_sandbox import ALLOWED_COMMANDS, is_command_safe, run_sandboxed
@@ -37,6 +39,7 @@ class TestIsCommandSafe:
         safe, reason = is_command_safe(["shutdown", "/s"])
         assert safe is False
 
+    @pytest.mark.skipif(sys.platform != "win32", reason="slash flags are Windows-only")
     def test_forbidden_flag_on_allowed_command(self) -> None:
         """Check that /s flag is forbidden for ipconfig (not in allowed flags)."""
         safe, reason = is_command_safe(["ipconfig", "/s"])

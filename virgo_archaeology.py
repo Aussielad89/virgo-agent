@@ -51,18 +51,25 @@ def blame(file_path: str, line: int | None = None) -> list[dict[str, str]]:
     for raw_line in out.splitlines():
         if raw_line.startswith(("author", "author-mail", "author-time", "summary", "filename")):
             pass
-        if re.match(r"^[0-9a-f]{40}$", raw_line.strip()):
-            current_hash = raw_line.strip()
+        if re.match(r"^\^?[0-9a-f]{40}$", raw_line.strip()):
+            # porcelain header is "<sha> <orig> <final> [<count>]"; handle a
+            # bare-hash line too in case a future git drops the numbers
+            current_hash = raw_line.strip().lstrip("^")
             commits[current_hash] = {"hash": current_hash}
-        elif raw_line.startswith("author "):
-            commits[current_hash]["author"] = raw_line[7:]
-        elif raw_line.startswith("author-mail "):
-            commits[current_hash]["email"] = raw_line[12:]
-        elif raw_line.startswith("author-time "):
-            ts = int(raw_line[12:])
-            commits[current_hash]["date"] = datetime.fromtimestamp(ts).isoformat()
-        elif raw_line.startswith("summary "):
-            commits[current_hash]["message"] = raw_line[8:]
+        else:
+            hdr = re.match(r"^\^?([0-9a-f]{40})\s+\d+\s+\d+", raw_line.strip())
+            if hdr:
+                current_hash = hdr.group(1)
+                commits[current_hash] = {"hash": current_hash}
+            elif raw_line.startswith("author "):
+                commits[current_hash]["author"] = raw_line[7:]
+            elif raw_line.startswith("author-mail "):
+                commits[current_hash]["email"] = raw_line[12:]
+            elif raw_line.startswith("author-time "):
+                ts = int(raw_line[12:])
+                commits[current_hash]["date"] = datetime.fromtimestamp(ts).isoformat()
+            elif raw_line.startswith("summary "):
+                commits[current_hash]["message"] = raw_line[8:]
     return list(commits.values())
 
 

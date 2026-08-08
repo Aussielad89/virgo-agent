@@ -16,10 +16,10 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -52,10 +52,10 @@ jobs:
       - name: Server tests (optional deps)
         shell: bash
         run: |
-          if python -c "import fastapi; import pydantic_core" 2>/dev/null; then
+          if python -c "from starlette.testclient import TestClient" 2>/dev/null; then
             python -m pytest tests/test_server.py -v
           else
-            echo "Server deps not available, skipping server tests"
+            echo "Server test deps (fastapi + httpx2) not available, skipping server tests"
           fi
 
       - name: Smoke-test TUI imports

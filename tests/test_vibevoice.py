@@ -4,6 +4,19 @@ from __future__ import annotations
 import pytest
 
 
+def _voices_available() -> bool:
+    """VibeVoice demo voice presets are a local-only asset, not in the repo."""
+    from virgo_vibevoice import VOICES_DIR
+
+    return VOICES_DIR.exists() and any(VOICES_DIR.glob("*.wav"))
+
+
+requires_voices = pytest.mark.skipif(
+    not _voices_available(),
+    reason="VibeVoice demo voices directory not present (local-only asset)",
+)
+
+
 class TestVibeVoiceWrapper:
     """Tests for the VibeVoice wrapper (no model loading)."""
 
@@ -42,12 +55,14 @@ class TestVibeVoiceWrapper:
         assert segments[0][1] == "Speaker 1"
         assert segments[1][1] == "Speaker 2"
 
+    @requires_voices
     def test_list_speakers(self):
         from virgo_vibevoice import list_speakers
         speakers = list_speakers()
         assert len(speakers) > 0
         assert "Alice" in speakers or "alice" in speakers
 
+    @requires_voices
     def test_get_voice_path(self):
         from virgo_vibevoice import get_voice_path
         path = get_voice_path("Alice")
@@ -55,6 +70,7 @@ class TestVibeVoiceWrapper:
         assert path.exists()
         assert path.suffix == ".wav"
 
+    @requires_voices
     def test_get_voice_path_partial(self):
         from virgo_vibevoice import get_voice_path
         path = get_voice_path("en-Frank")

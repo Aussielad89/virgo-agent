@@ -128,8 +128,11 @@ def is_command_safe(cmd: list[str]) -> tuple[bool, str]:
     allowed_flags = ALLOWED_FLAGS.get(executable, [])
     for arg in cmd[1:]:
         lower = arg.lower()
-        # Allow plain words/values (filenames, IPs, numbers, paths)
-        if lower.startswith("-") or lower.startswith("/"):
+        # Allow plain words/values (filenames, IPs, numbers, paths).
+        # Treat "-x" as a flag everywhere; treat "/x" as a flag only on
+        # Windows (ipconfig /all style) -- on POSIX "/x" is an absolute path.
+        is_flag = lower.startswith("-") or (lower.startswith("/") and sys.platform == "win32")
+        if is_flag:
             if not any(lower.startswith(flag) for flag in allowed_flags):
                 return False, f"Flag '{arg}' not allowed for '{executable}'"
 
