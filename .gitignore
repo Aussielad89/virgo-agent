@@ -125,3 +125,18 @@ VibeVoice/
 # Screenshots / scratch images
 *.png
 _snap.ps1
+
+# Other local projects co-located in this folder (NOT part of virgo-agent)
+# ScooterLab Pro / AssetBatch Pro — separate commercial desktop apps
+assetbatch_pro/
+scooterlab_pro.py
+ScooterLab_Pro.spec
+scooter.ico
+scooterlab.lic
+keygen.py
+# Personal recon / automation scripts
+domain_recon.py
+domain_recon_v2.py
+gumtrend_intel.py
+hermes_profit_engine.py
+hermes_financial_ledger.csv
